@@ -37,6 +37,14 @@ struct HasStress : BaseComponent {
     float stress_rate = 0.1f;
 };
 
+struct Attraction : BaseComponent {
+    float spawn_rate = 1.0f;
+    float spawn_timer = 0.f;
+    int capacity = 50;
+    int current_count = 0;
+};
+
 struct Facility : BaseComponent {
     float absorption_rate = 2.0f;
+    float absorption_timer = 0.f;
 };
