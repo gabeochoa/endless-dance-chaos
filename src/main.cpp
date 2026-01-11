@@ -20,7 +20,9 @@ void game() {
     // Create an attraction (spawns agents)
     Entity& attraction = EntityHelper::createEntity();
     attraction.addComponent<Transform>(-5.f, -5.f);
-    attraction.addComponent<Attraction>();
+    Attraction& attr = attraction.addComponent<Attraction>();
+    attr.spawn_rate = 5.0f;
+    attr.capacity = 100;
     
     // Create a facility (absorbs agents)
     Entity& facility = EntityHelper::createEntity();
