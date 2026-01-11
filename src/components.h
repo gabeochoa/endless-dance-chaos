@@ -20,16 +20,12 @@ struct Transform : BaseComponent {
     Transform(float x, float z) : position{x, z} {}
 };
 
+enum class FacilityType { Bathroom, Food, Stage };
+
 struct Agent : BaseComponent {
     float time_alive = 0.f;
     int origin_id = -1;
-};
-
-struct BoidsBehavior : BaseComponent {
-    float separation_weight = 1.0f;
-    float path_follow_weight = 2.0f;
-    float goal_pull_weight = 2.0f;
-    float max_speed = 4.0f;
+    FacilityType want = FacilityType::Bathroom;
 };
 
 struct HasStress : BaseComponent {
@@ -45,8 +41,17 @@ struct Attraction : BaseComponent {
 };
 
 struct Facility : BaseComponent {
+    FacilityType type = FacilityType::Bathroom;
     float absorption_rate = 2.0f;
     float absorption_timer = 0.f;
+    int capacity = 10;
+    int current_occupants = 0;
+};
+
+struct Artist : BaseComponent {
+    float popularity = 0.5f;
+    float set_duration = 30.f;
+    float set_timer = 0.f;
 };
 
 struct PathNode : BaseComponent {
