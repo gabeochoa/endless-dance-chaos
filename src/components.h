@@ -1,9 +1,14 @@
 #pragma once
 
 #include "rl.h"
+#include "camera.h"
 #include "afterhours/src/core/base_component.h"
 
 using namespace afterhours;
+
+struct ProvidesCamera : BaseComponent {
+    IsometricCamera cam;
+};
 
 struct Transform : BaseComponent {
     vec2 position{0, 0};
