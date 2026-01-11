@@ -192,6 +192,7 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
             agent.addComponent<Transform>(t.position.x + offset_x, t.position.y + offset_z);
             agent.addComponent<Agent>().origin_id = e.id;
             agent.addComponent<BoidsBehavior>();
+            agent.addComponent<HasStress>();
             
             a.current_count++;
         }
@@ -232,9 +233,82 @@ struct FacilityAbsorptionSystem : System<Transform, Facility> {
     }
 };
 
+struct StressBuildupSystem : System<Transform, Agent, HasStress> {
+    static constexpr float CROWDING_RADIUS = 2.0f;
+    static constexpr int CROWDING_THRESHOLD = 2;
+    static constexpr float TIME_STRESS_THRESHOLD = 3.f;
+
+    void for_each_with(Entity& e, Transform& t, Agent& a, HasStress& s, float dt) override {
+        float stress_delta = 0.f;
+        
+        int nearby_count = 0;
+        auto nearby = EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<Agent>()
+            .whereNotID(e.id)
+            .gen();
+        
+        for (const Entity& other : nearby) {
+            float dist = vec::distance(t.position, other.get<Transform>().position);
+            if (dist < CROWDING_RADIUS) {
+                nearby_count++;
+            }
+        }
+        
+        if (nearby_count > CROWDING_THRESHOLD) {
+            stress_delta += (nearby_count - CROWDING_THRESHOLD) * 0.5f;
+        }
+        
+        if (a.time_alive > TIME_STRESS_THRESHOLD) {
+            stress_delta += (a.time_alive - TIME_STRESS_THRESHOLD) * 0.1f;
+        }
+        
+        s.stress += stress_delta * dt;
+        s.stress = std::clamp(s.stress, 0.f, 1.f);
+    }
+};
+
+struct StressSpreadSystem : System<Transform, HasStress> {
+    static constexpr float SPREAD_RADIUS = 2.0f;
+    static constexpr float SPREAD_RATE = 0.1f;
+
+    void for_each_with(Entity& e, Transform& t, HasStress& s, float dt) override {
+        if (s.stress < 0.1f) return;
+        
+        auto nearby = EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<HasStress>()
+            .whereNotID(e.id)
+            .gen();
+        
+        for (Entity& other : nearby) {
+            float dist = vec::distance(t.position, other.get<Transform>().position);
+            if (dist < SPREAD_RADIUS && dist > EPSILON) {
+                HasStress& other_s = other.get<HasStress>();
+                float spread_amount = s.stress * SPREAD_RATE * (1.f - dist / SPREAD_RADIUS) * dt;
+                other_s.stress = std::min(other_s.stress + spread_amount, 1.f);
+            }
+        }
+    }
+};
+
+struct StressEffectsSystem : System<HasStress, BoidsBehavior> {
+    void for_each_with(Entity&, HasStress& s, BoidsBehavior& b, float) override {
+        float stress = s.stress;
+        
+        b.separation_weight = 1.0f * (1.f - stress * 0.5f);
+        b.path_follow_weight = 2.0f * (1.f - stress * 0.7f);
+        b.goal_pull_weight = 2.0f + stress * 1.5f;
+        b.max_speed = 4.0f + stress * 2.0f;
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
+    sm.register_update_system(std::make_unique<StressBuildupSystem>());
+    sm.register_update_system(std::make_unique<StressSpreadSystem>());
+    sm.register_update_system(std::make_unique<StressEffectsSystem>());
     sm.register_update_system(std::make_unique<BoidsSystem>());
     sm.register_update_system(std::make_unique<MovementSystem>());
     sm.register_update_system(std::make_unique<AgentLifetimeSystem>());

@@ -34,9 +34,10 @@ struct RenderGroundSystem : System<> {
     }
 };
 
-struct RenderAgentsSystem : System<Transform, Agent> {
-    void for_each_with(const Entity&, const Transform& t, const Agent&, float) const override {
-        raylib::DrawSphere(vec::to3(t.position), t.radius, raylib::ORANGE);
+struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
+    void for_each_with(const Entity&, const Transform& t, const Agent&, const HasStress& s, float) const override {
+        raylib::Color color = raylib::ColorLerp(raylib::ORANGE, raylib::RED, s.stress);
+        raylib::DrawSphere(vec::to3(t.position), t.radius, color);
     }
 };
 
