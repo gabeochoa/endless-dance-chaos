@@ -1,0 +1,27 @@
+# Build artifacts
+output/
+build/
+*.o
+*.d
+*.exe
+a.out
+
+# Editor/IDE
+.cache/
+.vscode/
+.idea/
+*.dSYM
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# Project specific
+settings.json
+recording.trace/
+
+# Profiling
+*.spall
+build-analysis.html
+build-analysis.txt
+
