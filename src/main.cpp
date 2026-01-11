@@ -84,6 +84,9 @@ void game() {
     
     EntityHelper::merge_entity_arrays();
     
+    // Calculate signposts for all path nodes
+    calculate_path_signposts();
+    
     while (running && !raylib::WindowShouldClose()) {
         float dt = raylib::GetFrameTime();
         systems.run(dt);
