@@ -1,8 +1,9 @@
 
-
 #include "game.h"
 #include "camera.h"
 #include "mcp_integration.h"
+#include "components.h"
+#include "systems.h"
 #include <argh.h>
 
 bool running = true;
@@ -44,50 +45,64 @@ void draw_demo_scene() {
 
 void game() {
     IsometricCamera cam;
+    SystemManager systems;
+    
+    register_update_systems(systems);
+    register_render_systems(systems);
+    
+    // Create a test agent
+    Entity& test_agent = EntityHelper::createEntity();
+    test_agent.addComponent<Transform>(0.f, 0.f);
+    test_agent.addComponent<Agent>();
+    test_agent.get<Transform>().velocity = {1.f, 0.5f};
+    EntityHelper::merge_entity_arrays();
     
     while (running && !raylib::WindowShouldClose()) {
-        // Check for MCP exit request
         if (mcp_integration::exit_requested()) {
             running = false;
             break;
         }
         
-        // Update MCP server
         mcp_integration::update();
         
         float dt = raylib::GetFrameTime();
         
-        // Update camera controls
         cam.handle_input(dt);
         
-        // Begin drawing
+        // Run ECS systems
+        systems.run(dt);
+        
         raylib::BeginDrawing();
         raylib::ClearBackground(raylib::Color{40, 44, 52, 255});
         
-        // 3D rendering
         raylib::BeginMode3D(cam.camera);
         {
             draw_ground_grid(10, TILESIZE);
-            draw_demo_scene();
+            
+            // Draw test agent as a sphere
+            auto& t = test_agent.get<Transform>();
+            raylib::DrawSphere(vec::to3(t.position), t.radius, raylib::ORANGE);
         }
         raylib::EndMode3D();
         
         // UI overlay
         raylib::DrawText("Endless Dance Chaos", 10, 10, 20, raylib::WHITE);
-        raylib::DrawText("Controls:", 10, 40, 16, raylib::LIGHTGRAY);
-        raylib::DrawText("  WASD/Arrows - Pan", 10, 60, 14, raylib::GRAY);
-        raylib::DrawText("  Q/E - Rotate 90 degrees", 10, 78, 14, raylib::GRAY);
-        raylib::DrawText("  Scroll - Zoom", 10, 96, 14, raylib::GRAY);
+        
+        auto& agent_t = test_agent.get<Transform>();
+        auto& agent = test_agent.get<Agent>();
+        raylib::DrawText(
+            raylib::TextFormat("Agent pos: (%.1f, %.1f) alive: %.1fs", 
+                agent_t.position.x, agent_t.position.y, agent.time_alive),
+            10, 40, 14, raylib::LIGHTGRAY);
         
         if (mcp_integration::is_enabled()) {
-            raylib::DrawText("[MCP Mode Active]", 10, 120, 14, raylib::LIME);
+            raylib::DrawText("[MCP Mode Active]", 10, 60, 14, raylib::LIME);
         }
         
         raylib::DrawFPS(DEFAULT_SCREEN_WIDTH - 100, 10);
         
         raylib::EndDrawing();
         
-        // Clear MCP frame state
         mcp_integration::clear_frame_state();
     }
 }
