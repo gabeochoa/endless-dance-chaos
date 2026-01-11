@@ -48,3 +48,8 @@ struct Facility : BaseComponent {
     float absorption_rate = 2.0f;
     float absorption_timer = 0.f;
 };
+
+struct PathNode : BaseComponent {
+    int next_node_id = -1;
+    float width = 1.5f;
+};

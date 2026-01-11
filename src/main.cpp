@@ -27,6 +27,27 @@ void game() {
     facility.addComponent<Transform>(5.f, 5.f);
     facility.addComponent<Facility>();
     
+    // Create path nodes from attraction to facility
+    Entity& node4 = EntityHelper::createEntity();
+    node4.addComponent<Transform>(5.f, 5.f);
+    node4.addComponent<PathNode>().next_node_id = -1;
+    
+    Entity& node3 = EntityHelper::createEntity();
+    node3.addComponent<Transform>(3.f, 2.f);
+    node3.addComponent<PathNode>().next_node_id = node4.id;
+    
+    Entity& node2 = EntityHelper::createEntity();
+    node2.addComponent<Transform>(0.f, 0.f);
+    node2.addComponent<PathNode>().next_node_id = node3.id;
+    
+    Entity& node1 = EntityHelper::createEntity();
+    node1.addComponent<Transform>(-3.f, -2.f);
+    node1.addComponent<PathNode>().next_node_id = node2.id;
+    
+    Entity& node0 = EntityHelper::createEntity();
+    node0.addComponent<Transform>(-5.f, -5.f);
+    node0.addComponent<PathNode>().next_node_id = node1.id;
+    
     EntityHelper::merge_entity_arrays();
     
     while (running && !raylib::WindowShouldClose()) {

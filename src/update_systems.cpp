@@ -12,6 +12,7 @@ struct CameraInputSystem : System<ProvidesCamera> {
 struct BoidsSystem : System<Transform, Agent, BoidsBehavior> {
     static constexpr float SEPARATION_RADIUS = 1.5f;
     static constexpr float GOAL_RADIUS = 0.5f;
+    static constexpr float PATH_ATTRACTION_RADIUS = 3.0f;
 
     vec2 calculate_separation(const Entity& self, const Transform& t) {
         vec2 force{0, 0};
@@ -35,6 +36,71 @@ struct BoidsSystem : System<Transform, Agent, BoidsBehavior> {
                 float strength = 1.0f - (dist / SEPARATION_RADIUS);
                 force.x += away.x * strength;
                 force.y += away.y * strength;
+            }
+        }
+        
+        return force;
+    }
+
+    vec2 closest_point_on_segment(vec2 p, vec2 a, vec2 b) {
+        vec2 ab = {b.x - a.x, b.y - a.y};
+        float ab_len_sq = ab.x * ab.x + ab.y * ab.y;
+        if (ab_len_sq < EPSILON) return a;
+        
+        vec2 ap = {p.x - a.x, p.y - a.y};
+        float t = (ap.x * ab.x + ap.y * ab.y) / ab_len_sq;
+        t = std::clamp(t, 0.f, 1.f);
+        
+        return {a.x + t * ab.x, a.y + t * ab.y};
+    }
+
+    vec2 calculate_path_follow(const Transform& t) {
+        vec2 force{0, 0};
+        float closest_dist = std::numeric_limits<float>::max();
+        vec2 closest_point{0, 0};
+        vec2 path_direction{0, 0};
+        bool found = false;
+        
+        auto path_nodes = EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<PathNode>()
+            .gen();
+        
+        for (const Entity& node_entity : path_nodes) {
+            const PathNode& node = node_entity.get<PathNode>();
+            if (node.next_node_id < 0) continue;
+            
+            auto next = EntityHelper::getEntityForID(node.next_node_id);
+            if (!next.valid() || !next->has<Transform>()) continue;
+            
+            const Transform& a_t = node_entity.get<Transform>();
+            const Transform& b_t = next->get<Transform>();
+            
+            vec2 cp = closest_point_on_segment(t.position, a_t.position, b_t.position);
+            float dist = vec::distance(t.position, cp);
+            
+            if (dist < closest_dist && dist < node.width) {
+                closest_dist = dist;
+                closest_point = cp;
+                path_direction = vec::norm({
+                    b_t.position.x - a_t.position.x,
+                    b_t.position.y - a_t.position.y
+                });
+                found = true;
+            }
+        }
+        
+        if (found) {
+            vec2 toward_path = {
+                closest_point.x - t.position.x,
+                closest_point.y - t.position.y
+            };
+            if (closest_dist > 0.1f) {
+                toward_path = vec::norm(toward_path);
+                force.x = toward_path.x * 0.5f + path_direction.x * 0.5f;
+                force.y = toward_path.y * 0.5f + path_direction.y * 0.5f;
+            } else {
+                force = path_direction;
             }
         }
         
@@ -76,11 +142,16 @@ struct BoidsSystem : System<Transform, Agent, BoidsBehavior> {
 
     void for_each_with(Entity& e, Transform& t, Agent&, BoidsBehavior& b, float dt) override {
         vec2 separation = calculate_separation(e, t);
+        vec2 path_follow = calculate_path_follow(t);
         vec2 goal_pull = calculate_goal_pull(t);
         
         vec2 acceleration = {
-            separation.x * b.separation_weight + goal_pull.x * b.goal_pull_weight,
-            separation.y * b.separation_weight + goal_pull.y * b.goal_pull_weight
+            separation.x * b.separation_weight + 
+            path_follow.x * b.path_follow_weight +
+            goal_pull.x * b.goal_pull_weight,
+            separation.y * b.separation_weight + 
+            path_follow.y * b.path_follow_weight +
+            goal_pull.y * b.goal_pull_weight
         };
         
         t.velocity.x += acceleration.x * dt;
