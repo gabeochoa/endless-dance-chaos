@@ -22,6 +22,13 @@ struct Transform : BaseComponent {
 
 enum class FacilityType { Bathroom, Food, Stage };
 
+// Hash for FacilityType to use in unordered_map
+struct FacilityTypeHash {
+    std::size_t operator()(FacilityType t) const {
+        return std::hash<int>()(static_cast<int>(t));
+    }
+};
+
 struct Agent : BaseComponent {
     float time_alive = 0.f;
     int origin_id = -1;
@@ -57,6 +64,17 @@ struct Artist : BaseComponent {
 struct PathNode : BaseComponent {
     int next_node_id = -1;
     float width = 1.5f;
+};
+
+// Signpost at each path node - tells agents which way to go for each facility type
+struct PathSignpost : BaseComponent {
+    // Maps FacilityType -> next node ID to reach that facility
+    std::unordered_map<FacilityType, int, FacilityTypeHash> next_node_for;
+    
+    int get_next_node(FacilityType type) const {
+        auto it = next_node_for.find(type);
+        return (it != next_node_for.end()) ? it->second : -1;
+    }
 };
 
 struct AgentTarget : BaseComponent {

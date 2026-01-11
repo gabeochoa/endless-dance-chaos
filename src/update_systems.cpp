@@ -2,6 +2,132 @@
 #include "components.h"
 #include "vec_util.h"
 #include "afterhours/src/core/entity_query.h"
+#include <queue>
+
+// Calculate signposts using BIDIRECTIONAL BFS from facilities
+// This ensures EVERY node has directions to EVERY facility (Disney-style signposts)
+void calculate_path_signposts() {
+    auto path_nodes = EntityQuery()
+        .whereHasComponent<PathNode>()
+        .gen();
+    
+    // Build BIDIRECTIONAL adjacency list
+    // Every edge goes both ways: A->B in PathNode means both A<->B for BFS
+    std::unordered_map<int, std::vector<int>> adjacency;
+    
+    // Store node positions for co-location checks
+    std::unordered_map<int, vec2> node_positions;
+    
+    for (Entity& node : path_nodes) {
+        // Add PathSignpost component if not present
+        if (!node.has<PathSignpost>()) {
+            node.addComponent<PathSignpost>();
+        }
+        
+        if (node.has<Transform>()) {
+            node_positions[node.id] = node.get<Transform>().position;
+        }
+        
+        PathNode& pn = node.get<PathNode>();
+        if (pn.next_node_id >= 0) {
+            // Forward edge: this node -> next_node
+            adjacency[node.id].push_back(pn.next_node_id);
+            // Backward edge: next_node -> this node  
+            adjacency[pn.next_node_id].push_back(node.id);
+        }
+    }
+    
+    // Add co-located edges (hub junctions where multiple paths meet at same position)
+    for (Entity& node_a : path_nodes) {
+        if (!node_a.has<Transform>()) continue;
+        vec2 pos_a = node_a.get<Transform>().position;
+        
+        for (Entity& node_b : path_nodes) {
+            if (node_a.id == node_b.id) continue;
+            if (!node_b.has<Transform>()) continue;
+            vec2 pos_b = node_b.get<Transform>().position;
+            
+            if (vec::distance(pos_a, pos_b) < 0.1f) {
+                adjacency[node_a.id].push_back(node_b.id);
+            }
+        }
+    }
+    
+    
+    // For each facility type, BFS from terminal to ALL nodes
+    auto facilities = EntityQuery()
+        .whereHasComponent<Transform>()
+        .whereHasComponent<Facility>()
+        .gen();
+    
+    for (Entity& facility : facilities) {
+        FacilityType type = facility.get<Facility>().type;
+        vec2 facility_pos = facility.get<Transform>().position;
+        
+        // Find the terminal PathNode closest to this facility
+        int terminal_node_id = -1;
+        float best_dist = std::numeric_limits<float>::max();
+        
+        for (Entity& node : path_nodes) {
+            if (!node.has<Transform>()) continue;
+            float dist = vec::distance(node.get<Transform>().position, facility_pos);
+            if (dist < best_dist) {
+                best_dist = dist;
+                terminal_node_id = node.id;
+            }
+        }
+        
+        
+        if (terminal_node_id < 0) continue;
+        
+        // BFS from terminal node through BIDIRECTIONAL graph
+        // For each node: record which neighbor leads toward the facility
+        std::queue<std::pair<int, int>> bfs_queue;  // (node_id, next_toward_facility)
+        std::set<int> visited;
+        
+        bfs_queue.push({terminal_node_id, -1});  // -1 means "arrived at facility"
+        
+        while (!bfs_queue.empty()) {
+            auto [current_id, next_id] = bfs_queue.front();
+            bfs_queue.pop();
+            
+            if (visited.count(current_id)) continue;
+            visited.insert(current_id);
+            
+            auto current = EntityHelper::getEntityForID(current_id);
+            if (!current.valid() || !current->has<PathSignpost>() || !current->has<Transform>()) continue;
+            
+            // Set the signpost: "to reach this facility type, go to next_id"
+            PathSignpost& signpost = current->get<PathSignpost>();
+            signpost.next_node_for[type] = next_id;
+            
+            vec2 current_pos = current->get<Transform>().position;
+            
+            // Propagate to all neighbors (bidirectional)
+            auto it = adjacency.find(current_id);
+            if (it != adjacency.end()) {
+                for (int neighbor_id : it->second) {
+                    if (!visited.count(neighbor_id)) {
+                        // Check if neighbor is co-located with current node
+                        auto neighbor_pos_it = node_positions.find(neighbor_id);
+                        bool is_colocated = false;
+                        if (neighbor_pos_it != node_positions.end()) {
+                            is_colocated = vec::distance(current_pos, neighbor_pos_it->second) < 0.1f;
+                        }
+                        
+                        // Co-located nodes share the SAME next_id (don't point to each other)
+                        // Non-co-located neighbors point to current node
+                        int propagated_next = is_colocated ? next_id : current_id;
+                        bfs_queue.push({neighbor_id, propagated_next});
+                    }
+                }
+            }
+        }
+        
+    }
+    
+    log_info("Calculated path signposts for {} path nodes", path_nodes.size());
+}
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -52,65 +178,126 @@ struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
     }
 };
 
-// Follow PathNode chain - find closest path segment and move toward next node
-struct PathFollowingSystem : System<Transform, AgentSteering> {
-    vec2 closest_point_on_segment(vec2 p, vec2 a, vec2 b, float& t_out) {
-        vec2 ab = {b.x - a.x, b.y - a.y};
-        float ab_len_sq = ab.x * ab.x + ab.y * ab.y;
-        if (ab_len_sq < EPSILON) {
-            t_out = 0.f;
-            return a;
-        }
-        
-        vec2 ap = {p.x - a.x, p.y - a.y};
-        float t = (ap.x * ab.x + ap.y * ab.y) / ab_len_sq;
-        t = std::clamp(t, 0.f, 1.f);
-        t_out = t;
-        
-        return {a.x + t * ab.x, a.y + t * ab.y};
-    }
-
-    void for_each_with(Entity&, Transform& t, AgentSteering& steering, float) override {
+// Follow signposts - find closest PathNode, look up direction for agent's want
+struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering> {
+    void for_each_with(Entity&, Transform& t, Agent& a, AgentTarget& agent_target, AgentSteering& steering, float) override {
+        // Find closest PathNode with a signpost
         float closest_dist = std::numeric_limits<float>::max();
-        vec2 target_point{0, 0};
-        bool found = false;
+        int closest_node_id = -1;
         
         auto path_nodes = EntityQuery()
             .whereHasComponent<Transform>()
             .whereHasComponent<PathNode>()
+            .whereHasComponent<PathSignpost>()
             .gen();
         
-        for (const Entity& node_entity : path_nodes) {
-            const PathNode& node = node_entity.get<PathNode>();
-            if (node.next_node_id < 0) continue;
-            
-            auto next = EntityHelper::getEntityForID(node.next_node_id);
-            if (!next.valid() || !next->has<Transform>()) continue;
-            
-            const Transform& a_t = node_entity.get<Transform>();
-            const Transform& b_t = next->get<Transform>();
-            
-            float seg_t;
-            vec2 cp = closest_point_on_segment(t.position, a_t.position, b_t.position, seg_t);
-            float dist = vec::distance(t.position, cp);
+        for (const Entity& node : path_nodes) {
+            const Transform& node_t = node.get<Transform>();
+            float dist = vec::distance(t.position, node_t.position);
             
             if (dist < closest_dist) {
                 closest_dist = dist;
-                target_point = b_t.position;
-                found = true;
+                closest_node_id = node.id;
             }
         }
         
-        if (found) {
-            vec2 dir = {target_point.x - t.position.x, target_point.y - t.position.y};
-            float len = vec::length(dir);
-            if (len > EPSILON) {
+        if (closest_node_id < 0) {
+            steering.path_direction = {0, 0};
+            return;
+        }
+        
+        // Look up signpost for our want
+        auto closest = EntityHelper::getEntityForID(closest_node_id);
+        if (!closest.valid()) {
+            steering.path_direction = {0, 0};
+            return;
+        }
+        
+        const PathSignpost& signpost = closest->get<PathSignpost>();
+        int next_node_id = signpost.get_next_node(a.want);
+        
+        // next_node_id == -1 means signpost says "arrived" or no signpost for this want
+        if (next_node_id < 0) {
+            // Check if we're actually near the target facility - if not, fall back to direct movement
+            if (agent_target.facility_id >= 0) {
+                float dist_to_target = vec::distance(t.position, agent_target.target_pos);
+                if (dist_to_target > 1.0f) {  // Not near destination (must be closer than absorption radius)
+                    vec2 dir = {agent_target.target_pos.x - t.position.x, agent_target.target_pos.y - t.position.y};
+                    steering.path_direction = vec::norm(dir);
+                    return;
+                }
+            }
+            steering.path_direction = {0, 0};
+            return;
+        }
+        
+        // Move toward the next node while staying close to the path
+        auto next_node = EntityHelper::getEntityForID(next_node_id);
+        if (!next_node.valid() || !next_node->has<Transform>()) {
+            steering.path_direction = {0, 0};
+            return;
+        }
+        
+        vec2 current_node_pos = closest->get<Transform>().position;
+        vec2 next_node_pos = next_node->get<Transform>().position;
+        
+        // Calculate path segment direction
+        vec2 path_vec = {next_node_pos.x - current_node_pos.x, next_node_pos.y - current_node_pos.y};
+        float path_len = vec::length(path_vec);
+        
+        if (path_len < EPSILON) {
+            // Nodes are co-located, just move toward next
+            vec2 dir = {next_node_pos.x - t.position.x, next_node_pos.y - t.position.y};
+            if (vec::length(dir) > EPSILON) {
                 steering.path_direction = vec::norm(dir);
-                return;
+            } else {
+                steering.path_direction = {0, 0};
             }
+            return;
         }
         
-        steering.path_direction = {0, 0};
+        vec2 path_dir = {path_vec.x / path_len, path_vec.y / path_len};
+        
+        // Find closest point on the path segment
+        vec2 to_agent = {t.position.x - current_node_pos.x, t.position.y - current_node_pos.y};
+        float projection = to_agent.x * path_dir.x + to_agent.y * path_dir.y;
+        projection = std::max(0.0f, std::min(path_len, projection));  // Clamp to segment
+        
+        vec2 closest_point_on_path = {
+            current_node_pos.x + path_dir.x * projection,
+            current_node_pos.y + path_dir.y * projection
+        };
+        
+        // Calculate distance from path
+        float dist_from_path = vec::distance(t.position, closest_point_on_path);
+        
+        // Blend: if far from path, pull toward path; if close, move along path
+        constexpr float PATH_ATTRACTION_RADIUS = 0.5f;  // Start pulling toward path at this distance
+        
+        vec2 final_dir;
+        if (dist_from_path > PATH_ATTRACTION_RADIUS) {
+            // Too far from path - move toward closest point on path
+            vec2 to_path = {closest_point_on_path.x - t.position.x, closest_point_on_path.y - t.position.y};
+            vec2 to_path_norm = vec::norm(to_path);
+            
+            // Blend path attraction with forward progress (70% toward path, 30% forward)
+            float blend = std::min(1.0f, dist_from_path / (PATH_ATTRACTION_RADIUS * 3.0f));
+            final_dir = {
+                to_path_norm.x * blend + path_dir.x * (1.0f - blend),
+                to_path_norm.y * blend + path_dir.y * (1.0f - blend)
+            };
+        } else {
+            // Close to path - move along path toward next node
+            // But also pull slightly toward the path for stability
+            vec2 to_next = {next_node_pos.x - t.position.x, next_node_pos.y - t.position.y};
+            final_dir = vec::norm(to_next);
+        }
+        
+        if (vec::length(final_dir) > EPSILON) {
+            steering.path_direction = vec::norm(final_dir);
+        } else {
+            steering.path_direction = {0, 0};
+        }
     }
 };
 
