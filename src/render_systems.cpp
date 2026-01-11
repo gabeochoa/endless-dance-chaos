@@ -54,6 +54,39 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
     }
 };
 
+struct RenderPathsSystem : System<Transform, PathNode> {
+    void for_each_with(const Entity&, const Transform& t, const PathNode& node, float) const override {
+        raylib::DrawSphere({t.position.x, 0.1f, t.position.y}, 0.15f, raylib::SKYBLUE);
+        
+        if (node.next_node_id < 0) return;
+        
+        auto next = EntityHelper::getEntityForID(node.next_node_id);
+        if (!next.valid() || !next->has<Transform>()) return;
+        
+        const Transform& next_t = next->get<Transform>();
+        vec2 a = t.position;
+        vec2 b = next_t.position;
+        
+        raylib::DrawLine3D(
+            {a.x, 0.05f, a.y},
+            {b.x, 0.05f, b.y},
+            raylib::Fade(raylib::SKYBLUE, 0.7f));
+        
+        vec2 dir = vec::norm({b.x - a.x, b.y - a.y});
+        vec2 perp = {-dir.y, dir.x};
+        float hw = node.width * 0.5f;
+        
+        raylib::DrawLine3D(
+            {a.x + perp.x * hw, 0.02f, a.y + perp.y * hw},
+            {b.x + perp.x * hw, 0.02f, b.y + perp.y * hw},
+            raylib::Fade(raylib::SKYBLUE, 0.3f));
+        raylib::DrawLine3D(
+            {a.x - perp.x * hw, 0.02f, a.y - perp.y * hw},
+            {b.x - perp.x * hw, 0.02f, b.y - perp.y * hw},
+            raylib::Fade(raylib::SKYBLUE, 0.3f));
+    }
+};
+
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -79,6 +112,7 @@ struct EndRenderSystem : System<> {
 void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGroundSystem>());
+    sm.register_render_system(std::make_unique<RenderPathsSystem>());
     sm.register_render_system(std::make_unique<RenderAttractionsSystem>());
     sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
