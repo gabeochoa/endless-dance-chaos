@@ -44,6 +44,18 @@ namespace raylib {
 inline Vector2 operator*(float s, Vector2 a) { return Vector2Scale(a, s); }
 inline Vector3 operator*(float s, Vector3 a) { return Vector3Scale(a, s); }
 
+// Comparison operators for use in std::set/std::map (required by pathfinding plugin)
+inline bool operator<(const Vector2& a, const Vector2& b) {
+    if (a.x != b.x) return a.x < b.x;
+    return a.y < b.y;
+}
+
+inline bool operator<(const Vector3& a, const Vector3& b) {
+    if (a.x != b.x) return a.x < b.x;
+    if (a.y != b.y) return a.y < b.y;
+    return a.z < b.z;
+}
+
 } // namespace raylib
 
 #include <GLFW/glfw3.h>

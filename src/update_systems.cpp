@@ -9,11 +9,51 @@ struct CameraInputSystem : System<ProvidesCamera> {
     }
 };
 
-struct AgentMovementSystem : System<Transform, Agent> {
-    static constexpr float SEPARATION_RADIUS = 0.8f;
-    static constexpr float MOVE_SPEED = 3.0f;
-    static constexpr float NODE_REACH_DIST = 0.5f;
+// Find the nearest Facility matching the agent's want
+struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
+    void for_each_with(Entity&, Transform& t, Agent& a, AgentTarget& target, float) override {
+        // Skip if we already have a valid target
+        if (target.facility_id >= 0) {
+            auto existing = EntityHelper::getEntityForID(target.facility_id);
+            if (existing.valid() && existing->has<Facility>()) {
+                // Check if facility still matches our want
+                if (existing->get<Facility>().type == a.want) {
+                    return;  // Target is still valid
+                }
+            }
+        }
+        
+        // Find nearest facility matching our want
+        float best_dist = std::numeric_limits<float>::max();
+        int best_id = -1;
+        vec2 best_pos{0, 0};
+        
+        auto facilities = EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<Facility>()
+            .gen();
+        
+        for (const Entity& facility : facilities) {
+            const Facility& f = facility.get<Facility>();
+            if (f.type != a.want) continue;
+            
+            const Transform& f_t = facility.get<Transform>();
+            float dist = vec::distance(t.position, f_t.position);
+            
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_id = facility.id;
+                best_pos = f_t.position;
+            }
+        }
+        
+        target.facility_id = best_id;
+        target.target_pos = best_pos;
+    }
+};
 
+// Follow PathNode chain - find closest path segment and move toward next node
+struct PathFollowingSystem : System<Transform, AgentSteering> {
     vec2 closest_point_on_segment(vec2 p, vec2 a, vec2 b, float& t_out) {
         vec2 ab = {b.x - a.x, b.y - a.y};
         float ab_len_sq = ab.x * ab.x + ab.y * ab.y;
@@ -30,7 +70,7 @@ struct AgentMovementSystem : System<Transform, Agent> {
         return {a.x + t * ab.x, a.y + t * ab.y};
     }
 
-    vec2 find_path_direction(const Transform& t) {
+    void for_each_with(Entity&, Transform& t, AgentSteering& steering, float) override {
         float closest_dist = std::numeric_limits<float>::max();
         vec2 target_point{0, 0};
         bool found = false;
@@ -56,11 +96,7 @@ struct AgentMovementSystem : System<Transform, Agent> {
             
             if (dist < closest_dist) {
                 closest_dist = dist;
-                if (seg_t > 0.9f) {
-                    target_point = b_t.position;
-                } else {
-                    target_point = b_t.position;
-                }
+                target_point = b_t.position;
                 found = true;
             }
         }
@@ -69,20 +105,26 @@ struct AgentMovementSystem : System<Transform, Agent> {
             vec2 dir = {target_point.x - t.position.x, target_point.y - t.position.y};
             float len = vec::length(dir);
             if (len > EPSILON) {
-                return vec::norm(dir);
+                steering.path_direction = vec::norm(dir);
+                return;
             }
         }
         
-        return {0, 0};
+        steering.path_direction = {0, 0};
     }
+};
 
-    vec2 calculate_separation(const Entity& self, const Transform& t) {
+// Calculate separation forces
+struct SeparationSystem : System<Transform, Agent, AgentSteering> {
+    static constexpr float SEPARATION_RADIUS = 0.8f;
+    
+    void for_each_with(Entity& e, Transform& t, Agent&, AgentSteering& steering, float) override {
         vec2 force{0, 0};
         
         auto nearby = EntityQuery()
             .whereHasComponent<Transform>()
             .whereHasComponent<Agent>()
-            .whereNotID(self.id)
+            .whereNotID(e.id)
             .gen();
         
         for (const Entity& other : nearby) {
@@ -101,16 +143,19 @@ struct AgentMovementSystem : System<Transform, Agent> {
             }
         }
         
-        return force;
+        steering.separation = force;
     }
+};
 
-    void for_each_with(Entity& e, Transform& t, Agent&, float) override {
-        vec2 path_dir = find_path_direction(t);
-        vec2 separation = calculate_separation(e, t);
-        
+// Combine steering forces into final velocity
+struct VelocityCombineSystem : System<Transform, AgentSteering> {
+    static constexpr float MOVE_SPEED = 3.0f;
+    static constexpr float SEPARATION_WEIGHT = 0.3f;
+    
+    void for_each_with(Entity&, Transform& t, AgentSteering& steering, float) override {
         vec2 move_dir = {
-            path_dir.x + separation.x * 0.3f,
-            path_dir.y + separation.y * 0.3f
+            steering.path_direction.x + steering.separation.x * SEPARATION_WEIGHT,
+            steering.path_direction.y + steering.separation.y * SEPARATION_WEIGHT
         };
         
         float move_len = vec::length(move_dir);
@@ -158,6 +203,10 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
             ag.origin_id = e.id;
             ag.want = random_want();
             agent.addComponent<HasStress>();
+            
+            // Components for targeting and steering
+            agent.addComponent<AgentTarget>();
+            agent.addComponent<AgentSteering>();
             
             a.current_count++;
         }
@@ -266,12 +315,24 @@ struct StressSpreadSystem : System<Transform, HasStress> {
 };
 
 void register_update_systems(SystemManager& sm) {
+    // Core systems
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
-    sm.register_update_system(std::make_unique<StressBuildupSystem>());
-    sm.register_update_system(std::make_unique<StressSpreadSystem>());
-    sm.register_update_system(std::make_unique<AgentMovementSystem>());
+    
+    // Target finding and path following
+    sm.register_update_system(std::make_unique<TargetFindingSystem>());
+    sm.register_update_system(std::make_unique<PathFollowingSystem>());
+    
+    // Movement pipeline
+    sm.register_update_system(std::make_unique<SeparationSystem>());
+    sm.register_update_system(std::make_unique<VelocityCombineSystem>());
     sm.register_update_system(std::make_unique<MovementSystem>());
+    
+    // Agent lifecycle
     sm.register_update_system(std::make_unique<AgentLifetimeSystem>());
     sm.register_update_system(std::make_unique<FacilityAbsorptionSystem>());
+    
+    // Stress systems
+    sm.register_update_system(std::make_unique<StressBuildupSystem>());
+    sm.register_update_system(std::make_unique<StressSpreadSystem>());
 }

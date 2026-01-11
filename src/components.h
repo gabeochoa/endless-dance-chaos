@@ -58,3 +58,13 @@ struct PathNode : BaseComponent {
     int next_node_id = -1;
     float width = 1.5f;
 };
+
+struct AgentTarget : BaseComponent {
+    int facility_id = -1;       // Target Facility entity ID
+    vec2 target_pos{0, 0};      // Cached target position
+};
+
+struct AgentSteering : BaseComponent {
+    vec2 path_direction{0, 0};  // Direction from path following
+    vec2 separation{0, 0};      // Separation force from neighbors
+};
