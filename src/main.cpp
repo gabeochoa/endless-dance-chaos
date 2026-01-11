@@ -24,31 +24,63 @@ void game() {
     attr.spawn_rate = 5.0f;
     attr.capacity = 100;
     
-    // Create a facility (absorbs agents)
-    Entity& facility = EntityHelper::createEntity();
-    facility.addComponent<Transform>(5.f, 5.f);
-    facility.addComponent<Facility>();
+    // Create facilities of each type
+    Entity& bathroom = EntityHelper::createEntity();
+    bathroom.addComponent<Transform>(5.f, -3.f);
+    bathroom.addComponent<Facility>().type = FacilityType::Bathroom;
     
-    // Create path nodes from attraction to facility
-    Entity& node4 = EntityHelper::createEntity();
-    node4.addComponent<Transform>(5.f, 5.f);
-    node4.addComponent<PathNode>().next_node_id = -1;
+    Entity& food = EntityHelper::createEntity();
+    food.addComponent<Transform>(5.f, 0.f);
+    food.addComponent<Facility>().type = FacilityType::Food;
     
-    Entity& node3 = EntityHelper::createEntity();
-    node3.addComponent<Transform>(3.f, 2.f);
-    node3.addComponent<PathNode>().next_node_id = node4.id;
+    Entity& stage = EntityHelper::createEntity();
+    stage.addComponent<Transform>(5.f, 3.f);
+    stage.addComponent<Facility>().type = FacilityType::Stage;
     
-    Entity& node2 = EntityHelper::createEntity();
-    node2.addComponent<Transform>(0.f, 0.f);
-    node2.addComponent<PathNode>().next_node_id = node3.id;
+    // Path to bathroom (bottom)
+    Entity& bath_end = EntityHelper::createEntity();
+    bath_end.addComponent<Transform>(5.f, -3.f);
+    bath_end.addComponent<PathNode>().next_node_id = -1;
     
-    Entity& node1 = EntityHelper::createEntity();
-    node1.addComponent<Transform>(-3.f, -2.f);
-    node1.addComponent<PathNode>().next_node_id = node2.id;
+    Entity& bath_mid = EntityHelper::createEntity();
+    bath_mid.addComponent<Transform>(0.f, -3.f);
+    bath_mid.addComponent<PathNode>().next_node_id = bath_end.id;
     
-    Entity& node0 = EntityHelper::createEntity();
-    node0.addComponent<Transform>(-5.f, -5.f);
-    node0.addComponent<PathNode>().next_node_id = node1.id;
+    // Path to food (middle)
+    Entity& food_end = EntityHelper::createEntity();
+    food_end.addComponent<Transform>(5.f, 0.f);
+    food_end.addComponent<PathNode>().next_node_id = -1;
+    
+    Entity& food_mid = EntityHelper::createEntity();
+    food_mid.addComponent<Transform>(0.f, 0.f);
+    food_mid.addComponent<PathNode>().next_node_id = food_end.id;
+    
+    // Path to stage (top)
+    Entity& stage_end = EntityHelper::createEntity();
+    stage_end.addComponent<Transform>(5.f, 3.f);
+    stage_end.addComponent<PathNode>().next_node_id = -1;
+    
+    Entity& stage_mid = EntityHelper::createEntity();
+    stage_mid.addComponent<Transform>(0.f, 3.f);
+    stage_mid.addComponent<PathNode>().next_node_id = stage_end.id;
+    
+    // Central hub connecting attraction to all paths
+    Entity& hub = EntityHelper::createEntity();
+    hub.addComponent<Transform>(-3.f, 0.f);
+    hub.addComponent<PathNode>().next_node_id = food_mid.id;
+    
+    Entity& hub_to_bath = EntityHelper::createEntity();
+    hub_to_bath.addComponent<Transform>(-3.f, 0.f);
+    hub_to_bath.addComponent<PathNode>().next_node_id = bath_mid.id;
+    
+    Entity& hub_to_stage = EntityHelper::createEntity();
+    hub_to_stage.addComponent<Transform>(-3.f, 0.f);
+    hub_to_stage.addComponent<PathNode>().next_node_id = stage_mid.id;
+    
+    // Path from attraction to hub
+    Entity& start = EntityHelper::createEntity();
+    start.addComponent<Transform>(-5.f, -5.f);
+    start.addComponent<PathNode>().next_node_id = hub.id;
     
     EntityHelper::merge_entity_arrays();
     

@@ -35,9 +35,38 @@ struct RenderGroundSystem : System<> {
 };
 
 struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
-    void for_each_with(const Entity&, const Transform& t, const Agent&, const HasStress& s, float) const override {
-        raylib::Color color = raylib::ColorLerp(raylib::ORANGE, raylib::RED, s.stress);
-        raylib::DrawSphere(vec::to3(t.position), t.radius, color);
+    void for_each_with(const Entity&, const Transform& t, const Agent& a, const HasStress& s, float) const override {
+        raylib::Color color = raylib::ColorLerp(raylib::GRAY, raylib::RED, s.stress);
+        
+        float jitter_x = 0.f, jitter_z = 0.f;
+        if (s.stress > 0.7f) {
+            float jitter_strength = (s.stress - 0.7f) * 0.3f;
+            jitter_x = ((rand() % 100) / 100.f - 0.5f) * jitter_strength;
+            jitter_z = ((rand() % 100) / 100.f - 0.5f) * jitter_strength;
+        }
+        
+        raylib::Vector3 pos = {t.position.x + jitter_x, t.radius, t.position.y + jitter_z};
+        
+        switch (a.want) {
+            case FacilityType::Stage:
+                raylib::DrawSphere(pos, t.radius, color);
+                break;
+            case FacilityType::Food:
+                raylib::DrawCylinder(pos, 0.f, t.radius, t.radius * 2.f, 4, color);
+                break;
+            case FacilityType::Bathroom:
+                raylib::DrawCube(pos, t.radius * 1.5f, t.radius * 1.5f, t.radius * 1.5f, color);
+                break;
+        }
+        
+        if (s.stress > 0.9f) {
+            for (int i = 0; i < 3; i++) {
+                float spark_x = pos.x + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
+                float spark_y = pos.y + ((rand() % 100) / 100.f) * 0.5f;
+                float spark_z = pos.z + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
+                raylib::DrawSphere({spark_x, spark_y, spark_z}, 0.03f, raylib::YELLOW);
+            }
+        }
     }
 };
 
@@ -49,9 +78,32 @@ struct RenderAttractionsSystem : System<Transform, Attraction> {
 };
 
 struct RenderFacilitiesSystem : System<Transform, Facility> {
-    void for_each_with(const Entity&, const Transform& t, const Facility&, float) const override {
-        raylib::DrawCube(vec::to3(t.position), 1.0f, 0.5f, 1.0f, raylib::GREEN);
-        raylib::DrawCubeWires(vec::to3(t.position), 1.0f, 0.5f, 1.0f, raylib::DARKGREEN);
+    void for_each_with(const Entity&, const Transform& t, const Facility& f, float) const override {
+        raylib::Color color, wire_color;
+        switch (f.type) {
+            case FacilityType::Bathroom:
+                color = raylib::BLUE;
+                wire_color = raylib::DARKBLUE;
+                break;
+            case FacilityType::Food:
+                color = raylib::YELLOW;
+                wire_color = raylib::ORANGE;
+                break;
+            case FacilityType::Stage:
+                color = raylib::MAGENTA;
+                wire_color = raylib::DARKPURPLE;
+                break;
+        }
+        
+        raylib::DrawCube(vec::to3(t.position), 1.5f, 0.5f, 1.5f, color);
+        raylib::DrawCubeWires(vec::to3(t.position), 1.5f, 0.5f, 1.5f, wire_color);
+        
+        float fill_pct = (float)f.current_occupants / (float)f.capacity;
+        float fill_height = fill_pct * 1.0f;
+        if (fill_height > 0.01f) {
+            raylib::Vector3 fill_pos = {t.position.x, 0.5f + fill_height * 0.5f, t.position.y};
+            raylib::DrawCube(fill_pos, 1.4f, fill_height, 1.4f, raylib::Fade(wire_color, 0.6f));
+        }
     }
 };
 
