@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dance": {
+      "command": "./output/dance.exe",
+      "args": ["--mcp"],
+      "env": {}
+    }
+  }
+}
