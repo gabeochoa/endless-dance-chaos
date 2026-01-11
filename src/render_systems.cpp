@@ -40,6 +40,13 @@ struct RenderAgentsSystem : System<Transform, Agent> {
     }
 };
 
+struct RenderFacilitiesSystem : System<Transform, Facility> {
+    void for_each_with(const Entity&, const Transform& t, const Facility&, float) const override {
+        raylib::DrawCube(vec::to3(t.position), 1.0f, 0.5f, 1.0f, raylib::GREEN);
+        raylib::DrawCubeWires(vec::to3(t.position), 1.0f, 0.5f, 1.0f, raylib::DARKGREEN);
+    }
+};
+
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -65,6 +72,7 @@ struct EndRenderSystem : System<> {
 void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGroundSystem>());
+    sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());

@@ -17,10 +17,20 @@ void game() {
     cam_entity.addComponent<ProvidesCamera>();
     EntityHelper::registerSingleton<ProvidesCamera>(cam_entity);
     
-    Entity& test_agent = EntityHelper::createEntity();
-    test_agent.addComponent<Transform>(0.f, 0.f);
-    test_agent.addComponent<Agent>();
-    test_agent.get<Transform>().velocity = {1.f, 0.5f};
+    // Create a facility (goal for agents)
+    Entity& facility = EntityHelper::createEntity();
+    facility.addComponent<Transform>(5.f, 5.f);
+    facility.addComponent<Facility>();
+    
+    // Spawn multiple agents in a cluster
+    for (int i = 0; i < 20; i++) {
+        Entity& agent = EntityHelper::createEntity();
+        float x = -3.f + (i % 5) * 0.5f;
+        float z = -3.f + (i / 5) * 0.5f;
+        agent.addComponent<Transform>(x, z);
+        agent.addComponent<Agent>();
+        agent.addComponent<BoidsBehavior>();
+    }
     
     EntityHelper::merge_entity_arrays();
     

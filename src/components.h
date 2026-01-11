@@ -26,13 +26,17 @@ struct Agent : BaseComponent {
 };
 
 struct BoidsBehavior : BaseComponent {
-    float separation_weight = 1.5f;
+    float separation_weight = 1.0f;
     float path_follow_weight = 2.0f;
-    float goal_pull_weight = 0.5f;
-    float max_speed = 3.0f;
+    float goal_pull_weight = 2.0f;
+    float max_speed = 4.0f;
 };
 
 struct HasStress : BaseComponent {
     float stress = 0.f;
     float stress_rate = 0.1f;
+};
+
+struct Facility : BaseComponent {
+    float absorption_rate = 2.0f;
 };
