@@ -107,9 +107,65 @@ struct AgentLifetimeSystem : System<Agent> {
     }
 };
 
+struct AttractionSpawnSystem : System<Transform, Attraction> {
+    void for_each_with(Entity& e, Transform& t, Attraction& a, float dt) override {
+        a.spawn_timer += dt;
+        
+        float spawn_interval = 1.0f / a.spawn_rate;
+        while (a.spawn_timer >= spawn_interval && a.current_count < a.capacity) {
+            a.spawn_timer -= spawn_interval;
+            
+            Entity& agent = EntityHelper::createEntity();
+            float offset_x = ((float)(rand() % 100) / 100.f - 0.5f) * 0.5f;
+            float offset_z = ((float)(rand() % 100) / 100.f - 0.5f) * 0.5f;
+            agent.addComponent<Transform>(t.position.x + offset_x, t.position.y + offset_z);
+            agent.addComponent<Agent>().origin_id = e.id;
+            agent.addComponent<BoidsBehavior>();
+            
+            a.current_count++;
+        }
+    }
+};
+
+struct FacilityAbsorptionSystem : System<Transform, Facility> {
+    static constexpr float ABSORPTION_RADIUS = 1.0f;
+
+    void for_each_with(Entity& facility, Transform& f_t, Facility& f, float dt) override {
+        f.absorption_timer += dt;
+        
+        float absorb_interval = 1.0f / f.absorption_rate;
+        if (f.absorption_timer < absorb_interval) return;
+        
+        auto agents = EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<Agent>()
+            .gen();
+        
+        for (Entity& agent : agents) {
+            Transform& a_t = agent.get<Transform>();
+            float dist = vec::distance(f_t.position, a_t.position);
+            
+            if (dist < ABSORPTION_RADIUS) {
+                f.absorption_timer -= absorb_interval;
+                
+                Agent& a = agent.get<Agent>();
+                auto origin = EntityHelper::getEntityForID(a.origin_id);
+                if (origin.valid() && origin->has<Attraction>()) {
+                    origin->get<Attraction>().current_count--;
+                }
+                
+                EntityHelper::markIDForCleanup(agent.id);
+                break;
+            }
+        }
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
+    sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
     sm.register_update_system(std::make_unique<BoidsSystem>());
     sm.register_update_system(std::make_unique<MovementSystem>());
     sm.register_update_system(std::make_unique<AgentLifetimeSystem>());
+    sm.register_update_system(std::make_unique<FacilityAbsorptionSystem>());
 }
