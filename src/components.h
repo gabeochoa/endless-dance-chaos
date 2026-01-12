@@ -98,8 +98,9 @@ struct AgentTarget : BaseComponent {
 };
 
 struct AgentSteering : BaseComponent {
-    vec2 path_direction{0, 0};  // Direction from path following
-    vec2 separation{0, 0};      // Separation force from neighbors
+    vec2 path_direction{0, 0};    // Direction from path following
+    vec2 separation{0, 0};        // Separation force from neighbors
+    int wander_target_tile = -1;  // Tile ID we're wandering toward
 };
 
 // Marks an agent as being inside a facility
