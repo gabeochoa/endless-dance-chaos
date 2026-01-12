@@ -34,6 +34,34 @@ struct RenderGroundSystem : System<> {
 };
 
 struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
+    void render_agent_shape(raylib::Vector3 pos, float radius,
+                            FacilityType want, raylib::Color color) const {
+        switch (want) {
+            case FacilityType::Stage:
+                raylib::DrawSphere(pos, radius, color);
+                break;
+            case FacilityType::Food:
+                raylib::DrawCylinder(pos, 0.f, radius, radius * 2.f, 4, color);
+                break;
+            case FacilityType::Bathroom:
+                raylib::DrawCube(pos, radius * 1.5f, radius * 1.5f,
+                                 radius * 1.5f, color);
+                break;
+        }
+    }
+
+    void render_stress_sparks(raylib::Vector3 pos, float stress) const {
+        if (stress <= 0.9f) return;
+
+        for (int i = 0; i < 3; i++) {
+            float spark_x = pos.x + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
+            float spark_y = pos.y + ((rand() % 100) / 100.f) * 0.5f;
+            float spark_z = pos.z + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
+            raylib::DrawSphere({spark_x, spark_y, spark_z}, 0.03f,
+                               raylib::YELLOW);
+        }
+    }
+
     void for_each_with(const Entity& e, const Transform& t, const Agent& a,
                        const HasStress& s, float) const override {
         raylib::Color color =
@@ -56,29 +84,8 @@ struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
             pos.z += inside.slot_offset.y;
         }
 
-        switch (a.want) {
-            case FacilityType::Stage:
-                raylib::DrawSphere(pos, t.radius, color);
-                break;
-            case FacilityType::Food:
-                raylib::DrawCylinder(pos, 0.f, t.radius, t.radius * 2.f, 4,
-                                     color);
-                break;
-            case FacilityType::Bathroom:
-                raylib::DrawCube(pos, t.radius * 1.5f, t.radius * 1.5f,
-                                 t.radius * 1.5f, color);
-                break;
-        }
-
-        if (s.stress > 0.9f) {
-            for (int i = 0; i < 3; i++) {
-                float spark_x = pos.x + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
-                float spark_y = pos.y + ((rand() % 100) / 100.f) * 0.5f;
-                float spark_z = pos.z + ((rand() % 100) / 100.f - 0.5f) * 0.5f;
-                raylib::DrawSphere({spark_x, spark_y, spark_z}, 0.03f,
-                                   raylib::YELLOW);
-            }
-        }
+        render_agent_shape(pos, t.radius, a.want, color);
+        render_stress_sparks(pos, s.stress);
     }
 };
 
@@ -93,84 +100,70 @@ struct RenderAttractionsSystem : System<Transform, Attraction> {
 };
 
 struct RenderFacilitiesSystem : System<Transform, Facility> {
-    static constexpr float FACILITY_SIZE = 1.5f;
-    static constexpr float FACILITY_HEIGHT = 0.5f;
+    static constexpr float SIZE = 1.5f;
+    static constexpr float HEIGHT = 0.5f;
+
+    void render_stage(const Transform& t, raylib::Color color,
+                      raylib::Color wire_color) const {
+        raylib::Vector3 pos = {t.position.x, HEIGHT * 0.5f, t.position.y};
+        // Wireframe only so we can see people inside
+        raylib::DrawCubeWires(pos, SIZE, HEIGHT, SIZE, wire_color);
+        // Floor
+        raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, {SIZE, SIZE},
+                          raylib::Fade(color, 0.3f));
+    }
+
+    void render_enclosed(const Transform& t, raylib::Color color,
+                         raylib::Color wire_color) const {
+        float hs = SIZE * 0.5f;
+        float hh = HEIGHT * 0.5f;
+        float wall = 0.05f;
+
+        // 3 walls (open on entry side - negative X)
+        raylib::DrawCube({t.position.x + hs, hh, t.position.y}, wall, HEIGHT,
+                         SIZE, color);
+        raylib::DrawCube({t.position.x, hh, t.position.y - hs}, SIZE, HEIGHT,
+                         wall, color);
+        raylib::DrawCube({t.position.x, hh, t.position.y + hs}, SIZE, HEIGHT,
+                         wall, color);
+
+        // Floor
+        raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, {SIZE, SIZE},
+                          raylib::Fade(color, 0.3f));
+
+        // Wireframe outline
+        raylib::Vector3 pos = {t.position.x, hh, t.position.y};
+        raylib::DrawCubeWires(pos, SIZE, HEIGHT, SIZE, wire_color);
+    }
 
     void for_each_with(const Entity&, const Transform& t, const Facility& f,
                        float) const override {
-        raylib::Color color, wire_color;
         switch (f.type) {
+            case FacilityType::Stage:
+                render_stage(t, raylib::MAGENTA, raylib::DARKPURPLE);
+                break;
             case FacilityType::Bathroom:
-                color = raylib::BLUE;
-                wire_color = raylib::DARKBLUE;
+                render_enclosed(t, raylib::BLUE, raylib::DARKBLUE);
                 break;
             case FacilityType::Food:
-                color = raylib::YELLOW;
-                wire_color = raylib::ORANGE;
+                render_enclosed(t, raylib::YELLOW, raylib::ORANGE);
                 break;
-            case FacilityType::Stage:
-                color = raylib::MAGENTA;
-                wire_color = raylib::DARKPURPLE;
-                break;
-        }
-
-        raylib::Vector3 pos = vec::to3(t.position);
-        pos.y = FACILITY_HEIGHT * 0.5f;
-
-        if (f.type == FacilityType::Stage) {
-            // Stage: wireframe only so we can see people inside
-            raylib::DrawCubeWires(pos, FACILITY_SIZE, FACILITY_HEIGHT,
-                                  FACILITY_SIZE, wire_color);
-            // Draw a floor
-            raylib::DrawPlane({t.position.x, 0.02f, t.position.y},
-                              {FACILITY_SIZE, FACILITY_SIZE},
-                              raylib::Fade(color, 0.3f));
-            // State indicator rendered as 2D overlay by
-            // RenderStageIndicatorsSystem
-        } else {
-            // Other facilities: draw 3 walls (open on entry side - negative X)
-            float hs = FACILITY_SIZE * 0.5f;    // half size
-            float hh = FACILITY_HEIGHT * 0.5f;  // half height
-            float wall_thick = 0.05f;
-
-            // Back wall (positive X side)
-            raylib::DrawCube({t.position.x + hs, hh, t.position.y}, wall_thick,
-                             FACILITY_HEIGHT, FACILITY_SIZE, color);
-            // Left wall (negative Z side)
-            raylib::DrawCube({t.position.x, hh, t.position.y - hs},
-                             FACILITY_SIZE, FACILITY_HEIGHT, wall_thick, color);
-            // Right wall (positive Z side)
-            raylib::DrawCube({t.position.x, hh, t.position.y + hs},
-                             FACILITY_SIZE, FACILITY_HEIGHT, wall_thick, color);
-
-            // Draw floor
-            raylib::DrawPlane({t.position.x, 0.02f, t.position.y},
-                              {FACILITY_SIZE, FACILITY_SIZE},
-                              raylib::Fade(color, 0.3f));
-
-            // Wireframe outline
-            raylib::DrawCubeWires(pos, FACILITY_SIZE, FACILITY_HEIGHT,
-                                  FACILITY_SIZE, wire_color);
         }
     }
 };
 
 struct RenderPathsSystem : System<Transform, PathNode> {
+    static constexpr raylib::Color SIDEWALK_MAIN = {180, 175, 165, 255};
+    static constexpr raylib::Color SIDEWALK_EDGE = {140, 135, 125, 255};
+    static constexpr raylib::Color SIDEWALK_CRACK = {120, 115, 105, 255};
+
     void for_each_with(const Entity&, const Transform& t, const PathNode& node,
                        float) const override {
-        // Sidewalk colors
-        raylib::Color sidewalkMain = {180, 175, 165,
-                                      255};  // Warm concrete gray
-        raylib::Color sidewalkEdge = {140, 135, 125,
-                                      255};  // Darker edge/border
-        raylib::Color sidewalkCrack = {120, 115, 105,
-                                       255};  // Crack/joint lines
-
         if (node.next_node_id < 0) {
             // Dead-end node - draw a small circular pad
             raylib::DrawCylinder({t.position.x, 0.01f, t.position.y},
                                  node.width * 0.5f, node.width * 0.5f, 0.02f,
-                                 16, sidewalkMain);
+                                 16, SIDEWALK_MAIN);
             return;
         }
 
@@ -194,10 +187,10 @@ struct RenderPathsSystem : System<Transform, PathNode> {
 
         // Draw main sidewalk surface as two triangles (both sides for
         // visibility)
-        raylib::DrawTriangle3D(v1, v2, v3, sidewalkMain);
-        raylib::DrawTriangle3D(v3, v2, v1, sidewalkMain);  // Back face
-        raylib::DrawTriangle3D(v1, v3, v4, sidewalkMain);
-        raylib::DrawTriangle3D(v4, v3, v1, sidewalkMain);  // Back face
+        raylib::DrawTriangle3D(v1, v2, v3, SIDEWALK_MAIN);
+        raylib::DrawTriangle3D(v3, v2, v1, SIDEWALK_MAIN);  // Back face
+        raylib::DrawTriangle3D(v1, v3, v4, SIDEWALK_MAIN);
+        raylib::DrawTriangle3D(v4, v3, v1, SIDEWALK_MAIN);  // Back face
 
         // Draw sidewalk edges (borders)
         raylib::Vector3 e1a = {a.x + perp.x * hw, y + 0.005f,
@@ -209,8 +202,8 @@ struct RenderPathsSystem : System<Transform, PathNode> {
         raylib::Vector3 e2b = {b.x - perp.x * hw, y + 0.005f,
                                b.y - perp.y * hw};
 
-        raylib::DrawLine3D(e1a, e1b, sidewalkEdge);
-        raylib::DrawLine3D(e2a, e2b, sidewalkEdge);
+        raylib::DrawLine3D(e1a, e1b, SIDEWALK_EDGE);
+        raylib::DrawLine3D(e2a, e2b, SIDEWALK_EDGE);
 
         // Draw expansion joint lines across the sidewalk (every ~1 unit)
         float segLen = vec::length({b.x - a.x, b.y - a.y});
@@ -223,7 +216,7 @@ struct RenderPathsSystem : System<Transform, PathNode> {
                                   jointPos.y + perp.y * hw};
             raylib::Vector3 j2 = {jointPos.x - perp.x * hw, y + 0.005f,
                                   jointPos.y - perp.y * hw};
-            raylib::DrawLine3D(j1, j2, sidewalkCrack);
+            raylib::DrawLine3D(j1, j2, SIDEWALK_CRACK);
         }
     }
 };
@@ -231,9 +224,7 @@ struct RenderPathsSystem : System<Transform, PathNode> {
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-        if (cam) {
-            raylib::EndMode3D();
-        }
+        if (cam) raylib::EndMode3D();
     }
 };
 
@@ -241,14 +232,47 @@ struct EndMode3DSystem : System<> {
 struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
     static constexpr float INDICATOR_RADIUS = 30.0f;
 
+    struct IndicatorStyle {
+        raylib::Color bg;
+        raylib::Color fg;
+        raylib::Color icon;
+        const char* icon_char;
+    };
+
+    static IndicatorStyle get_style(StageState state) {
+        switch (state) {
+            case StageState::Idle:
+                return {{60, 60, 60, 200},
+                        {100, 100, 100, 220},
+                        {150, 150, 150, 255},
+                        "Z"};
+            case StageState::Announcing:
+                return {{80, 60, 20, 200},
+                        {255, 200, 50, 230},
+                        {255, 230, 100, 255},
+                        "!"};
+            case StageState::Performing:
+                return {{30, 80, 30, 200},
+                        {80, 220, 80, 230},
+                        {150, 255, 150, 255},
+                        "*"};
+            case StageState::Clearing:
+                return {{80, 30, 30, 200},
+                        {220, 60, 60, 230},
+                        {255, 100, 100, 255},
+                        "X"};
+        }
+        return {
+            {60, 60, 60, 200}, {100, 100, 100, 220}, {150, 150, 150, 255}, "?"};
+    }
+
     void for_each_with(const Entity&, const Transform& t, const Facility&,
                        const StageInfo& info, float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (!cam) return;
 
         // Project 3D position to screen space
-        raylib::Vector3 world_pos = {t.position.x, 1.5f,
-                                     t.position.y};  // Above the stage
+        raylib::Vector3 world_pos = {t.position.x, 1.5f, t.position.y};
         raylib::Vector2 screen_pos =
             raylib::GetWorldToScreen(world_pos, cam->cam.camera);
 
@@ -259,37 +283,8 @@ struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
 
         float radius = INDICATOR_RADIUS;
         float progress = info.get_progress();
-
-        // Pick colors based on state
-        raylib::Color bg_color, fg_color, icon_color;
-        const char* icon_char = "?";
-
-        switch (info.state) {
-            case StageState::Idle:
-                bg_color = raylib::Color{60, 60, 60, 200};
-                fg_color = raylib::Color{100, 100, 100, 220};
-                icon_color = raylib::Color{150, 150, 150, 255};
-                icon_char = "Z";  // Sleeping/idle
-                break;
-            case StageState::Announcing:
-                bg_color = raylib::Color{80, 60, 20, 200};
-                fg_color = raylib::Color{255, 200, 50, 230};
-                icon_color = raylib::Color{255, 230, 100, 255};
-                icon_char = "!";  // Alert/upcoming
-                break;
-            case StageState::Performing:
-                bg_color = raylib::Color{30, 80, 30, 200};
-                fg_color = raylib::Color{80, 220, 80, 230};
-                icon_color = raylib::Color{150, 255, 150, 255};
-                icon_char = "*";  // Music/performing (♫ not reliably rendered)
-                break;
-            case StageState::Clearing:
-                bg_color = raylib::Color{80, 30, 30, 200};
-                fg_color = raylib::Color{220, 60, 60, 230};
-                icon_color = raylib::Color{255, 100, 100, 255};
-                icon_char = "X";  // Clearing out
-                break;
-        }
+        auto [bg_color, fg_color, icon_color, icon_char] =
+            get_style(info.state);
 
         // Background circle
         raylib::DrawCircle((int) screen_pos.x, (int) screen_pos.y, radius,
