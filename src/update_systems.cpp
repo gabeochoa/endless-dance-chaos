@@ -4,6 +4,8 @@
 
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "entity_makers.h"
+#include "game.h"
 #include "rl.h"
 #include "systems.h"
 #include "vec_util.h"
@@ -11,6 +13,112 @@
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
         cam.cam.handle_input(dt);
+    }
+};
+
+struct MousePickingSystem : System<ProvidesCamera, BuilderState> {
+    void for_each_with(Entity&, ProvidesCamera& cam, BuilderState& builder,
+                       float) override {
+        if (!builder.active) return;
+
+        // Get mouse ray from camera
+        raylib::Ray ray = raylib::GetMouseRay(raylib::GetMousePosition(),
+                                              cam.cam.camera);
+
+        // Intersect with Y=0 ground plane
+        // For orthographic camera, project along ray direction
+        if (std::abs(ray.direction.y) < 0.0001f) {
+            builder.hover_valid = false;
+            return;
+        }
+
+        float t = -ray.position.y / ray.direction.y;
+        if (t < 0) {
+            builder.hover_valid = false;
+            return;
+        }
+
+        vec3 hit = {ray.position.x + ray.direction.x * t, 0.f,
+                    ray.position.z + ray.direction.z * t};
+
+        // Snap to grid
+        builder.hover_grid_x = (int) std::floor(hit.x / TILESIZE + 0.5f);
+        builder.hover_grid_z = (int) std::floor(hit.z / TILESIZE + 0.5f);
+        builder.hover_valid = true;
+
+        // Check if path already exists at hover position
+        builder.path_exists_at_hover =
+            find_path_tile_at(builder.hover_grid_x, builder.hover_grid_z);
+    }
+};
+
+struct PathStagingSystem : System<BuilderState, GameState> {
+    void for_each_with(Entity&, BuilderState& builder, GameState& state,
+                       float) override {
+        if (!builder.active || !builder.hover_valid) return;
+        if (state.is_game_over()) return;
+
+        bool left_down =
+            raylib::IsMouseButtonDown(raylib::MOUSE_LEFT_BUTTON);
+        bool right_down =
+            raylib::IsMouseButtonDown(raylib::MOUSE_RIGHT_BUTTON);
+        bool shift_down = raylib::IsKeyDown(raylib::KEY_LEFT_SHIFT);
+
+        bool is_removing = right_down || (left_down && shift_down);
+        bool is_placing = left_down && !shift_down;
+
+        int gx = builder.hover_grid_x;
+        int gz = builder.hover_grid_z;
+
+        // Don't add duplicates to pending queue
+        if (builder.is_pending_at(gx, gz)) return;
+
+        // Drag-to-place: as mouse moves over new tiles while held, add them
+        if (is_placing && !find_path_tile_at(gx, gz)) {
+            builder.pending_tiles.push_back({gx, gz, false});
+        }
+
+        // Drag-to-remove: queue existing tiles for removal
+        if (is_removing && find_path_tile_at(gx, gz)) {
+            builder.pending_tiles.push_back({gx, gz, true});
+        }
+    }
+};
+
+// Path confirmation - Enter commits, Escape cancels
+struct PathConfirmationSystem : System<BuilderState> {
+    void for_each_with(Entity&, BuilderState& builder, float) override {
+        if (!builder.has_pending()) return;
+
+        // Confirm with Enter key
+        if (raylib::IsKeyPressed(raylib::KEY_ENTER)) {
+            commit_pending_tiles(builder);
+            builder.clear_pending();
+        }
+
+        // Cancel with Escape key
+        if (raylib::IsKeyPressed(raylib::KEY_ESCAPE)) {
+            builder.clear_pending();
+        }
+    }
+
+    void commit_pending_tiles(BuilderState& builder) {
+        // TODO: Check cost, deduct money here
+
+        for (const auto& pending : builder.pending_tiles) {
+            if (pending.is_removal) {
+                remove_path_tile_at(pending.grid_x, pending.grid_z);
+            } else {
+                make_path_tile(pending.grid_x, pending.grid_z);
+            }
+        }
+
+        // Only recalculate signposts once after all changes
+        EntityHelper::merge_entity_arrays();
+        EntityHelper::cleanup();
+        calculate_path_signposts();
+
+        log_info("Committed {} path tile changes", builder.pending_tiles.size());
     }
 };
 
@@ -152,25 +260,49 @@ struct TargetFindingSystem
     }
 };
 
-// Follow signposts - find closest node, go to next node, stay on path
 struct PathFollowingSystem
     : System<Transform, Agent, AgentTarget, AgentSteering> {
+
+    vec2 pick_wander_direction(const Transform& t, int current_tile_id) {
+        auto current = EntityHelper::getEntityForID(current_tile_id);
+        if (!current.valid() || !current->has<PathTile>()) return {0, 0};
+
+        const PathTile& pt = current->get<PathTile>();
+        const int dx[] = {1, -1, 0, 0};
+        const int dz[] = {0, 0, 1, -1};
+
+        std::vector<vec2> neighbors;
+        neighbors.push_back(current->get<Transform>().position);
+
+        for (int i = 0; i < 4; i++) {
+            int nx = pt.grid_x + dx[i];
+            int nz = pt.grid_z + dz[i];
+            if (find_path_tile_at(nx, nz)) {
+                neighbors.push_back({nx * TILESIZE, nz * TILESIZE});
+            }
+        }
+
+        if (neighbors.empty()) return {0, 0};
+
+        vec2 target = neighbors[rand() % neighbors.size()];
+        vec2 dir = {target.x - t.position.x, target.y - t.position.y};
+        return vec::length(dir) > EPSILON ? vec::norm(dir) : vec2{0, 0};
+    }
+
     void for_each_with(Entity&, Transform& t, Agent& a,
                        AgentTarget& agent_target, AgentSteering& steering,
                        float) override {
-        // Find closest PathNode - but prefer nodes whose NEXT node is closer to
-        // our target This prevents oscillation at hub nodes
-        auto score_node = [&](const Entity& node) {
-            const Transform& node_t = node.get<Transform>();
-            float dist = vec::distance(t.position, node_t.position);
-            const PathSignpost& sp = node.get<PathSignpost>();
+        auto score_tile = [&](const Entity& tile) {
+            const Transform& tile_t = tile.get<Transform>();
+            float dist = vec::distance(t.position, tile_t.position);
+            const PathSignpost& sp = tile.get<PathSignpost>();
             int next_id = sp.get_next_node(a.want);
             float score = dist;
             if (next_id >= 0 && agent_target.facility_id >= 0) {
-                auto next_node = EntityHelper::getEntityForID(next_id);
-                if (next_node.valid() && next_node->has<Transform>()) {
+                auto next_tile = EntityHelper::getEntityForID(next_id);
+                if (next_tile.valid() && next_tile->has<Transform>()) {
                     float next_to_target =
-                        vec::distance(next_node->get<Transform>().position,
+                        vec::distance(next_tile->get<Transform>().position,
                                       agent_target.target_pos);
                     score = dist + next_to_target * 0.1f;
                 }
@@ -178,37 +310,35 @@ struct PathFollowingSystem
             return score;
         };
 
-        auto path_nodes =
+        auto path_tiles =
             EntityQuery()
                 .whereHasComponent<Transform>()
-                .whereHasComponent<PathNode>()
+                .whereHasComponent<PathTile>()
                 .whereHasComponent<PathSignpost>()
                 .orderByLambda([&](const Entity& a, const Entity& b) {
-                    return score_node(a) < score_node(b);
+                    return score_tile(a) < score_tile(b);
                 })
                 .gen();
 
-        if (path_nodes.empty()) {
+        if (path_tiles.empty()) {
             steering.path_direction = {0, 0};
             return;
         }
 
-        int closest_node_id = path_nodes.front().get().id;
+        int closest_tile_id = path_tiles.front().get().id;
 
-        // Ask this node: "where do I go next?"
-        auto closest = EntityHelper::getEntityForID(closest_node_id);
+        auto closest = EntityHelper::getEntityForID(closest_tile_id);
         if (!closest.valid()) {
             steering.path_direction = {0, 0};
             return;
         }
 
         const PathSignpost& signpost = closest->get<PathSignpost>();
-        int next_node_id = signpost.get_next_node(a.want);
+        int next_tile_id = signpost.get_next_node(a.want);
 
-        // -1 means we're at the destination
-        if (next_node_id < 0) {
-            // Go directly to facility
-            if (agent_target.facility_id >= 0) {
+        if (next_tile_id < 0) {
+            float dist_to_target = vec::distance(t.position, agent_target.target_pos);
+            if (agent_target.facility_id >= 0 && dist_to_target < TILESIZE * 1.5f) {
                 vec2 dir = {agent_target.target_pos.x - t.position.x,
                             agent_target.target_pos.y - t.position.y};
                 if (vec::length(dir) > EPSILON) {
@@ -216,21 +346,21 @@ struct PathFollowingSystem
                     return;
                 }
             }
+            steering.path_direction = pick_wander_direction(t, closest_tile_id);
+            return;
+        }
+
+        // Go toward the next tile, but stay close to the path
+        auto next_tile = EntityHelper::getEntityForID(next_tile_id);
+        auto current_tile = EntityHelper::getEntityForID(closest_tile_id);
+        if (!next_tile.valid() || !next_tile->has<Transform>() ||
+            !current_tile.valid()) {
             steering.path_direction = {0, 0};
             return;
         }
 
-        // Go toward the next node, but stay close to the path
-        auto next_node = EntityHelper::getEntityForID(next_node_id);
-        auto current_node = EntityHelper::getEntityForID(closest_node_id);
-        if (!next_node.valid() || !next_node->has<Transform>() ||
-            !current_node.valid()) {
-            steering.path_direction = {0, 0};
-            return;
-        }
-
-        vec2 current_pos = current_node->get<Transform>().position;
-        vec2 next_pos = next_node->get<Transform>().position;
+        vec2 current_pos = current_tile->get<Transform>().position;
+        vec2 next_pos = next_tile->get<Transform>().position;
 
         // Calculate path segment
         vec2 path_vec = {next_pos.x - current_pos.x,
@@ -238,7 +368,7 @@ struct PathFollowingSystem
         float path_len = vec::length(path_vec);
 
         if (path_len < EPSILON) {
-            // Nodes are co-located, just go to next
+            // Tiles are co-located, just go to next
             vec2 dir = {next_pos.x - t.position.x, next_pos.y - t.position.y};
             if (vec::length(dir) > EPSILON) {
                 steering.path_direction = vec::norm(dir);
@@ -264,7 +394,7 @@ struct PathFollowingSystem
 
         // Blend: pull toward path + move along path
         constexpr float PATH_PULL_RADIUS =
-            0.3f;  // Pull toward path within this distance
+            0.5f;  // Pull toward path within this distance (half a tile)
 
         vec2 final_dir;
         if (dist_from_path > PATH_PULL_RADIUS) {
@@ -273,7 +403,7 @@ struct PathFollowingSystem
                             closest_on_path.y - t.position.y};
             final_dir = vec::norm(to_path);
         } else {
-            // Close enough - move along path toward next node
+            // Close enough - move along path toward next tile
             vec2 to_next = {next_pos.x - t.position.x,
                             next_pos.y - t.position.y};
             final_dir = vec::norm(to_next);
@@ -326,11 +456,10 @@ struct SeparationSystem : System<Transform, Agent, AgentSteering> {
 // Combine steering forces into final velocity - SIMPLE version
 struct VelocityCombineSystem : System<Transform, AgentSteering> {
     static constexpr float MOVE_SPEED = 3.0f;
-    static constexpr float SEPARATION_WEIGHT = 0.2f;  // Light separation
+    static constexpr float SEPARATION_WEIGHT = 0.2f;
 
     void for_each_with(Entity&, Transform& t, AgentSteering& steering,
                        float) override {
-        // Path direction is primary, separation is secondary
         vec2 move_dir = {steering.path_direction.x +
                              steering.separation.x * SEPARATION_WEIGHT,
                          steering.path_direction.y +
@@ -338,9 +467,13 @@ struct VelocityCombineSystem : System<Transform, AgentSteering> {
 
         float move_len = vec::length(move_dir);
         if (move_len > EPSILON) {
-            move_dir = vec::norm(move_dir);
-            t.velocity.x = move_dir.x * MOVE_SPEED;
-            t.velocity.y = move_dir.y * MOVE_SPEED;
+            // Snap to cardinal direction (no diagonal movement)
+            if (std::abs(move_dir.x) > std::abs(move_dir.y)) {
+                move_dir = {move_dir.x > 0 ? 1.f : -1.f, 0.f};
+            } else {
+                move_dir = {0.f, move_dir.y > 0 ? 1.f : -1.f};
+            }
+            t.velocity = {move_dir.x * MOVE_SPEED, move_dir.y * MOVE_SPEED};
         } else {
             t.velocity = {0, 0};
         }
@@ -623,45 +756,30 @@ struct FacilityExitSystem
 };
 
 // Counts agents near each path segment and updates congestion
-struct PathCongestionSystem : System<Transform, PathNode> {
+struct PathCongestionSystem : System<Transform, PathTile> {
     void once(float) override {
         // Reset all path loads at the start of each frame
-        auto paths = EntityQuery().whereHasComponent<PathNode>().gen();
-        for (Entity& path : paths) {
-            path.get<PathNode>().current_load = 0.f;
+        auto tiles = EntityQuery().whereHasComponent<PathTile>().gen();
+        for (Entity& tile : tiles) {
+            tile.get<PathTile>().current_load = 0.f;
         }
     }
 
-    void for_each_with(Entity&, Transform& path_t, PathNode& node,
+    void for_each_with(Entity&, Transform& tile_t, PathTile& tile,
                        float) override {
-        auto next_opt = EntityHelper::getEntityForID(node.next_node_id);
-        if (!next_opt.valid() || !next_opt->has<Transform>()) return;
+        // Count agents within this tile's area (half a tile radius)
+        float half_tile = TILESIZE * 0.5f;
 
-        vec2 a = path_t.position;
-        vec2 b = next_opt->get<Transform>().position;
-        vec2 segment = {b.x - a.x, b.y - a.y};
-        float segment_len = vec::length(segment);
-        if (segment_len < EPSILON) return;
-
-        vec2 segment_dir = {segment.x / segment_len, segment.y / segment_len};
-        float half_width = node.width * 0.5f;
-
-        // Count agents on this path segment
-        node.current_load =
+        tile.current_load =
             (float) EntityQuery()
                 .whereHasComponent<Transform>()
                 .whereHasComponent<Agent>()
                 .whereMissingComponent<InsideFacility>()
                 .whereLambda([&](const Entity& agent) {
                     vec2 agent_pos = agent.get<Transform>().position;
-                    vec2 to_agent = {agent_pos.x - a.x, agent_pos.y - a.y};
-                    float projection =
-                        to_agent.x * segment_dir.x + to_agent.y * segment_dir.y;
-                    if (projection < 0 || projection > segment_len)
-                        return false;
-                    vec2 closest = {a.x + segment_dir.x * projection,
-                                    a.y + segment_dir.y * projection};
-                    return vec::distance(agent_pos, closest) <= half_width;
+                    float dx = std::abs(agent_pos.x - tile_t.position.x);
+                    float dz = std::abs(agent_pos.y - tile_t.position.y);
+                    return dx <= half_tile && dz <= half_tile;
                 })
                 .gen_count();
     }
@@ -673,50 +791,31 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
     static constexpr float TIME_STRESS_THRESHOLD = 15.f;
     static constexpr float CONGESTION_STRESS_RATE = 0.15f;
 
-    // Check if a position is on a path segment
-    static bool is_on_path_segment(const vec2& pos, const Entity& path) {
-        const PathNode& node = path.get<PathNode>();
-        if (node.next_node_id < 0) return false;
-
-        auto next_opt = EntityHelper::getEntityForID(node.next_node_id);
-        if (!next_opt.valid() || !next_opt->has<Transform>()) return false;
-
-        vec2 a = path.get<Transform>().position;
-        vec2 b = next_opt->get<Transform>().position;
-        vec2 segment = {b.x - a.x, b.y - a.y};
-        float segment_len = vec::length(segment);
-        if (segment_len < EPSILON) return false;
-
-        vec2 segment_dir = {segment.x / segment_len, segment.y / segment_len};
-
-        // Project position onto segment
-        vec2 to_pos = {pos.x - a.x, pos.y - a.y};
-        float projection = to_pos.x * segment_dir.x + to_pos.y * segment_dir.y;
-        if (projection < 0 || projection > segment_len) return false;
-
-        vec2 closest = {a.x + segment_dir.x * projection,
-                        a.y + segment_dir.y * projection};
-        float dist = vec::distance(pos, closest);
-
-        return dist <= node.width * 0.5f;
+    // Check if a position is on a path tile
+    static bool is_on_path_tile(const vec2& pos, const Entity& tile) {
+        const Transform& tile_t = tile.get<Transform>();
+        float half_tile = TILESIZE * 0.5f;
+        float dx = std::abs(pos.x - tile_t.position.x);
+        float dz = std::abs(pos.y - tile_t.position.y);
+        return dx <= half_tile && dz <= half_tile;
     }
 
-    // Find the path segment this agent is on and return its congestion ratio
+    // Find the path tile this agent is on and return its congestion ratio
     float get_path_congestion(const vec2& pos) {
-        auto paths = EntityQuery()
+        auto tiles = EntityQuery()
                          .whereHasComponent<Transform>()
-                         .whereHasComponent<PathNode>()
-                         .whereLambda([&pos](const Entity& path) {
-                             return is_on_path_segment(pos, path);
+                         .whereHasComponent<PathTile>()
+                         .whereLambda([&pos](const Entity& tile) {
+                             return is_on_path_tile(pos, tile);
                          })
                          .orderByLambda([](const Entity& a, const Entity& b) {
-                             return a.get<PathNode>().congestion_ratio() >
-                                    b.get<PathNode>().congestion_ratio();
+                             return a.get<PathTile>().congestion_ratio() >
+                                    b.get<PathTile>().congestion_ratio();
                          })
                          .gen();
 
-        if (paths.empty()) return 0.f;
-        return paths.front().get().get<PathNode>().congestion_ratio();
+        if (tiles.empty()) return 0.f;
+        return tiles.front().get().get<PathTile>().congestion_ratio();
     }
 
     void for_each_with(Entity& e, Transform& t, Agent& a, HasStress& s,
@@ -797,6 +896,12 @@ void register_update_systems(SystemManager& sm) {
 
     // Core systems
     sm.register_update_system(std::make_unique<CameraInputSystem>());
+
+    // Path builder systems (mouse picking, staging, confirmation)
+    sm.register_update_system(std::make_unique<MousePickingSystem>());
+    sm.register_update_system(std::make_unique<PathStagingSystem>());
+    sm.register_update_system(std::make_unique<PathConfirmationSystem>());
+
     sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
 
     // Facility state machines

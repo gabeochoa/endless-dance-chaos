@@ -10,6 +10,9 @@
 
 using namespace afterhours;
 
+// Sophie - central entity holding all singletons
+Entity& make_sophie();
+
 // Facilities
 Entity& make_stage(float x, float z);
 Entity& make_bathroom(float x, float z);
@@ -19,19 +22,14 @@ Entity& make_food(float x, float z);
 Entity& make_attraction(float x, float z, float spawn_rate = 5.0f,
                         int capacity = 100);
 
-// Path nodes
-Entity& make_path_node(float x, float z, int next_node_id = -1,
-                       float width = 1.5f);
-Entity& make_hub(float x, float z);  // Path node with no next (junction point)
+// Path tiles
+Entity& make_path_tile(int grid_x, int grid_z);
+void remove_path_tile_at(int grid_x, int grid_z);
+bool find_path_tile_at(int grid_x, int grid_z);
+void create_initial_path_layout();  // Pre-place starting paths
 
 // Agents (spawned by attractions, but can be created manually)
 Entity& make_agent(float x, float z, FacilityType want, int origin_id = -1);
-
-// Camera
-Entity& make_camera();
-
-// Game state singleton
-Entity& make_game_state();
 
 // Calculate signposts after all paths are created
 void calculate_path_signposts();

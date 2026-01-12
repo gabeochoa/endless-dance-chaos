@@ -17,8 +17,7 @@ void game() {
     SystemManager systems;
     register_all_systems(systems);
 
-    make_camera();
-    make_game_state();
+    make_sophie();
 
     // Create an attraction (spawns agents)
     make_attraction(-5.f, -5.f, 5.0f, 100);
@@ -28,31 +27,12 @@ void game() {
     make_food(5.f, 0.f);
     make_stage(5.f, 3.f);
 
-    // Path to bathroom (bottom)
-    Entity& bath_end = make_path_node(5.f, -3.f);
-    Entity& bath_mid = make_path_node(0.f, -3.f, bath_end.id);
-
-    // Path to food (middle)
-    Entity& food_end = make_path_node(5.f, 0.f);
-    Entity& food_mid = make_path_node(0.f, 0.f, food_end.id);
-
-    // Path to stage (top)
-    Entity& stage_end = make_path_node(5.f, 3.f);
-    Entity& stage_mid = make_path_node(0.f, 3.f, stage_end.id);
-
-    // Central hub connecting attraction to all paths
-    Entity& hub = make_path_node(-3.f, 0.f, food_mid.id);
-    make_path_node(-3.f, 0.f,
-                   bath_mid.id);  // hub_to_bath (co-located with hub)
-    make_path_node(-3.f, 0.f,
-                   stage_mid.id);  // hub_to_stage (co-located with hub)
-
-    // Path from attraction to hub
-    make_path_node(-5.f, -5.f, hub.id);
+    // Create initial path layout using grid tiles
+    create_initial_path_layout();
 
     EntityHelper::merge_entity_arrays();
 
-    // Calculate signposts for all path nodes
+    // Calculate signposts for path tiles
     calculate_path_signposts();
 
     while (running && !raylib::WindowShouldClose()) {

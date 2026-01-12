@@ -4,13 +4,29 @@
 #include <set>
 
 #include "afterhours/src/core/entity_query.h"
+#include "game.h"
 #include "vec_util.h"
 
-// Helper: create entity with Transform at position
 static Entity& make_entity(float x, float z) {
     Entity& e = EntityHelper::createEntity();
     e.addComponent<Transform>(x, z);
     return e;
+}
+
+Entity& make_sophie() {
+    Entity& sophie = EntityHelper::createPermanentEntity();
+
+    sophie.addComponent<ProvidesCamera>();
+    EntityHelper::registerSingleton<ProvidesCamera>(sophie);
+
+    sophie.addComponent<GameState>();
+    EntityHelper::registerSingleton<GameState>(sophie);
+
+    sophie.addComponent<BuilderState>();
+    EntityHelper::registerSingleton<BuilderState>(sophie);
+
+    log_info("Created Sophie entity with all singletons");
+    return sophie;
 }
 
 // Helper: create facility of given type
@@ -40,14 +56,6 @@ Entity& make_attraction(float x, float z, float spawn_rate, int capacity) {
     return e;
 }
 
-Entity& make_path_node(float x, float z, int next_node_id, float width) {
-    Entity& e = make_entity(x, z);
-    e.addComponent<PathNode>(next_node_id, width);
-    return e;
-}
-
-Entity& make_hub(float x, float z) { return make_path_node(x, z, -1); }
-
 Entity& make_agent(float x, float z, FacilityType want, int origin_id) {
     Entity& e = make_entity(x, z);
     e.addComponent<Agent>(want, origin_id);
@@ -55,85 +63,131 @@ Entity& make_agent(float x, float z, FacilityType want, int origin_id) {
     return e;
 }
 
-Entity& make_camera() {
-    Entity& e = EntityHelper::createPermanentEntity();
-    e.addComponent<ProvidesCamera>();
-    EntityHelper::registerSingleton<ProvidesCamera>(e);
+Entity& make_path_tile(int grid_x, int grid_z) {
+    float world_x = grid_x * TILESIZE;
+    float world_z = grid_z * TILESIZE;
+    Entity& e = make_entity(world_x, world_z);
+    e.addComponent<PathTile>(grid_x, grid_z);
     return e;
 }
 
-Entity& make_game_state() {
-    Entity& e = EntityHelper::createPermanentEntity();
-    e.addComponent<GameState>();
-    EntityHelper::registerSingleton<GameState>(e);
-    return e;
+bool find_path_tile_at(int grid_x, int grid_z) {
+    return EntityQuery()
+        .whereHasComponent<PathTile>()
+        .whereLambda([grid_x, grid_z](const Entity& e) {
+            const PathTile& pt = e.get<PathTile>();
+            return pt.grid_x == grid_x && pt.grid_z == grid_z;
+        })
+        .has_values();
 }
 
-// Calculate signposts using BIDIRECTIONAL BFS from facilities
-// This ensures EVERY node has directions to EVERY facility (Disney-style
-// signposts)
-void calculate_path_signposts() {
-    auto path_nodes = EntityQuery().whereHasComponent<PathNode>().gen();
+void remove_path_tile_at(int grid_x, int grid_z) {
+    auto tiles = EntityQuery()
+                     .whereHasComponent<PathTile>()
+                     .whereLambda([grid_x, grid_z](const Entity& e) {
+                         const PathTile& pt = e.get<PathTile>();
+                         return pt.grid_x == grid_x && pt.grid_z == grid_z;
+                     })
+                     .gen();
 
-    // Build BIDIRECTIONAL adjacency list
-    // Every edge goes both ways: A->B in PathNode means both A<->B for BFS
-    std::unordered_map<int, std::vector<int>> adjacency;
+    for (Entity& tile : tiles) {
+        tile.cleanup = true;
+    }
+}
 
-    // Store node positions for co-location checks
-    std::unordered_map<int, vec2> node_positions;
+static std::set<std::pair<int, int>> placed_tiles_set;
 
-    for (Entity& node : path_nodes) {
-        node.addComponentIfMissing<PathSignpost>();
-        node_positions[node.id] = node.get<Transform>().position;
+static void place_path_line(int x1, int z1, int x2, int z2) {
+    int dx = (x2 > x1) ? 1 : (x2 < x1) ? -1 : 0;
+    int dz = (z2 > z1) ? 1 : (z2 < z1) ? -1 : 0;
 
-        PathNode& pn = node.get<PathNode>();
-        if (pn.next_node_id >= 0) {
-            adjacency[node.id].push_back(pn.next_node_id);
-            adjacency[pn.next_node_id].push_back(node.id);
+    int x = x1, z = z1;
+    while (true) {
+        if (placed_tiles_set.find({x, z}) == placed_tiles_set.end()) {
+            make_path_tile(x, z);
+            placed_tiles_set.insert({x, z});
         }
+        if (x == x2 && z == z2) break;
+        x += dx;
+        z += dz;
+    }
+}
+
+// Pre-place initial path layout matching the original hardcoded paths
+void create_initial_path_layout() {
+    placed_tiles_set.clear();
+
+    // Attraction at (-5,-5), Hub at (-3,0)
+    // Bathroom at (5,-3), Food at (5,0), Stage at (5,3)
+
+    // Attraction to hub: L-shape (horizontal then vertical)
+    place_path_line(-5, -5, -3, -5);
+    place_path_line(-3, -5, -3, 0);
+
+    // Hub to bathroom: L-shape
+    place_path_line(-3, -3, 5, -3);
+
+    // Hub to food: straight horizontal
+    place_path_line(-3, 0, 5, 0);
+
+    // Hub to stage: L-shape
+    place_path_line(-3, 0, -3, 3);
+    place_path_line(-3, 3, 5, 3);
+
+    placed_tiles_set.clear();
+    log_info("Created initial path layout with grid tiles");
+}
+
+void calculate_path_signposts() {
+    auto path_tiles = EntityQuery().whereHasComponent<PathTile>().gen();
+    if (path_tiles.empty()) {
+        log_info("No path tiles to calculate signposts for");
+        return;
     }
 
-    // Add co-located edges (hub junctions where multiple paths meet at same
-    // position)
-    for (Entity& node_a : path_nodes) {
-        vec2 pos_a = node_a.get<Transform>().position;
-        for (Entity& node_b : path_nodes) {
-            if (node_a.id == node_b.id) continue;
-            if (vec::distance(pos_a, node_b.get<Transform>().position) < 0.1f) {
-                adjacency[node_a.id].push_back(node_b.id);
+    std::unordered_map<int, std::vector<int>> adjacency;
+    std::map<std::pair<int, int>, int> grid_to_id;
+
+    for (Entity& tile : path_tiles) {
+        const PathTile& pt = tile.get<PathTile>();
+        grid_to_id[{pt.grid_x, pt.grid_z}] = tile.id;
+    }
+
+    const int dx[] = {1, -1, 0, 0};
+    const int dz[] = {0, 0, 1, -1};
+
+    for (Entity& tile : path_tiles) {
+        tile.addComponentIfMissing<PathSignpost>();
+        const PathTile& pt = tile.get<PathTile>();
+        for (int i = 0; i < 4; i++) {
+            auto neighbor_it = grid_to_id.find({pt.grid_x + dx[i], pt.grid_z + dz[i]});
+            if (neighbor_it != grid_to_id.end()) {
+                adjacency[tile.id].push_back(neighbor_it->second);
             }
         }
     }
 
-    // For each facility type, BFS from terminal to ALL nodes
     auto facilities = EntityQuery().whereHasComponent<Facility>().gen();
 
     for (Entity& facility : facilities) {
         FacilityType type = facility.get<Facility>().type;
         vec2 facility_pos = facility.get<Transform>().position;
 
-        // Find the terminal PathNode closest to this facility
-        int terminal_node_id = -1;
+        int terminal_tile_id = -1;
         float best_dist = std::numeric_limits<float>::max();
-
-        for (Entity& node : path_nodes) {
+        for (Entity& tile : path_tiles) {
             float dist =
-                vec::distance(node.get<Transform>().position, facility_pos);
+                vec::distance(tile.get<Transform>().position, facility_pos);
             if (dist < best_dist) {
                 best_dist = dist;
-                terminal_node_id = node.id;
+                terminal_tile_id = tile.id;
             }
         }
+        if (terminal_tile_id < 0) continue;
 
-        if (terminal_node_id < 0) continue;
-
-        // BFS from terminal node through BIDIRECTIONAL graph
-        std::queue<std::pair<int, int>>
-            bfs_queue;  // (node_id, next_toward_facility)
+        std::queue<std::pair<int, int>> bfs_queue;
         std::set<int> visited;
-
-        bfs_queue.push(
-            {terminal_node_id, -1});  // -1 means "arrived at facility"
+        bfs_queue.push({terminal_tile_id, -1});
 
         while (!bfs_queue.empty()) {
             auto [current_id, next_id] = bfs_queue.front();
@@ -146,33 +200,17 @@ void calculate_path_signposts() {
             if (!current.valid() || !current->has<PathSignpost>()) continue;
 
             current->get<PathSignpost>().next_node_for[type] = next_id;
-            vec2 current_pos = current->get<Transform>().position;
 
-            // Propagate to all neighbors (bidirectional)
             auto it = adjacency.find(current_id);
             if (it != adjacency.end()) {
                 for (int neighbor_id : it->second) {
                     if (!visited.count(neighbor_id)) {
-                        // Check if neighbor is co-located with current node
-                        auto neighbor_pos_it = node_positions.find(neighbor_id);
-                        bool is_colocated = false;
-                        if (neighbor_pos_it != node_positions.end()) {
-                            is_colocated =
-                                vec::distance(current_pos,
-                                              neighbor_pos_it->second) < 0.1f;
-                        }
-
-                        // Co-located nodes share the SAME next_id (don't point
-                        // to each other) Non-co-located neighbors point to
-                        // current node
-                        int propagated_next =
-                            is_colocated ? next_id : current_id;
-                        bfs_queue.push({neighbor_id, propagated_next});
+                        bfs_queue.push({neighbor_id, current_id});
                     }
                 }
             }
         }
     }
 
-    log_info("Calculated path signposts for {} path nodes", path_nodes.size());
+    log_info("Calculated path signposts for {} path tiles", path_tiles.size());
 }
