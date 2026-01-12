@@ -1,5 +1,10 @@
+// AFTER_HOURS_REPLACE_LOGGING and log.h must come first
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
+
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "rl.h"
 #include "systems.h"
 #include "vec_util.h"
 
@@ -14,6 +19,11 @@ struct GameStateSystem : System<> {
     void once(float dt) override {
         auto* state = EntityHelper::get_singleton_cmp<GameState>();
         if (!state) return;
+
+        // Toggle data layer overlay with TAB (like Cities: Skylines info views)
+        if (raylib::IsKeyPressed(raylib::KEY_TAB)) {
+            state->show_data_layer = !state->show_data_layer;
+        }
 
         // Don't update if game is over
         if (state->is_game_over()) {
@@ -49,16 +59,18 @@ struct GameStateSystem : System<> {
         state->global_stress = total_stress / (float) agents.size();
         state->max_stress = max_stress;
 
+        // TODO: Re-enable lose conditions after balancing gameplay
         // Check lose conditions
-        bool global_critical =
-            state->global_stress >= GameState::CRITICAL_GLOBAL_STRESS;
-        bool too_many_critical =
-            critical_count >= GameState::CRITICAL_MAX_STRESS_COUNT;
-
-        if (global_critical || too_many_critical) {
-            state->status = GameStatus::GameOver;
-            state->game_over_timer = 0.f;
-        }
+        // bool global_critical =
+        //     state->global_stress >= GameState::CRITICAL_GLOBAL_STRESS;
+        // bool too_many_critical =
+        //     critical_count >= GameState::CRITICAL_MAX_STRESS_COUNT;
+        //
+        // if (global_critical || too_many_critical) {
+        //     state->status = GameStatus::GameOver;
+        //     state->game_over_timer = 0.f;
+        // }
+        (void) critical_count;  // Suppress unused warning
     }
 };
 
@@ -181,7 +193,7 @@ struct PathFollowingSystem
             return;
         }
 
-        int closest_node_id = path_nodes.front().id;
+        int closest_node_id = path_nodes.front().get().id;
 
         // Ask this node: "where do I go next?"
         auto closest = EntityHelper::getEntityForID(closest_node_id);
@@ -704,7 +716,7 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
                          .gen();
 
         if (paths.empty()) return 0.f;
-        return paths.front().get<PathNode>().congestion_ratio();
+        return paths.front().get().get<PathNode>().congestion_ratio();
     }
 
     void for_each_with(Entity& e, Transform& t, Agent& a, HasStress& s,
