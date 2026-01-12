@@ -456,32 +456,37 @@ struct RenderMinimapSystem : System<> {
                 (float) DEFAULT_SCREEN_WIDTH / (float) DEFAULT_SCREEN_HEIGHT;
             float view_width = view_height * aspect;
 
-            // Camera target is the center of the view
-            vec2 center = {cam->cam.target.x, cam->cam.target.z};
+            // Hide rectangle when viewing more than 75% of the minimap area
+            float map_area = (WORLD_SIZE * 2.0f) * (WORLD_SIZE * 2.0f);
+            float view_area = view_width * view_height;
+            if (view_area < map_area * 0.75f) {
+                // Camera target is the center of the view
+                vec2 center = {cam->cam.target.x, cam->cam.target.z};
 
-            // Calculate corners in world space (rotated by camera yaw)
-            float cos_yaw = cosf(cam->cam.yaw);
-            float sin_yaw = sinf(cam->cam.yaw);
-            float hw = view_width / 2.0f;
-            float hh = view_height / 2.0f;
+                // Calculate corners in world space (rotated by camera yaw)
+                float cos_yaw = cosf(cam->cam.yaw);
+                float sin_yaw = sinf(cam->cam.yaw);
+                float hw = view_width / 2.0f;
+                float hh = view_height / 2.0f;
 
-            // Rotated corners
-            vec2 corners[4];
-            corners[0] = {center.x + (-hw * cos_yaw - -hh * sin_yaw),
-                          center.y + (-hw * sin_yaw + -hh * cos_yaw)};
-            corners[1] = {center.x + (hw * cos_yaw - -hh * sin_yaw),
-                          center.y + (hw * sin_yaw + -hh * cos_yaw)};
-            corners[2] = {center.x + (hw * cos_yaw - hh * sin_yaw),
-                          center.y + (hw * sin_yaw + hh * cos_yaw)};
-            corners[3] = {center.x + (-hw * cos_yaw - hh * sin_yaw),
-                          center.y + (-hw * sin_yaw + hh * cos_yaw)};
+                // Rotated corners
+                vec2 corners[4];
+                corners[0] = {center.x + (-hw * cos_yaw - -hh * sin_yaw),
+                              center.y + (-hw * sin_yaw + -hh * cos_yaw)};
+                corners[1] = {center.x + (hw * cos_yaw - -hh * sin_yaw),
+                              center.y + (hw * sin_yaw + -hh * cos_yaw)};
+                corners[2] = {center.x + (hw * cos_yaw - hh * sin_yaw),
+                              center.y + (hw * sin_yaw + hh * cos_yaw)};
+                corners[3] = {center.x + (-hw * cos_yaw - hh * sin_yaw),
+                              center.y + (-hw * sin_yaw + hh * cos_yaw)};
 
-            // Draw the view rectangle on minimap
-            for (int i = 0; i < 4; i++) {
-                raylib::Vector2 a = world_to_map(corners[i], map_x, map_y);
-                raylib::Vector2 b =
-                    world_to_map(corners[(i + 1) % 4], map_x, map_y);
-                raylib::DrawLineV(a, b, raylib::WHITE);
+                // Draw the view rectangle on minimap
+                for (int i = 0; i < 4; i++) {
+                    raylib::Vector2 a = world_to_map(corners[i], map_x, map_y);
+                    raylib::Vector2 b =
+                        world_to_map(corners[(i + 1) % 4], map_x, map_y);
+                    raylib::DrawLineV(a, b, raylib::WHITE);
+                }
             }
         }
 
