@@ -44,7 +44,8 @@ namespace raylib {
 inline Vector2 operator*(float s, Vector2 a) { return Vector2Scale(a, s); }
 inline Vector3 operator*(float s, Vector3 a) { return Vector3Scale(a, s); }
 
-// Comparison operators for use in std::set/std::map (required by pathfinding plugin)
+// Comparison operators for use in std::set/std::map (required by pathfinding
+// plugin)
 inline bool operator<(const Vector2& a, const Vector2& b) {
     if (a.x != b.x) return a.x < b.x;
     return a.y < b.y;
@@ -56,7 +57,7 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
     return a.z < b.z;
 }
 
-} // namespace raylib
+}  // namespace raylib
 
 #include <GLFW/glfw3.h>
 
@@ -79,6 +80,7 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 #include <afterhours/src/plugins/input_system.h>
 #include <afterhours/src/plugins/texture_manager.h>
 #include <afterhours/src/plugins/window_manager.h>
+
 #include <cassert>
 
 typedef raylib::Vector2 vec2;
@@ -91,4 +93,3 @@ using raylib::Rectangle;
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
-

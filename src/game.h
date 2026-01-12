@@ -1,8 +1,8 @@
 
 #pragma once
 
-#include "std_include.h"
 #include "rl.h"
+#include "std_include.h"
 
 // Owned by main.cpp
 extern bool running;
@@ -16,4 +16,3 @@ constexpr float TILESIZE = 1.0f;
 
 // Version
 constexpr std::string_view VERSION = "0.0.1";
-

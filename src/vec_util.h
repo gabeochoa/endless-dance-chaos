@@ -1,7 +1,7 @@
 #pragma once
 
-#include "rl.h"
 #include "game.h"
+#include "rl.h"
 
 #ifndef EPSILON
 #define EPSILON 0.000001f
@@ -107,9 +107,7 @@ inline vec2 norm(const vec2& a) {
     return {a.x / mag, a.y / mag};
 }
 
-inline float length(const vec2& a) {
-    return sqrtf(a.x * a.x + a.y * a.y);
-}
+inline float length(const vec2& a) { return sqrtf(a.x * a.x + a.y * a.y); }
 
 constexpr vec3 to3(vec2 position) { return {position.x, 0, position.y}; }
 
@@ -121,8 +119,7 @@ inline vec2 snap(vec2 position) {
 }
 
 inline vec3 snap(vec3 position) {
-    return {TILESIZE * round(position.x / TILESIZE),
-            position.y,
+    return {TILESIZE * round(position.x / TILESIZE), position.y,
             TILESIZE * round(position.z / TILESIZE)};
 }
 
@@ -147,4 +144,3 @@ inline vec3 raise(vec3 a, float amt) {
 }
 
 }  // namespace vec
-

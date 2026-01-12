@@ -31,27 +31,23 @@ void RandomEngine::_set_seed(const std::string& new_seed) {
     rng_std.seed(static_cast<unsigned int>(hashed_seed));
 }
 
-bool RandomEngine::get_bool() {
-    return int_dist(rng_std) % 2 == 0;
-}
+bool RandomEngine::get_bool() { return int_dist(rng_std) % 2 == 0; }
 
-int RandomEngine::get_sign() {
-    return get_bool() ? 1 : -1;
-}
+int RandomEngine::get_sign() { return get_bool() ? 1 : -1; }
 
 std::string RandomEngine::get_string(int length) {
     static const char alphanum[] =
         "0123456789"
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz";
-    
+
     std::string result;
     result.reserve(length);
-    
+
     for (int i = 0; i < length; ++i) {
         result += alphanum[get_int(0, sizeof(alphanum) - 2)];
     }
-    
+
     return result;
 }
 
@@ -75,7 +71,4 @@ vec2 RandomEngine::get_vec(float mn_a, float mx_a, float mn_b, float mx_b) {
     return vec2{get_float(mn_a, mx_a), get_float(mn_b, mx_b)};
 }
 
-std::mt19937& RandomEngine::rng() {
-    return instance.rng_std;
-}
-
+std::mt19937& RandomEngine::rng() { return instance.rng_std; }
