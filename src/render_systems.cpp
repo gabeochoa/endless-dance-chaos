@@ -5,6 +5,7 @@
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "game.h"
 #include "systems.h"
 #include "vec_util.h"
 
@@ -157,10 +158,9 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
     }
 };
 
-struct RenderPathsSystem : System<Transform, PathNode> {
+struct RenderPathsSystem : System<Transform, PathTile> {
     static constexpr raylib::Color SIDEWALK_MAIN = {180, 175, 165, 255};
     static constexpr raylib::Color SIDEWALK_EDGE = {140, 135, 125, 255};
-    static constexpr raylib::Color SIDEWALK_CRACK = {120, 115, 105, 255};
     static constexpr raylib::Color CONGESTED_COLOR = {200, 80, 80, 255};
     static constexpr raylib::Color OVERCROWDED_COLOR = {220, 50, 50, 255};
 
@@ -178,74 +178,68 @@ struct RenderPathsSystem : System<Transform, PathNode> {
         }
     }
 
-    void for_each_with(const Entity&, const Transform& t, const PathNode& node,
+    void for_each_with(const Entity&, const Transform& t, const PathTile& tile,
                        float) const override {
-        if (node.next_node_id < 0) {
-            // Dead-end node - draw a small circular pad
-            raylib::DrawCylinder({t.position.x, 0.01f, t.position.y},
-                                 node.width * 0.5f, node.width * 0.5f, 0.02f,
-                                 16, SIDEWALK_MAIN);
-            return;
-        }
-
-        auto next = EntityHelper::getEntityForID(node.next_node_id);
-        if (!next.valid() || !next->has<Transform>()) return;
-
-        const Transform& next_t = next->get<Transform>();
-        vec2 a = t.position;
-        vec2 b = next_t.position;
-
-        vec2 dir = vec::norm({b.x - a.x, b.y - a.y});
-        vec2 perp = {-dir.y, dir.x};
-        float hw = node.width * 0.5f;
         float y = 0.01f;  // Slightly above ground to prevent z-fighting
 
         // Get color based on congestion
-        raylib::Color path_color = get_path_color(node.congestion_ratio());
+        raylib::Color path_color = get_path_color(tile.congestion_ratio());
 
-        // Calculate the four corners of the sidewalk segment
-        raylib::Vector3 v1 = {a.x + perp.x * hw, y, a.y + perp.y * hw};
-        raylib::Vector3 v2 = {a.x - perp.x * hw, y, a.y - perp.y * hw};
-        raylib::Vector3 v3 = {b.x - perp.x * hw, y, b.y - perp.y * hw};
-        raylib::Vector3 v4 = {b.x + perp.x * hw, y, b.y + perp.y * hw};
+        // Draw tile as a filled plane
+        raylib::DrawPlane({t.position.x, y, t.position.y},
+                          {TILESIZE * 0.95f, TILESIZE * 0.95f}, path_color);
 
-        // Draw main sidewalk surface as two triangles (both sides for
-        // visibility)
-        raylib::DrawTriangle3D(v1, v2, v3, path_color);
-        raylib::DrawTriangle3D(v3, v2, v1, path_color);  // Back face
-        raylib::DrawTriangle3D(v1, v3, v4, path_color);
-        raylib::DrawTriangle3D(v4, v3, v1, path_color);  // Back face
-
-        // Draw sidewalk edges (borders) - redder when congested
+        // Draw edge border
         raylib::Color edge_color =
-            node.congestion_ratio() > 1.0f
+            tile.congestion_ratio() > 1.0f
                 ? raylib::ColorLerp(SIDEWALK_EDGE, raylib::RED, 0.5f)
                 : SIDEWALK_EDGE;
 
-        raylib::Vector3 e1a = {a.x + perp.x * hw, y + 0.005f,
-                               a.y + perp.y * hw};
-        raylib::Vector3 e1b = {b.x + perp.x * hw, y + 0.005f,
-                               b.y + perp.y * hw};
-        raylib::Vector3 e2a = {a.x - perp.x * hw, y + 0.005f,
-                               a.y - perp.y * hw};
-        raylib::Vector3 e2b = {b.x - perp.x * hw, y + 0.005f,
-                               b.y - perp.y * hw};
+        float hs = TILESIZE * 0.475f;  // Half size with slight inset
+        raylib::Vector3 corners[4] = {
+            {t.position.x - hs, y + 0.005f, t.position.y - hs},
+            {t.position.x + hs, y + 0.005f, t.position.y - hs},
+            {t.position.x + hs, y + 0.005f, t.position.y + hs},
+            {t.position.x - hs, y + 0.005f, t.position.y + hs}};
 
-        raylib::DrawLine3D(e1a, e1b, edge_color);
-        raylib::DrawLine3D(e2a, e2b, edge_color);
+        for (int i = 0; i < 4; i++) {
+            raylib::DrawLine3D(corners[i], corners[(i + 1) % 4], edge_color);
+        }
+    }
+};
 
-        // Draw expansion joint lines across the sidewalk (every ~1 unit)
-        float segLen = vec::length({b.x - a.x, b.y - a.y});
-        int numJoints = (int) (segLen / 1.0f);
-        for (int i = 1; i < numJoints; i++) {
-            float t_joint = (float) i / (float) numJoints;
-            vec2 jointPos = {a.x + (b.x - a.x) * t_joint,
-                             a.y + (b.y - a.y) * t_joint};
-            raylib::Vector3 j1 = {jointPos.x + perp.x * hw, y + 0.005f,
-                                  jointPos.y + perp.y * hw};
-            raylib::Vector3 j2 = {jointPos.x - perp.x * hw, y + 0.005f,
-                                  jointPos.y - perp.y * hw};
-            raylib::DrawLine3D(j1, j2, SIDEWALK_CRACK);
+// Render ghost tiles for pending path changes (3D, before EndMode3D)
+struct RenderPathPreviewSystem : System<BuilderState> {
+    void for_each_with(const Entity&, const BuilderState& builder,
+                       float) const override {
+        if (!builder.active) return;
+
+        // Render all pending ghost tiles
+        for (const auto& pending : builder.pending_tiles) {
+            float x = pending.grid_x * TILESIZE;
+            float z = pending.grid_z * TILESIZE;
+
+            raylib::Color color =
+                pending.is_removal
+                    ? raylib::Color{255, 80, 80, 150}   // Red ghost (removal)
+                    : raylib::Color{80, 255, 80, 150};  // Green ghost (add)
+
+            raylib::DrawPlane({x, 0.03f, z},
+                              {TILESIZE * 0.95f, TILESIZE * 0.95f}, color);
+        }
+
+        // Render cursor hover preview (more transparent)
+        if (builder.hover_valid &&
+            !builder.is_pending_at(builder.hover_grid_x, builder.hover_grid_z)) {
+            float x = builder.hover_grid_x * TILESIZE;
+            float z = builder.hover_grid_z * TILESIZE;
+
+            raylib::Color color =
+                builder.path_exists_at_hover
+                    ? raylib::Color{255, 100, 100, 80}   // Red hint (remove)
+                    : raylib::Color{100, 255, 100, 80};  // Green hint (add)
+
+            raylib::DrawPlane({x, 0.02f, z}, {TILESIZE, TILESIZE}, color);
         }
     }
 };
@@ -389,23 +383,16 @@ struct RenderMinimapSystem : System<> {
                                    MAP_SIZE + 4,
                                    raylib::Color{100, 100, 100, 255});
 
-        // Draw paths
+        // Draw path tiles
         auto paths = EntityQuery()
                          .whereHasComponent<Transform>()
-                         .whereHasComponent<PathNode>()
+                         .whereHasComponent<PathTile>()
                          .gen();
-        for (const Entity& path : paths) {
-            const PathNode& node = path.get<PathNode>();
-            if (node.next_node_id < 0) continue;
-
-            auto next = EntityHelper::getEntityForID(node.next_node_id);
-            if (!next.valid() || !next->has<Transform>()) continue;
-
-            vec2 a = path.get<Transform>().position;
-            vec2 b = next->get<Transform>().position;
-            raylib::Vector2 ma = world_to_map(a, map_x, map_y, rotation);
-            raylib::Vector2 mb = world_to_map(b, map_x, map_y, rotation);
-            raylib::DrawLineV(ma, mb, raylib::Color{80, 80, 80, 255});
+        for (const Entity& tile : paths) {
+            vec2 pos = tile.get<Transform>().position;
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y, rotation);
+            raylib::DrawRectangle((int) mp.x - 2, (int) mp.y - 2, 4, 4,
+                                  raylib::Color{120, 115, 105, 255});
         }
 
         // Draw facilities
@@ -511,25 +498,17 @@ struct RenderDataLayerSystem : System<> {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (!cam) return;
 
-        // Draw congestion values on each path segment
-        auto paths = EntityQuery()
+        // Draw congestion values on each path tile
+        auto tiles = EntityQuery()
                          .whereHasComponent<Transform>()
-                         .whereHasComponent<PathNode>()
+                         .whereHasComponent<PathTile>()
                          .gen();
 
-        for (const Entity& path : paths) {
-            const PathNode& node = path.get<PathNode>();
-            if (node.next_node_id < 0) continue;
+        for (const Entity& tile_entity : tiles) {
+            const PathTile& tile = tile_entity.get<PathTile>();
+            vec2 pos = tile_entity.get<Transform>().position;
 
-            auto next = EntityHelper::getEntityForID(node.next_node_id);
-            if (!next.valid() || !next->has<Transform>()) continue;
-
-            vec2 a = path.get<Transform>().position;
-            vec2 b = next->get<Transform>().position;
-
-            // Get midpoint of segment
-            vec2 mid = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
-            raylib::Vector3 world_pos = {mid.x, 0.5f, mid.y};
+            raylib::Vector3 world_pos = {pos.x, 0.5f, pos.y};
             raylib::Vector2 screen_pos =
                 raylib::GetWorldToScreen(world_pos, cam->cam.camera);
 
@@ -539,14 +518,14 @@ struct RenderDataLayerSystem : System<> {
                 continue;
 
             // Draw congestion info
-            float ratio = node.congestion_ratio();
+            float ratio = tile.congestion_ratio();
             raylib::Color color =
                 ratio > 1.0f
                     ? raylib::RED
                     : raylib::ColorLerp(raylib::GREEN, raylib::YELLOW, ratio);
 
             auto text =
-                fmt::format("{:.0f}/{:.0f}", node.current_load, node.capacity);
+                fmt::format("{:.0f}/{:.0f}", tile.current_load, tile.capacity);
 
             // Background for readability
             int text_w = raylib::MeasureText(text.c_str(), 12);
@@ -560,6 +539,40 @@ struct RenderDataLayerSystem : System<> {
         // Overlay indicator
         raylib::DrawText("[TAB] Traffic View", 10, DEFAULT_SCREEN_HEIGHT - 24,
                          14, raylib::YELLOW);
+    }
+};
+
+// Show confirmation UI when pending path tiles exist
+struct RenderBuilderUISystem : System<BuilderState> {
+    void for_each_with(const Entity&, const BuilderState& builder,
+                       float) const override {
+        if (!builder.has_pending()) return;
+
+        int adds = 0, removes = 0;
+        for (const auto& p : builder.pending_tiles) {
+            if (p.is_removal)
+                removes++;
+            else
+                adds++;
+        }
+
+        // Bottom-center confirmation UI
+        int ui_y = DEFAULT_SCREEN_HEIGHT - 60;
+        int ui_x = DEFAULT_SCREEN_WIDTH / 2 - 100;
+
+        // Background
+        raylib::DrawRectangle(ui_x, ui_y, 200, 50,
+                              raylib::Color{40, 40, 40, 220});
+        raylib::DrawRectangleLines(ui_x, ui_y, 200, 50, raylib::WHITE);
+
+        // Text showing pending changes
+        auto text = fmt::format("+{} -{}", adds, removes);
+        raylib::DrawText(text.c_str(), ui_x + 10, ui_y + 8, 16, raylib::WHITE);
+
+        // Confirm/Cancel hints
+        raylib::DrawText("[Enter] Confirm", ui_x + 10, ui_y + 28, 12,
+                         raylib::GREEN);
+        raylib::DrawText("[Esc] Cancel", ui_x + 110, ui_y + 28, 12, raylib::RED);
     }
 };
 
@@ -671,6 +684,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGroundSystem>());
     sm.register_render_system(std::make_unique<RenderPathsSystem>());
+    sm.register_render_system(std::make_unique<RenderPathPreviewSystem>());  // Ghost tiles
     sm.register_render_system(std::make_unique<RenderAttractionsSystem>());
     sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
@@ -678,6 +692,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderStageIndicatorsSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
     sm.register_render_system(std::make_unique<RenderDataLayerSystem>());
+    sm.register_render_system(std::make_unique<RenderBuilderUISystem>());  // Confirm UI
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }

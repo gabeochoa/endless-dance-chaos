@@ -81,24 +81,7 @@ struct Artist : BaseComponent {
         : popularity(pop), set_duration(duration) {}
 };
 
-struct PathNode : BaseComponent {
-    int next_node_id = -1;
-    float width = 1.5f;
-
-    // Congestion tracking
-    float capacity = 8.f;      // Max comfortable agents on this segment
-    float current_load = 0.f;  // Agent count this frame (reset by system)
-
-    PathNode() = default;
-    PathNode(int next, float w = 1.5f) : next_node_id(next), width(w) {}
-
-    float congestion_ratio() const {
-        return (capacity > 0.f) ? current_load / capacity : 0.f;
-    }
-};
-
-// Signpost at each path node - tells agents which way to go for each facility
-// type
+// Signpost at each path tile - tells agents which way to go for each facility
 struct PathSignpost : BaseComponent {
     // Maps FacilityType -> next node ID to reach that facility
     std::unordered_map<FacilityType, int, FacilityTypeHash> next_node_for;
@@ -183,4 +166,56 @@ struct GameState : BaseComponent {
         10;  // Agents at max stress
 
     bool is_game_over() const { return status == GameStatus::GameOver; }
+};
+
+struct PathTile : BaseComponent {
+    int grid_x = 0;
+    int grid_z = 0;
+
+    // Congestion tracking
+    float capacity = 8.f;
+    float current_load = 0.f;
+
+    PathTile() = default;
+    PathTile(int gx, int gz) : grid_x(gx), grid_z(gz) {}
+
+    float congestion_ratio() const {
+        return (capacity > 0.f) ? current_load / capacity : 0.f;
+    }
+};
+
+
+struct BuilderState : BaseComponent {
+    struct PendingTile {
+        int grid_x = 0;
+        int grid_z = 0;
+        bool is_removal = false;  // true = remove existing, false = add new
+
+        PendingTile() = default;
+        PendingTile(int gx, int gz, bool remove)
+            : grid_x(gx), grid_z(gz), is_removal(remove) {}
+    };
+
+    bool active = true;                    // Builder mode on/off
+    int hover_grid_x = 0;                  // Current mouse grid position
+    int hover_grid_z = 0;
+    bool hover_valid = false;              // Is mouse over valid ground?
+    bool path_exists_at_hover = false;     // Already a path here?
+
+    // Staged changes - not yet committed
+    std::vector<PendingTile> pending_tiles;
+
+    // TODO: Future cost tracking
+    // int pending_cost = 0;
+
+    bool has_pending() const { return !pending_tiles.empty(); }
+
+    void clear_pending() { pending_tiles.clear(); }
+
+    bool is_pending_at(int gx, int gz) const {
+        for (const auto& p : pending_tiles) {
+            if (p.grid_x == gx && p.grid_z == gz) return true;
+        }
+        return false;
+    }
 };
