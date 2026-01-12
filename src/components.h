@@ -33,11 +33,17 @@ struct Agent : BaseComponent {
     float time_alive = 0.f;
     int origin_id = -1;
     FacilityType want = FacilityType::Bathroom;
+    
+    Agent() = default;
+    Agent(FacilityType w, int origin = -1) : origin_id(origin), want(w) {}
 };
 
 struct HasStress : BaseComponent {
     float stress = 0.f;
     float stress_rate = 0.1f;
+    
+    HasStress() = default;
+    HasStress(float s, float rate = 0.1f) : stress(s), stress_rate(rate) {}
 };
 
 struct Attraction : BaseComponent {
@@ -45,6 +51,9 @@ struct Attraction : BaseComponent {
     float spawn_timer = 0.f;
     int capacity = 50;
     int current_count = 0;
+    
+    Attraction() = default;
+    Attraction(float rate, int cap) : spawn_rate(rate), capacity(cap) {}
 };
 
 struct Facility : BaseComponent {
@@ -53,17 +62,26 @@ struct Facility : BaseComponent {
     float absorption_timer = 0.f;
     int capacity = 10;
     int current_occupants = 0;
+    
+    Facility() = default;
+    Facility(FacilityType t) : type(t) {}
 };
 
 struct Artist : BaseComponent {
     float popularity = 0.5f;
     float set_duration = 30.f;
     float set_timer = 0.f;
+    
+    Artist() = default;
+    Artist(float pop, float duration = 30.f) : popularity(pop), set_duration(duration) {}
 };
 
 struct PathNode : BaseComponent {
     int next_node_id = -1;
     float width = 1.5f;
+    
+    PathNode() = default;
+    PathNode(int next, float w = 1.5f) : next_node_id(next), width(w) {}
 };
 
 // Signpost at each path node - tells agents which way to go for each facility type

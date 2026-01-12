@@ -4,43 +4,43 @@
 #include <queue>
 #include <set>
 
-Entity& make_stage(float x, float z) {
+// Helper: create entity with Transform at position
+static Entity& make_entity(float x, float z) {
     Entity& e = EntityHelper::createEntity();
     e.addComponent<Transform>(x, z);
-    e.addComponent<Facility>().type = FacilityType::Stage;
+    return e;
+}
+
+// Helper: create facility of given type
+static Entity& make_facility(float x, float z, FacilityType type) {
+    Entity& e = make_entity(x, z);
+    e.addComponent<Facility>(type);
+    return e;
+}
+
+Entity& make_stage(float x, float z) {
+    Entity& e = make_facility(x, z, FacilityType::Stage);
     e.addComponent<StageInfo>();
     return e;
 }
 
 Entity& make_bathroom(float x, float z) {
-    Entity& e = EntityHelper::createEntity();
-    e.addComponent<Transform>(x, z);
-    e.addComponent<Facility>().type = FacilityType::Bathroom;
-    return e;
+    return make_facility(x, z, FacilityType::Bathroom);
 }
 
 Entity& make_food(float x, float z) {
-    Entity& e = EntityHelper::createEntity();
-    e.addComponent<Transform>(x, z);
-    e.addComponent<Facility>().type = FacilityType::Food;
-    return e;
+    return make_facility(x, z, FacilityType::Food);
 }
 
 Entity& make_attraction(float x, float z, float spawn_rate, int capacity) {
-    Entity& e = EntityHelper::createEntity();
-    e.addComponent<Transform>(x, z);
-    Attraction& attr = e.addComponent<Attraction>();
-    attr.spawn_rate = spawn_rate;
-    attr.capacity = capacity;
+    Entity& e = make_entity(x, z);
+    e.addComponent<Attraction>(spawn_rate, capacity);
     return e;
 }
 
 Entity& make_path_node(float x, float z, int next_node_id, float width) {
-    Entity& e = EntityHelper::createEntity();
-    e.addComponent<Transform>(x, z);
-    PathNode& node = e.addComponent<PathNode>();
-    node.next_node_id = next_node_id;
-    node.width = width;
+    Entity& e = make_entity(x, z);
+    e.addComponent<PathNode>(next_node_id, width);
     return e;
 }
 
@@ -49,14 +49,9 @@ Entity& make_hub(float x, float z) {
 }
 
 Entity& make_agent(float x, float z, FacilityType want, int origin_id) {
-    Entity& e = EntityHelper::createEntity();
-    e.addComponent<Transform>(x, z);
-    Agent& agent = e.addComponent<Agent>();
-    agent.want = want;
-    agent.origin_id = origin_id;
-    e.addComponent<HasStress>();
-    e.addComponent<AgentTarget>();
-    e.addComponent<AgentSteering>();
+    Entity& e = make_entity(x, z);
+    e.addComponent<Agent>(want, origin_id);
+    e.addAll<HasStress, AgentTarget, AgentSteering>();
     return e;
 }
 
@@ -82,35 +77,22 @@ void calculate_path_signposts() {
     std::unordered_map<int, vec2> node_positions;
     
     for (Entity& node : path_nodes) {
-        // Add PathSignpost component if not present
-        if (!node.has<PathSignpost>()) {
-            node.addComponent<PathSignpost>();
-        }
-        
-        if (node.has<Transform>()) {
-            node_positions[node.id] = node.get<Transform>().position;
-        }
+        node.addComponentIfMissing<PathSignpost>();
+        node_positions[node.id] = node.get<Transform>().position;
         
         PathNode& pn = node.get<PathNode>();
         if (pn.next_node_id >= 0) {
-            // Forward edge: this node -> next_node
             adjacency[node.id].push_back(pn.next_node_id);
-            // Backward edge: next_node -> this node  
             adjacency[pn.next_node_id].push_back(node.id);
         }
     }
     
     // Add co-located edges (hub junctions where multiple paths meet at same position)
     for (Entity& node_a : path_nodes) {
-        if (!node_a.has<Transform>()) continue;
         vec2 pos_a = node_a.get<Transform>().position;
-        
         for (Entity& node_b : path_nodes) {
             if (node_a.id == node_b.id) continue;
-            if (!node_b.has<Transform>()) continue;
-            vec2 pos_b = node_b.get<Transform>().position;
-            
-            if (vec::distance(pos_a, pos_b) < 0.1f) {
+            if (vec::distance(pos_a, node_b.get<Transform>().position) < 0.1f) {
                 adjacency[node_a.id].push_back(node_b.id);
             }
         }
@@ -118,7 +100,6 @@ void calculate_path_signposts() {
     
     // For each facility type, BFS from terminal to ALL nodes
     auto facilities = EntityQuery()
-        .whereHasComponent<Transform>()
         .whereHasComponent<Facility>()
         .gen();
     
@@ -131,7 +112,6 @@ void calculate_path_signposts() {
         float best_dist = std::numeric_limits<float>::max();
         
         for (Entity& node : path_nodes) {
-            if (!node.has<Transform>()) continue;
             float dist = vec::distance(node.get<Transform>().position, facility_pos);
             if (dist < best_dist) {
                 best_dist = dist;
@@ -142,7 +122,6 @@ void calculate_path_signposts() {
         if (terminal_node_id < 0) continue;
         
         // BFS from terminal node through BIDIRECTIONAL graph
-        // For each node: record which neighbor leads toward the facility
         std::queue<std::pair<int, int>> bfs_queue;  // (node_id, next_toward_facility)
         std::set<int> visited;
         
@@ -156,12 +135,9 @@ void calculate_path_signposts() {
             visited.insert(current_id);
             
             auto current = EntityHelper::getEntityForID(current_id);
-            if (!current.valid() || !current->has<PathSignpost>() || !current->has<Transform>()) continue;
+            if (!current.valid() || !current->has<PathSignpost>()) continue;
             
-            // Set the signpost: "to reach this facility type, go to next_id"
-            PathSignpost& signpost = current->get<PathSignpost>();
-            signpost.next_node_for[type] = next_id;
-            
+            current->get<PathSignpost>().next_node_for[type] = next_id;
             vec2 current_pos = current->get<Transform>().position;
             
             // Propagate to all neighbors (bidirectional)
