@@ -823,9 +823,6 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
             agent.addComponent<AgentSteering>();
 
             a.current_count++;
-            log_info("Spawned agent {} at ({:.1f}, {:.1f}) wanting {}",
-                     a.current_count, t.position.x, t.position.y,
-                     static_cast<int>(ag.want));
         }
     }
 };

@@ -330,7 +330,7 @@ struct EndMode3DSystem : System<> {
 
 // Renders circular progress indicators above stages (2D overlay)
 struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
-    static constexpr float INDICATOR_RADIUS = 30.0f;
+    static constexpr float INDICATOR_RADIUS = 18.0f;
 
     struct IndicatorStyle {
         raylib::Color bg;
@@ -381,7 +381,10 @@ struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
             screen_pos.y < -50 || screen_pos.y > DEFAULT_SCREEN_HEIGHT + 50)
             return;
 
-        float radius = INDICATOR_RADIUS;
+        // Scale indicator with zoom (smaller when zoomed out)
+        float zoom_scale =
+            30.0f / cam->cam.distance;  // Normalize to default zoom
+        float radius = INDICATOR_RADIUS * zoom_scale;
         float progress = info.get_progress();
         auto [bg_color, fg_color, icon_color, icon_char] =
             get_style(info.state);
