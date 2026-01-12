@@ -42,36 +42,39 @@ struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
         }
 
         // Find nearest facility matching our want
-        float best_dist = std::numeric_limits<float>::max();
+        auto facilities =
+            EntityQuery()
+                .whereHasComponent<Transform>()
+                .whereHasComponent<Facility>()
+                .whereLambda([&a](const Entity& facility) {
+                    const Facility& f = facility.get<Facility>();
+                    if (f.type != a.want) return false;
+                    // For stages, only target if announcing or performing
+                    if (f.type == FacilityType::Stage &&
+                        facility.has<StageInfo>()) {
+                        const StageInfo& info = facility.get<StageInfo>();
+                        if (info.state != StageState::Announcing &&
+                            info.state != StageState::Performing) {
+                            return false;  // Stage not accepting people
+                        }
+                    }
+                    return true;
+                })
+                .orderByLambda([&t](const Entity& a, const Entity& b) {
+                    float dist_a =
+                        vec::distance(t.position, a.get<Transform>().position);
+                    float dist_b =
+                        vec::distance(t.position, b.get<Transform>().position);
+                    return dist_a < dist_b;
+                })
+                .gen();
+
         int best_id = -1;
         vec2 best_pos{0, 0};
-
-        auto facilities = EntityQuery()
-                              .whereHasComponent<Transform>()
-                              .whereHasComponent<Facility>()
-                              .gen();
-
-        for (const Entity& facility : facilities) {
-            const Facility& f = facility.get<Facility>();
-            if (f.type != a.want) continue;
-
-            // For stages, only target if announcing or performing
-            if (f.type == FacilityType::Stage && facility.has<StageInfo>()) {
-                const StageInfo& info = facility.get<StageInfo>();
-                if (info.state != StageState::Announcing &&
-                    info.state != StageState::Performing) {
-                    continue;  // Stage not accepting people
-                }
-            }
-
-            const Transform& f_t = facility.get<Transform>();
-            float dist = vec::distance(t.position, f_t.position);
-
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_id = facility.id;
-                best_pos = f_t.position;
-            }
+        if (!facilities.empty()) {
+            const Entity& nearest = facilities.front();
+            best_id = nearest.id;
+            best_pos = nearest.get<Transform>().position;
         }
 
         // If wanting stage but no stage is open, pick a different activity
@@ -94,25 +97,11 @@ struct PathFollowingSystem
                        float) override {
         // Find closest PathNode - but prefer nodes whose NEXT node is closer to
         // our target This prevents oscillation at hub nodes
-        float best_score = std::numeric_limits<float>::max();
-        int closest_node_id = -1;
-
-        auto path_nodes = EntityQuery()
-                              .whereHasComponent<Transform>()
-                              .whereHasComponent<PathNode>()
-                              .whereHasComponent<PathSignpost>()
-                              .gen();
-
-        for (const Entity& node : path_nodes) {
+        auto score_node = [&](const Entity& node) {
             const Transform& node_t = node.get<Transform>();
             float dist = vec::distance(t.position, node_t.position);
-
-            // Get this node's signpost
             const PathSignpost& sp = node.get<PathSignpost>();
             int next_id = sp.get_next_node(a.want);
-
-            // Score: distance to node + distance from next_node to target
-            // This prefers nodes that lead us TOWARD our target
             float score = dist;
             if (next_id >= 0 && agent_target.facility_id >= 0) {
                 auto next_node = EntityHelper::getEntityForID(next_id);
@@ -120,21 +109,28 @@ struct PathFollowingSystem
                     float next_to_target =
                         vec::distance(next_node->get<Transform>().position,
                                       agent_target.target_pos);
-                    score = dist + next_to_target *
-                                       0.1f;  // Small weight on path quality
+                    score = dist + next_to_target * 0.1f;
                 }
             }
+            return score;
+        };
 
-            if (score < best_score) {
-                best_score = score;
-                closest_node_id = node.id;
-            }
-        }
+        auto path_nodes =
+            EntityQuery()
+                .whereHasComponent<Transform>()
+                .whereHasComponent<PathNode>()
+                .whereHasComponent<PathSignpost>()
+                .orderByLambda([&](const Entity& a, const Entity& b) {
+                    return score_node(a) < score_node(b);
+                })
+                .gen();
 
-        if (closest_node_id < 0) {
+        if (path_nodes.empty()) {
             steering.path_direction = {0, 0};
             return;
         }
+
+        int closest_node_id = path_nodes.front().id;
 
         // Ask this node: "where do I go next?"
         auto closest = EntityHelper::getEntityForID(closest_node_id);
@@ -241,21 +237,23 @@ struct SeparationSystem : System<Transform, Agent, AgentSteering> {
                           .whereHasComponent<Transform>()
                           .whereHasComponent<Agent>()
                           .whereNotID(e.id)
+                          .whereLambda([&t](const Entity& other) {
+                              float dist = vec::distance(
+                                  t.position, other.get<Transform>().position);
+                              return dist < SEPARATION_RADIUS && dist > EPSILON;
+                          })
                           .gen();
 
         for (const Entity& other : nearby) {
             const Transform& other_t = other.get<Transform>();
             float dist = vec::distance(t.position, other_t.position);
-
-            if (dist < SEPARATION_RADIUS && dist > EPSILON) {
-                vec2 away = {t.position.x - other_t.position.x,
-                             t.position.y - other_t.position.y};
-                away = vec::norm(away);
-                float strength =
-                    (1.0f - (dist / SEPARATION_RADIUS)) * 1.0f;  // Weaker force
-                force.x += away.x * strength;
-                force.y += away.y * strength;
-            }
+            vec2 away = {t.position.x - other_t.position.x,
+                         t.position.y - other_t.position.y};
+            away = vec::norm(away);
+            float strength =
+                (1.0f - (dist / SEPARATION_RADIUS)) * 1.0f;  // Weaker force
+            force.x += away.x * strength;
+            force.y += away.y * strength;
         }
 
         steering.separation = force;
@@ -430,67 +428,68 @@ struct FacilityAbsorptionSystem : System<Transform, Facility> {
         float absorb_interval = 1.0f / f.absorption_rate;
 
         // Find agents walking toward this facility (not already inside one)
-        auto agents = EntityQuery()
-                          .whereHasComponent<Transform>()
-                          .whereHasComponent<Agent>()
-                          .gen();
+        auto agents =
+            EntityQuery()
+                .whereHasComponent<Transform>()
+                .whereHasComponent<Agent>()
+                .whereMissingComponent<InsideFacility>()
+                .whereLambda([&f, &f_t](const Entity& agent) {
+                    if (agent.get<Agent>().want != f.type) return false;
+                    float dist = vec::distance(f_t.position,
+                                               agent.get<Transform>().position);
+                    return dist < ABSORPTION_RADIUS;
+                })
+                .orderByLambda([&f_t](const Entity& a, const Entity& b) {
+                    float dist_a = vec::distance(f_t.position,
+                                                 a.get<Transform>().position);
+                    float dist_b = vec::distance(f_t.position,
+                                                 b.get<Transform>().position);
+                    return dist_a < dist_b;
+                })
+                .gen();
 
-        for (Entity& agent : agents) {
-            // Skip agents already inside a facility
-            if (agent.has<InsideFacility>()) continue;
+        // Absorb the nearest agent if timer allows
+        if (agents.empty() || f.current_occupants >= f.capacity) return;
+        if (f.absorption_timer < absorb_interval) return;
 
-            Agent& a = agent.get<Agent>();
-            if (a.want != f.type) continue;
+        Entity& agent = agents.front();
+        Transform& a_t = agent.get<Transform>();
 
-            Transform& a_t = agent.get<Transform>();
-            float dist = vec::distance(f_t.position, a_t.position);
+        f.absorption_timer -= absorb_interval;
+        f.current_occupants++;
 
-            if (dist < ABSORPTION_RADIUS && f.current_occupants < f.capacity) {
-                if (f.absorption_timer >= absorb_interval) {
-                    f.absorption_timer -= absorb_interval;
-                    f.current_occupants++;
+        // Calculate a slot position inside the facility
+        int slot = f.current_occupants - 1;
+        int cols = (int) std::ceil(std::sqrt((float) f.capacity));
+        int row = slot / cols;
+        int col = slot % cols;
+        float cell_size = FACILITY_SIZE / (float) cols;
+        float start_offset = -FACILITY_SIZE * 0.5f + cell_size * 0.5f;
 
-                    // Calculate a slot position inside the facility
-                    int slot = f.current_occupants - 1;
-                    int cols = (int) std::ceil(std::sqrt((float) f.capacity));
-                    int row = slot / cols;
-                    int col = slot % cols;
-                    float cell_size = FACILITY_SIZE / (float) cols;
-                    float start_offset =
-                        -FACILITY_SIZE * 0.5f + cell_size * 0.5f;
+        // Add InsideFacility component - agent stays visible inside
+        InsideFacility& inside = agent.addComponent<InsideFacility>();
+        inside.facility_id = facility_entity.id;
+        inside.time_inside = 0.f;
 
-                    // Add InsideFacility component - agent stays visible inside
-                    InsideFacility& inside =
-                        agent.addComponent<InsideFacility>();
-                    inside.facility_id = facility_entity.id;
-                    inside.time_inside = 0.f;
+        // Stage: stay for the whole performance; others: 2-4 seconds
+        if (is_stage) {
+            inside.service_time = stage_remaining_time + 1.0f;  // +1 buffer
+        } else {
+            inside.service_time = 2.0f + (rand() % 100) / 50.f;
+        }
 
-                    // Stage: stay for the whole performance; others: 2-4
-                    // seconds
-                    if (is_stage) {
-                        inside.service_time =
-                            stage_remaining_time + 1.0f;  // +1 buffer
-                    } else {
-                        inside.service_time = 2.0f + (rand() % 100) / 50.f;
-                    }
+        inside.slot_offset = {start_offset + col * cell_size,
+                              start_offset + row * cell_size};
 
-                    inside.slot_offset = {start_offset + col * cell_size,
-                                          start_offset + row * cell_size};
+        // Move agent to facility position (will be offset in render)
+        a_t.position = f_t.position;
+        a_t.velocity = {0, 0};
 
-                    // Move agent to facility position (will be offset in
-                    // render)
-                    a_t.position = f_t.position;
-                    a_t.velocity = {0, 0};
-
-                    // Clear steering so they stop moving
-                    if (agent.has<AgentSteering>()) {
-                        AgentSteering& steer = agent.get<AgentSteering>();
-                        steer.path_direction = {0, 0};
-                        steer.separation = {0, 0};
-                    }
-                }
-                break;
-            }
+        // Clear steering so they stop moving
+        if (agent.has<AgentSteering>()) {
+            AgentSteering& steer = agent.get<AgentSteering>();
+            steer.path_direction = {0, 0};
+            steer.separation = {0, 0};
         }
     }
 };
@@ -568,23 +567,19 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
 
         float stress_delta = 0.f;
 
-        int nearby_count = 0;
         auto nearby = EntityQuery()
                           .whereHasComponent<Transform>()
                           .whereHasComponent<Agent>()
                           .whereNotID(e.id)
+                          .whereMissingComponent<InsideFacility>()
+                          .whereLambda([&t](const Entity& other) {
+                              float dist = vec::distance(
+                                  t.position, other.get<Transform>().position);
+                              return dist < CROWDING_RADIUS;
+                          })
                           .gen();
 
-        for (const Entity& other : nearby) {
-            // Don't count agents inside facilities
-            if (other.has<InsideFacility>()) continue;
-
-            float dist =
-                vec::distance(t.position, other.get<Transform>().position);
-            if (dist < CROWDING_RADIUS) {
-                nearby_count++;
-            }
-        }
+        int nearby_count = (int) nearby.size();
 
         if (nearby_count > CROWDING_THRESHOLD) {
             stress_delta += (nearby_count - CROWDING_THRESHOLD) * 0.1f;
@@ -611,17 +606,20 @@ struct StressSpreadSystem : System<Transform, HasStress> {
                           .whereHasComponent<Transform>()
                           .whereHasComponent<HasStress>()
                           .whereNotID(e.id)
+                          .whereLambda([&t](const Entity& other) {
+                              float dist = vec::distance(
+                                  t.position, other.get<Transform>().position);
+                              return dist < SPREAD_RADIUS && dist > EPSILON;
+                          })
                           .gen();
 
         for (Entity& other : nearby) {
             float dist =
                 vec::distance(t.position, other.get<Transform>().position);
-            if (dist < SPREAD_RADIUS && dist > EPSILON) {
-                HasStress& other_s = other.get<HasStress>();
-                float spread_amount =
-                    s.stress * SPREAD_RATE * (1.f - dist / SPREAD_RADIUS) * dt;
-                other_s.stress = std::min(other_s.stress + spread_amount, 1.f);
-            }
+            HasStress& other_s = other.get<HasStress>();
+            float spread_amount =
+                s.stress * SPREAD_RATE * (1.f - dist / SPREAD_RADIUS) * dt;
+            other_s.stress = std::min(other_s.stress + spread_amount, 1.f);
         }
     }
 };
