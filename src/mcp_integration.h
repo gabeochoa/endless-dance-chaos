@@ -28,7 +28,7 @@ inline std::vector<uint8_t> capture_screenshot() {
         // Fallback: capture the whole screen
         raylib::Image img = raylib::LoadImageFromScreen();
         int file_size = 0;
-        unsigned char* png_data = raylib::ExportImageToMemory(img, "png", &file_size);
+        unsigned char* png_data = raylib::ExportImageToMemory(img, ".png", &file_size);
         
         std::vector<uint8_t> result;
         if (png_data && file_size > 0) {
@@ -41,10 +41,13 @@ inline std::vector<uint8_t> capture_screenshot() {
     }
     
     raylib::Image img = raylib::LoadImageFromTexture(screenshot_texture->texture);
+    if (img.data == nullptr) {
+        return {};  // Failed to load from texture
+    }
     raylib::ImageFlipVertical(&img);
     
     int file_size = 0;
-    unsigned char* png_data = raylib::ExportImageToMemory(img, "png", &file_size);
+    unsigned char* png_data = raylib::ExportImageToMemory(img, ".png", &file_size);
     
     std::vector<uint8_t> result;
     if (png_data && file_size > 0) {

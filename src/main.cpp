@@ -7,6 +7,9 @@
 
 bool running = true;
 
+// Render texture for MCP screenshots
+raylib::RenderTexture2D g_render_texture;
+
 using namespace afterhours;
 
 void game() {
@@ -101,13 +104,18 @@ int main(int argc, char *argv[]) {
     raylib::InitWindow(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT, "Endless Dance Chaos");
     raylib::SetTargetFPS(60);
     
+    // Create render texture for MCP screenshots
+    g_render_texture = raylib::LoadRenderTexture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
+    
     if (cmdl[{"--mcp"}]) {
+        mcp_integration::set_screenshot_texture(&g_render_texture);
         mcp_integration::init();
     }
     
     game();
     
     mcp_integration::shutdown();
+    raylib::UnloadRenderTexture(g_render_texture);
     raylib::CloseWindow();
     
     log_info("Goodbye!");
