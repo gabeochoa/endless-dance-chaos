@@ -3,9 +3,13 @@
 #include "vec_util.h"
 #include "afterhours/src/core/entity_helper.h"
 
+// Render texture from main.cpp for MCP screenshots
+extern raylib::RenderTexture2D g_render_texture;
+
 struct BeginRenderSystem : System<> {
     void once(float) const override {
-        raylib::BeginDrawing();
+        // Render to texture for MCP screenshot support
+        raylib::BeginTextureMode(g_render_texture);
         raylib::ClearBackground(raylib::Color{40, 44, 52, 255});
         
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -17,20 +21,16 @@ struct BeginRenderSystem : System<> {
 
 struct RenderGroundSystem : System<> {
     void once(float) const override {
-        raylib::Color gridColor = raylib::Fade(raylib::DARKGRAY, 0.5f);
-        int size = 10;
-        float spacing = TILESIZE;
+        // Draw grass ground plane
+        float size = 10.0f * TILESIZE;
+        raylib::Color grassColor = {58, 95, 40, 255};  // Deep grass green
         
-        for (int i = -size; i <= size; i++) {
-            raylib::DrawLine3D(
-                {(float)i * spacing, 0.0f, (float)-size * spacing},
-                {(float)i * spacing, 0.0f, (float)size * spacing},
-                gridColor);
-            raylib::DrawLine3D(
-                {(float)-size * spacing, 0.0f, (float)i * spacing},
-                {(float)size * spacing, 0.0f, (float)i * spacing},
-                gridColor);
-        }
+        // Main grass plane
+        raylib::DrawPlane({0.0f, 0.0f, 0.0f}, {size * 2.0f, size * 2.0f}, grassColor);
+        
+        // TODO: Render individual grass blades for visual detail
+        // Could use instanced rendering with small quads or billboards
+        // varying height, slight color variation, and gentle wind sway
     }
 };
 
@@ -109,9 +109,17 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
 
 struct RenderPathsSystem : System<Transform, PathNode> {
     void for_each_with(const Entity&, const Transform& t, const PathNode& node, float) const override {
-        raylib::DrawSphere({t.position.x, 0.1f, t.position.y}, 0.15f, raylib::SKYBLUE);
+        // Sidewalk colors
+        raylib::Color sidewalkMain = {180, 175, 165, 255};    // Warm concrete gray
+        raylib::Color sidewalkEdge = {140, 135, 125, 255};    // Darker edge/border
+        raylib::Color sidewalkCrack = {120, 115, 105, 255};   // Crack/joint lines
         
-        if (node.next_node_id < 0) return;
+        if (node.next_node_id < 0) {
+            // Dead-end node - draw a small circular pad
+            raylib::DrawCylinder({t.position.x, 0.01f, t.position.y}, 
+                                 node.width * 0.5f, node.width * 0.5f, 0.02f, 16, sidewalkMain);
+            return;
+        }
         
         auto next = EntityHelper::getEntityForID(node.next_node_id);
         if (!next.valid() || !next->has<Transform>()) return;
@@ -120,23 +128,42 @@ struct RenderPathsSystem : System<Transform, PathNode> {
         vec2 a = t.position;
         vec2 b = next_t.position;
         
-        raylib::DrawLine3D(
-            {a.x, 0.05f, a.y},
-            {b.x, 0.05f, b.y},
-            raylib::Fade(raylib::SKYBLUE, 0.7f));
-        
         vec2 dir = vec::norm({b.x - a.x, b.y - a.y});
         vec2 perp = {-dir.y, dir.x};
         float hw = node.width * 0.5f;
+        float y = 0.01f;  // Slightly above ground to prevent z-fighting
         
-        raylib::DrawLine3D(
-            {a.x + perp.x * hw, 0.02f, a.y + perp.y * hw},
-            {b.x + perp.x * hw, 0.02f, b.y + perp.y * hw},
-            raylib::Fade(raylib::SKYBLUE, 0.3f));
-        raylib::DrawLine3D(
-            {a.x - perp.x * hw, 0.02f, a.y - perp.y * hw},
-            {b.x - perp.x * hw, 0.02f, b.y - perp.y * hw},
-            raylib::Fade(raylib::SKYBLUE, 0.3f));
+        // Calculate the four corners of the sidewalk segment
+        raylib::Vector3 v1 = {a.x + perp.x * hw, y, a.y + perp.y * hw};
+        raylib::Vector3 v2 = {a.x - perp.x * hw, y, a.y - perp.y * hw};
+        raylib::Vector3 v3 = {b.x - perp.x * hw, y, b.y - perp.y * hw};
+        raylib::Vector3 v4 = {b.x + perp.x * hw, y, b.y + perp.y * hw};
+        
+        // Draw main sidewalk surface as two triangles (both sides for visibility)
+        raylib::DrawTriangle3D(v1, v2, v3, sidewalkMain);
+        raylib::DrawTriangle3D(v3, v2, v1, sidewalkMain);  // Back face
+        raylib::DrawTriangle3D(v1, v3, v4, sidewalkMain);
+        raylib::DrawTriangle3D(v4, v3, v1, sidewalkMain);  // Back face
+        
+        // Draw sidewalk edges (borders)
+        raylib::Vector3 e1a = {a.x + perp.x * hw, y + 0.005f, a.y + perp.y * hw};
+        raylib::Vector3 e1b = {b.x + perp.x * hw, y + 0.005f, b.y + perp.y * hw};
+        raylib::Vector3 e2a = {a.x - perp.x * hw, y + 0.005f, a.y - perp.y * hw};
+        raylib::Vector3 e2b = {b.x - perp.x * hw, y + 0.005f, b.y - perp.y * hw};
+        
+        raylib::DrawLine3D(e1a, e1b, sidewalkEdge);
+        raylib::DrawLine3D(e2a, e2b, sidewalkEdge);
+        
+        // Draw expansion joint lines across the sidewalk (every ~1 unit)
+        float segLen = vec::length({b.x - a.x, b.y - a.y});
+        int numJoints = (int)(segLen / 1.0f);
+        for (int i = 1; i < numJoints; i++) {
+            float t_joint = (float)i / (float)numJoints;
+            vec2 jointPos = {a.x + (b.x - a.x) * t_joint, a.y + (b.y - a.y) * t_joint};
+            raylib::Vector3 j1 = {jointPos.x + perp.x * hw, y + 0.005f, jointPos.y + perp.y * hw};
+            raylib::Vector3 j2 = {jointPos.x - perp.x * hw, y + 0.005f, jointPos.y - perp.y * hw};
+            raylib::DrawLine3D(j1, j2, sidewalkCrack);
+        }
     }
 };
 
@@ -158,6 +185,18 @@ struct RenderUISystem : System<> {
 
 struct EndRenderSystem : System<> {
     void once(float) const override {
+        // End rendering to texture
+        raylib::EndTextureMode();
+        
+        // Draw the render texture to the screen (flipped vertically)
+        raylib::BeginDrawing();
+        raylib::ClearBackground(raylib::BLACK);
+        raylib::DrawTextureRec(
+            g_render_texture.texture,
+            {0, 0, (float)g_render_texture.texture.width, -(float)g_render_texture.texture.height},
+            {0, 0},
+            raylib::WHITE
+        );
         raylib::EndDrawing();
     }
 };
