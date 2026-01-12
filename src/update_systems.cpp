@@ -10,12 +10,10 @@ struct CameraInputSystem : System<ProvidesCamera> {
 };
 
 // Find the nearest Facility matching the agent's want
-struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
+struct TargetFindingSystem
+    : System<Transform, Agent, AgentTarget, Not<InsideFacility>> {
     void for_each_with(Entity& e, Transform& t, Agent& a, AgentTarget& target,
                        float) override {
-        // Agents inside facilities don't need to find targets
-        if (e.has<InsideFacility>()) return;
-
         // Skip if we already have a valid target
         if (target.facility_id >= 0) {
             auto existing = EntityHelper::getEntityForID(target.facility_id);
