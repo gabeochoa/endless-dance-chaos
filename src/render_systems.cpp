@@ -357,17 +357,30 @@ struct RenderMinimapSystem : System<> {
     static constexpr int MAP_MARGIN = 8;
     static constexpr float WORLD_SIZE = 15.0f;  // World units to show
 
-    // Convert world position to minimap position
-    static raylib::Vector2 world_to_map(vec2 world_pos, int map_x, int map_y) {
-        float scale = MAP_SIZE / (WORLD_SIZE * 2.0f);
-        return {map_x + (world_pos.x + WORLD_SIZE) * scale,
-                map_y + (world_pos.y + WORLD_SIZE) * scale};
+    // Convert world position to minimap position (rotated to match camera)
+    static raylib::Vector2 world_to_map(vec2 world_pos, int map_x, int map_y,
+                                        float rotation) {
+        // Rotate world position to match camera orientation
+        float cos_r = cosf(rotation);
+        float sin_r = sinf(rotation);
+        float rx = world_pos.x * cos_r - world_pos.y * sin_r;
+        float ry = world_pos.x * sin_r + world_pos.y * cos_r;
+
+        // Scale to fit minimap (need larger world size due to rotation)
+        float scale = MAP_SIZE / (WORLD_SIZE * 2.0f * 1.414f);  // sqrt(2) for diagonal
+        float center = MAP_SIZE / 2.0f;
+        return {map_x + center + rx * scale,
+                map_y + center + ry * scale};
     }
 
     void once(float) const override {
         // Position: bottom-right corner
         int map_x = DEFAULT_SCREEN_WIDTH - MAP_SIZE - MAP_MARGIN;
         int map_y = DEFAULT_SCREEN_HEIGHT - MAP_SIZE - MAP_MARGIN;
+
+        // Get camera rotation so minimap rotates with camera
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        float rotation = cam ? cam->cam.yaw : M_PI / 4.0f;
 
         // Background
         raylib::DrawRectangle(map_x - 2, map_y - 2, MAP_SIZE + 4, MAP_SIZE + 4,
@@ -390,8 +403,8 @@ struct RenderMinimapSystem : System<> {
 
             vec2 a = path.get<Transform>().position;
             vec2 b = next->get<Transform>().position;
-            raylib::Vector2 ma = world_to_map(a, map_x, map_y);
-            raylib::Vector2 mb = world_to_map(b, map_x, map_y);
+            raylib::Vector2 ma = world_to_map(a, map_x, map_y, rotation);
+            raylib::Vector2 mb = world_to_map(b, map_x, map_y, rotation);
             raylib::DrawLineV(ma, mb, raylib::Color{80, 80, 80, 255});
         }
 
@@ -402,7 +415,7 @@ struct RenderMinimapSystem : System<> {
                               .gen();
         for (const Entity& fac : facilities) {
             vec2 pos = fac.get<Transform>().position;
-            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y, rotation);
             FacilityType type = fac.get<Facility>().type;
 
             raylib::Color color;
@@ -427,7 +440,7 @@ struct RenderMinimapSystem : System<> {
                                .gen();
         for (const Entity& attr : attractions) {
             vec2 pos = attr.get<Transform>().position;
-            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y, rotation);
             raylib::DrawRectangle((int) mp.x - 3, (int) mp.y - 3, 6, 6,
                                   raylib::PURPLE);
         }
@@ -441,50 +454,42 @@ struct RenderMinimapSystem : System<> {
         for (const Entity& agent : agents) {
             vec2 pos = agent.get<Transform>().position;
             float stress = agent.get<HasStress>().stress;
-            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y, rotation);
             raylib::Color color =
                 raylib::ColorLerp(raylib::GREEN, raylib::RED, stress);
             raylib::DrawCircle((int) mp.x, (int) mp.y, 2, color);
         }
 
         // Draw camera view rectangle (like Civilization)
-        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        // Since minimap rotates with camera, the view rectangle is axis-aligned
         if (cam) {
-            // For orthographic camera, fovy is the vertical size in world units
             float view_height = cam->cam.camera.fovy;
             float aspect =
                 (float) DEFAULT_SCREEN_WIDTH / (float) DEFAULT_SCREEN_HEIGHT;
             float view_width = view_height * aspect;
 
-            // Hide rectangle when viewing more than 60% of the minimap area
+            // Hide rectangle when viewing more than 20% of the minimap area
             float map_area = (WORLD_SIZE * 2.0f) * (WORLD_SIZE * 2.0f);
             float view_area = view_width * view_height;
             if (view_area < map_area * 0.20f) {
                 // Camera target is the center of the view
                 vec2 center = {cam->cam.target.x, cam->cam.target.z};
-
-                // Calculate corners in world space (rotated by camera yaw)
-                float cos_yaw = cosf(cam->cam.yaw);
-                float sin_yaw = sinf(cam->cam.yaw);
                 float hw = view_width / 2.0f;
                 float hh = view_height / 2.0f;
 
-                // Rotated corners
+                // Simple axis-aligned corners (minimap rotation handles camera yaw)
                 vec2 corners[4];
-                corners[0] = {center.x + (-hw * cos_yaw - -hh * sin_yaw),
-                              center.y + (-hw * sin_yaw + -hh * cos_yaw)};
-                corners[1] = {center.x + (hw * cos_yaw - -hh * sin_yaw),
-                              center.y + (hw * sin_yaw + -hh * cos_yaw)};
-                corners[2] = {center.x + (hw * cos_yaw - hh * sin_yaw),
-                              center.y + (hw * sin_yaw + hh * cos_yaw)};
-                corners[3] = {center.x + (-hw * cos_yaw - hh * sin_yaw),
-                              center.y + (-hw * sin_yaw + hh * cos_yaw)};
+                corners[0] = {center.x - hw, center.y - hh};
+                corners[1] = {center.x + hw, center.y - hh};
+                corners[2] = {center.x + hw, center.y + hh};
+                corners[3] = {center.x - hw, center.y + hh};
 
                 // Draw the view rectangle on minimap
                 for (int i = 0; i < 4; i++) {
-                    raylib::Vector2 a = world_to_map(corners[i], map_x, map_y);
+                    raylib::Vector2 a =
+                        world_to_map(corners[i], map_x, map_y, rotation);
                     raylib::Vector2 b =
-                        world_to_map(corners[(i + 1) % 4], map_x, map_y);
+                        world_to_map(corners[(i + 1) % 4], map_x, map_y, rotation);
                     raylib::DrawLineV(a, b, raylib::WHITE);
                 }
             }
