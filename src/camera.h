@@ -10,7 +10,7 @@ struct IsometricCamera {
     raylib::Camera3D camera;
 
     // Camera distance and angle settings
-    float distance = 20.0f;
+    float distance = 30.0f;
     float min_distance = 5.0f;
     float max_distance = 50.0f;
     float scroll_sensitivity = 2.0f;
@@ -30,7 +30,7 @@ struct IsometricCamera {
 
     IsometricCamera() {
         camera.up = {0.0f, 1.0f, 0.0f};
-        camera.fovy = 20.0f;  // Orthographic "zoom" level
+        camera.fovy = distance;  // Orthographic "zoom" level matches distance
         camera.projection = raylib::CAMERA_ORTHOGRAPHIC;
         update_camera_position();
     }
