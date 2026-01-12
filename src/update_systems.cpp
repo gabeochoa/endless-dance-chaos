@@ -22,8 +22,8 @@ struct MousePickingSystem : System<ProvidesCamera, BuilderState> {
         if (!builder.active) return;
 
         // Get mouse ray from camera
-        raylib::Ray ray = raylib::GetMouseRay(raylib::GetMousePosition(),
-                                              cam.cam.camera);
+        raylib::Ray ray =
+            raylib::GetMouseRay(raylib::GetMousePosition(), cam.cam.camera);
 
         // Intersect with Y=0 ground plane
         // For orthographic camera, project along ray direction
@@ -58,10 +58,8 @@ struct PathStagingSystem : System<BuilderState, GameState> {
         if (!builder.active || !builder.hover_valid) return;
         if (state.is_game_over()) return;
 
-        bool left_down =
-            raylib::IsMouseButtonDown(raylib::MOUSE_LEFT_BUTTON);
-        bool right_down =
-            raylib::IsMouseButtonDown(raylib::MOUSE_RIGHT_BUTTON);
+        bool left_down = raylib::IsMouseButtonDown(raylib::MOUSE_LEFT_BUTTON);
+        bool right_down = raylib::IsMouseButtonDown(raylib::MOUSE_RIGHT_BUTTON);
         bool shift_down = raylib::IsKeyDown(raylib::KEY_LEFT_SHIFT);
 
         bool is_removing = right_down || (left_down && shift_down);
@@ -118,7 +116,8 @@ struct PathConfirmationSystem : System<BuilderState> {
         EntityHelper::cleanup();
         calculate_path_signposts();
 
-        log_info("Committed {} path tile changes", builder.pending_tiles.size());
+        log_info("Committed {} path tile changes",
+                 builder.pending_tiles.size());
     }
 };
 
@@ -262,7 +261,6 @@ struct TargetFindingSystem
 
 struct PathFollowingSystem
     : System<Transform, Agent, AgentTarget, AgentSteering> {
-
     vec2 pick_wander_direction(const Transform& t, int current_tile_id) {
         auto current = EntityHelper::getEntityForID(current_tile_id);
         if (!current.valid() || !current->has<PathTile>()) return {0, 0};
@@ -337,8 +335,10 @@ struct PathFollowingSystem
         int next_tile_id = signpost.get_next_node(a.want);
 
         if (next_tile_id < 0) {
-            float dist_to_target = vec::distance(t.position, agent_target.target_pos);
-            if (agent_target.facility_id >= 0 && dist_to_target < TILESIZE * 1.5f) {
+            float dist_to_target =
+                vec::distance(t.position, agent_target.target_pos);
+            if (agent_target.facility_id >= 0 &&
+                dist_to_target < TILESIZE * 1.5f) {
                 vec2 dir = {agent_target.target_pos.x - t.position.x,
                             agent_target.target_pos.y - t.position.y};
                 if (vec::length(dir) > EPSILON) {

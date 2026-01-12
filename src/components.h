@@ -184,7 +184,6 @@ struct PathTile : BaseComponent {
     }
 };
 
-
 struct BuilderState : BaseComponent {
     struct PendingTile {
         int grid_x = 0;
@@ -196,11 +195,11 @@ struct BuilderState : BaseComponent {
             : grid_x(gx), grid_z(gz), is_removal(remove) {}
     };
 
-    bool active = true;                    // Builder mode on/off
-    int hover_grid_x = 0;                  // Current mouse grid position
+    bool active = true;    // Builder mode on/off
+    int hover_grid_x = 0;  // Current mouse grid position
     int hover_grid_z = 0;
-    bool hover_valid = false;              // Is mouse over valid ground?
-    bool path_exists_at_hover = false;     // Already a path here?
+    bool hover_valid = false;           // Is mouse over valid ground?
+    bool path_exists_at_hover = false;  // Already a path here?
 
     // Staged changes - not yet committed
     std::vector<PendingTile> pending_tiles;

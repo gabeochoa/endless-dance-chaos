@@ -230,7 +230,8 @@ struct RenderPathPreviewSystem : System<BuilderState> {
 
         // Render cursor hover preview (more transparent)
         if (builder.hover_valid &&
-            !builder.is_pending_at(builder.hover_grid_x, builder.hover_grid_z)) {
+            !builder.is_pending_at(builder.hover_grid_x,
+                                   builder.hover_grid_z)) {
             float x = builder.hover_grid_x * TILESIZE;
             float z = builder.hover_grid_z * TILESIZE;
 
@@ -361,10 +362,10 @@ struct RenderMinimapSystem : System<> {
         float ry = world_pos.x * sin_r + world_pos.y * cos_r;
 
         // Scale to fit minimap (need larger world size due to rotation)
-        float scale = MAP_SIZE / (WORLD_SIZE * 2.0f * 1.414f);  // sqrt(2) for diagonal
+        float scale =
+            MAP_SIZE / (WORLD_SIZE * 2.0f * 1.414f);  // sqrt(2) for diagonal
         float center = MAP_SIZE / 2.0f;
-        return {map_x + center + rx * scale,
-                map_y + center + ry * scale};
+        return {map_x + center + rx * scale, map_y + center + ry * scale};
     }
 
     void once(float) const override {
@@ -464,7 +465,8 @@ struct RenderMinimapSystem : System<> {
                 float hw = view_width / 2.0f;
                 float hh = view_height / 2.0f;
 
-                // Simple axis-aligned corners (minimap rotation handles camera yaw)
+                // Simple axis-aligned corners (minimap rotation handles camera
+                // yaw)
                 vec2 corners[4];
                 corners[0] = {center.x - hw, center.y - hh};
                 corners[1] = {center.x + hw, center.y - hh};
@@ -475,8 +477,8 @@ struct RenderMinimapSystem : System<> {
                 for (int i = 0; i < 4; i++) {
                     raylib::Vector2 a =
                         world_to_map(corners[i], map_x, map_y, rotation);
-                    raylib::Vector2 b =
-                        world_to_map(corners[(i + 1) % 4], map_x, map_y, rotation);
+                    raylib::Vector2 b = world_to_map(corners[(i + 1) % 4],
+                                                     map_x, map_y, rotation);
                     raylib::DrawLineV(a, b, raylib::WHITE);
                 }
             }
@@ -572,7 +574,8 @@ struct RenderBuilderUISystem : System<BuilderState> {
         // Confirm/Cancel hints
         raylib::DrawText("[Enter] Confirm", ui_x + 10, ui_y + 28, 12,
                          raylib::GREEN);
-        raylib::DrawText("[Esc] Cancel", ui_x + 110, ui_y + 28, 12, raylib::RED);
+        raylib::DrawText("[Esc] Cancel", ui_x + 110, ui_y + 28, 12,
+                         raylib::RED);
     }
 };
 
@@ -684,7 +687,8 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGroundSystem>());
     sm.register_render_system(std::make_unique<RenderPathsSystem>());
-    sm.register_render_system(std::make_unique<RenderPathPreviewSystem>());  // Ghost tiles
+    sm.register_render_system(
+        std::make_unique<RenderPathPreviewSystem>());  // Ghost tiles
     sm.register_render_system(std::make_unique<RenderAttractionsSystem>());
     sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
@@ -692,7 +696,8 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderStageIndicatorsSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
     sm.register_render_system(std::make_unique<RenderDataLayerSystem>());
-    sm.register_render_system(std::make_unique<RenderBuilderUISystem>());  // Confirm UI
+    sm.register_render_system(
+        std::make_unique<RenderBuilderUISystem>());  // Confirm UI
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
