@@ -1,5 +1,10 @@
 #pragma once
 
+// Must set AFTER_HOURS_REPLACE_LOGGING and include log.h BEFORE any afterhours
+// headers so our log macros are used instead of the vendor's log functions
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
+
 #include "afterhours/src/core/entity_helper.h"
 #include "components.h"
 

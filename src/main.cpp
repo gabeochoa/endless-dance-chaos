@@ -64,6 +64,14 @@ void game() {
 int main(int argc, char* argv[]) {
     argh::parser cmdl(argc, argv, argh::parser::PREFER_PARAM_FOR_UNREG_OPTION);
 
+    bool mcp_mode = cmdl[{"--mcp"}];
+
+    // In MCP mode, suppress raylib logs and redirect our logs to stderr
+    if (mcp_mode) {
+        raylib::SetTraceLogLevel(raylib::LOG_NONE);
+        g_log_to_stderr = true;
+    }
+
     log_info("Starting Endless Dance Chaos v{}", VERSION);
 
     raylib::InitWindow(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
@@ -74,7 +82,7 @@ int main(int argc, char* argv[]) {
     g_render_texture =
         raylib::LoadRenderTexture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
 
-    if (cmdl[{"--mcp"}]) {
+    if (mcp_mode) {
         mcp_integration::set_screenshot_texture(&g_render_texture);
         mcp_integration::init();
     }
