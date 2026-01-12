@@ -4,7 +4,9 @@
 #include <set>
 
 #include "afterhours/src/core/entity_query.h"
+#include "afterhours/src/plugins/input_system.h"
 #include "game.h"
+#include "input_mapping.h"
 #include "vec_util.h"
 
 static Entity& make_entity(float x, float z) {
@@ -24,6 +26,15 @@ Entity& make_sophie() {
 
     sophie.addComponent<BuilderState>();
     EntityHelper::registerSingleton<BuilderState>(sophie);
+
+    sophie.addComponent<FestivalProgress>();
+    EntityHelper::registerSingleton<FestivalProgress>(sophie);
+
+    sophie.addComponent<DemandHeatmap>();
+    EntityHelper::registerSingleton<DemandHeatmap>(sophie);
+
+    // Input system
+    afterhours::input::add_singleton_components(sophie, get_mapping());
 
     log_info("Created Sophie entity with all singletons");
     return sophie;

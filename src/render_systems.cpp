@@ -213,6 +213,7 @@ struct RenderPathPreviewSystem : System<BuilderState> {
     void for_each_with(const Entity&, const BuilderState& builder,
                        float) const override {
         if (!builder.active) return;
+        if (builder.tool != BuildTool::Path) return;  // Only in path mode
 
         // Render all pending ghost tiles
         for (const auto& pending : builder.pending_tiles) {
@@ -241,6 +242,81 @@ struct RenderPathPreviewSystem : System<BuilderState> {
                     : raylib::Color{100, 255, 100, 80};  // Green hint (add)
 
             raylib::DrawPlane({x, 0.02f, z}, {TILESIZE, TILESIZE}, color);
+        }
+    }
+};
+
+// TODO put all thsee tile helpers together
+// Check if a grid position has a path tile (render-side helper)
+static bool render_is_on_path(int grid_x, int grid_z) {
+    auto path_tiles = EntityQuery().whereHasComponent<PathTile>().gen();
+
+    for (const Entity& tile : path_tiles) {
+        const PathTile& pt = tile.get<PathTile>();
+        if (pt.grid_x == grid_x && pt.grid_z == grid_z) return true;
+    }
+    return false;
+}
+
+// Render 3D preview for facility placement
+struct RenderFacilityPreviewSystem : System<BuilderState, FestivalProgress> {
+    static constexpr float SIZE = 1.5f;
+    static constexpr float HEIGHT = 0.5f;
+
+    void for_each_with(const Entity&, const BuilderState& builder,
+                       const FestivalProgress& progress, float) const override {
+        if (!builder.active || !builder.hover_valid) return;
+        if (builder.tool == BuildTool::Path) return;  // Path preview elsewhere
+
+        float x = builder.hover_grid_x * TILESIZE;
+        float z = builder.hover_grid_z * TILESIZE;
+
+        // Check if placement is valid - must be on a path
+        bool on_path =
+            render_is_on_path(builder.hover_grid_x, builder.hover_grid_z);
+
+        bool has_slot = false;
+        raylib::Color base_color = raylib::WHITE;
+
+        switch (builder.tool) {
+            case BuildTool::Bathroom:
+                has_slot = progress.can_place(FacilityType::Bathroom);
+                base_color = raylib::SKYBLUE;
+                break;
+            case BuildTool::Food:
+                has_slot = progress.can_place(FacilityType::Food);
+                base_color = raylib::YELLOW;
+                break;
+            case BuildTool::Stage:
+                has_slot = progress.can_place(FacilityType::Stage);
+                base_color = raylib::MAGENTA;
+                break;
+            case BuildTool::Path:
+                break;  // Already handled above
+        }
+
+        bool valid = on_path && has_slot;
+
+        // Ghost color: green-tinted if valid, red-tinted if invalid
+        raylib::Color ghost_color =
+            valid ? raylib::Color{base_color.r, base_color.g, base_color.b, 120}
+                  : raylib::Color{255, 80, 80, 120};
+
+        raylib::Vector3 pos = {x, HEIGHT * 0.5f, z};
+
+        // Draw ghost facility
+        raylib::DrawCube(pos, SIZE, HEIGHT, SIZE, ghost_color);
+        raylib::DrawCubeWires(pos, SIZE, HEIGHT, SIZE,
+                              valid ? raylib::WHITE : raylib::RED);
+
+        // Draw X if invalid
+        if (!valid) {
+            raylib::DrawLine3D(
+                {x - SIZE * 0.4f, HEIGHT + 0.1f, z - SIZE * 0.4f},
+                {x + SIZE * 0.4f, HEIGHT + 0.1f, z + SIZE * 0.4f}, raylib::RED);
+            raylib::DrawLine3D(
+                {x + SIZE * 0.4f, HEIGHT + 0.1f, z - SIZE * 0.4f},
+                {x - SIZE * 0.4f, HEIGHT + 0.1f, z + SIZE * 0.4f}, raylib::RED);
         }
     }
 };
@@ -490,57 +566,102 @@ struct RenderMinimapSystem : System<> {
     }
 };
 
-// Data layer overlay showing path congestion (toggled with TAB)
+// Data layer overlay showing demand heatmap (toggled with TAB)
 // Like Cities: Skylines info views for traffic, happiness, etc.
-struct RenderDataLayerSystem : System<> {
-    void once(float) const override {
-        auto* state = EntityHelper::get_singleton_cmp<GameState>();
-        if (!state || !state->show_data_layer) return;
+struct RenderDataLayerSystem
+    : System<GameState, ProvidesCamera, DemandHeatmap> {
+    static raylib::Color get_demand_color(FacilityType type) {
+        switch (type) {
+            case FacilityType::Bathroom:
+                return raylib::Color{80, 140, 255, 255};  // Blue
+            case FacilityType::Food:
+                return raylib::Color{255, 200, 50, 255};  // Yellow
+            case FacilityType::Stage:
+                return raylib::Color{255, 80, 200, 255};  // Magenta
+        }
+        return raylib::WHITE;
+    }
 
-        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-        if (!cam) return;
+    void for_each_with(const Entity&, const GameState& state,
+                       const ProvidesCamera& cam, const DemandHeatmap& heatmap,
+                       float) const override {
+        if (!state.show_data_layer) return;
 
-        // Draw congestion values on each path tile
-        auto tiles = EntityQuery()
-                         .whereHasComponent<Transform>()
-                         .whereHasComponent<PathTile>()
-                         .gen();
+        // Draw demand heatmap on all grid cells with demand
+        for (const auto& [grid_pos, demands] : heatmap.demand_grid) {
+            auto [grid_x, grid_z] = grid_pos;
+            float world_x = grid_x * TILESIZE;
+            float world_z = grid_z * TILESIZE;
 
-        for (const Entity& tile_entity : tiles) {
-            const PathTile& tile = tile_entity.get<PathTile>();
-            vec2 pos = tile_entity.get<Transform>().position;
-
-            raylib::Vector3 world_pos = {pos.x, 0.5f, pos.y};
+            raylib::Vector3 world_pos = {world_x, 0.5f, world_z};
             raylib::Vector2 screen_pos =
-                raylib::GetWorldToScreen(world_pos, cam->cam.camera);
+                raylib::GetWorldToScreen(world_pos, cam.cam.camera);
 
             // Skip if off screen
             if (screen_pos.x < 0 || screen_pos.x > DEFAULT_SCREEN_WIDTH ||
                 screen_pos.y < 0 || screen_pos.y > DEFAULT_SCREEN_HEIGHT)
                 continue;
 
-            // Draw congestion info
-            float ratio = tile.congestion_ratio();
-            raylib::Color color =
-                ratio > 1.0f
-                    ? raylib::RED
-                    : raylib::ColorLerp(raylib::GREEN, raylib::YELLOW, ratio);
+            int filter = heatmap.display_filter;
+            int total = 0;
+            raylib::Color display_color = raylib::WHITE;
 
-            auto text =
-                fmt::format("{:.0f}/{:.0f}", tile.current_load, tile.capacity);
+            if (filter == 0) {
+                // Show all - blend colors based on demand mix
+                total = demands[0] + demands[1] + demands[2];
+                if (total == 0) continue;
 
-            // Background for readability
-            int text_w = raylib::MeasureText(text.c_str(), 12);
-            raylib::DrawRectangle((int) screen_pos.x - text_w / 2 - 2,
-                                  (int) screen_pos.y - 8, text_w + 4, 16,
-                                  raylib::Color{0, 0, 0, 180});
+                // Find dominant demand type
+                int max_idx = 0;
+                if (demands[1] > demands[max_idx]) max_idx = 1;
+                if (demands[2] > demands[max_idx]) max_idx = 2;
+                display_color =
+                    get_demand_color(static_cast<FacilityType>(max_idx));
+            } else {
+                // Show specific type
+                int type_idx = filter - 1;
+                total = demands[type_idx];
+                if (total == 0) continue;
+                display_color =
+                    get_demand_color(static_cast<FacilityType>(type_idx));
+            }
+
+            // Intensity based on count (cap at 10 for full intensity)
+            float intensity = std::min(1.0f, total / 10.0f);
+            display_color.a = (unsigned char) (100 + 155 * intensity);
+
+            // Draw colored circle at position
+            int radius = (int) (8 + 12 * intensity);
+            raylib::DrawCircle((int) screen_pos.x, (int) screen_pos.y, radius,
+                               raylib::Fade(display_color, 0.6f));
+
+            // Draw count text
+            auto text = fmt::format("{}", total);
+            int text_w = raylib::MeasureText(text.c_str(), 10);
             raylib::DrawText(text.c_str(), (int) screen_pos.x - text_w / 2,
-                             (int) screen_pos.y - 6, 12, color);
+                             (int) screen_pos.y - 5, 10, raylib::WHITE);
         }
 
-        // Overlay indicator
-        raylib::DrawText("[TAB] Traffic View", 10, DEFAULT_SCREEN_HEIGHT - 24,
-                         14, raylib::YELLOW);
+        // Draw filter legend at bottom
+        int legend_y = DEFAULT_SCREEN_HEIGHT - 50;
+        raylib::DrawText("[TAB] Demand View", 10, legend_y, 14, raylib::YELLOW);
+
+        const char* filter_names[] = {"All", "Bathroom", "Food", "Stage"};
+        raylib::Color filter_colors[] = {raylib::WHITE, raylib::SKYBLUE,
+                                         raylib::YELLOW, raylib::MAGENTA};
+
+        for (int i = 0; i < 4; i++) {
+            int x = 10 + i * 80;
+            raylib::Color col = filter_colors[i];
+            if (heatmap.display_filter == i) {
+                col = raylib::WHITE;
+                raylib::DrawRectangle(x - 2, legend_y + 18, 76, 18,
+                                      raylib::Color{80, 80, 80, 200});
+            }
+            auto label = fmt::format(
+                "[{}] {}", i == 0 ? "0" : std::to_string(i), filter_names[i]);
+            raylib::DrawText(label.c_str(), x, legend_y + 20, 12, col);
+        }
     }
 };
 
@@ -576,6 +697,126 @@ struct RenderBuilderUISystem : System<BuilderState> {
                          raylib::GREEN);
         raylib::DrawText("[Esc] Cancel", ui_x + 110, ui_y + 28, 12,
                          raylib::RED);
+    }
+};
+
+// Render facility placement mode indicator and preview
+struct RenderBuildToolUISystem : System<BuilderState, ProvidesCamera> {
+    void for_each_with(const Entity&, const BuilderState& builder,
+                       const ProvidesCamera& /*cam*/, float) const override {
+        // Show current tool at top center
+        const char* tool_name = "";
+        raylib::Color tool_color = raylib::WHITE;
+
+        switch (builder.tool) {
+            case BuildTool::Path:
+                tool_name = "PATH TOOL";
+                tool_color = raylib::Color{100, 200, 100, 255};
+                break;
+            case BuildTool::Bathroom:
+                tool_name = "BATHROOM TOOL";
+                tool_color = raylib::SKYBLUE;
+                break;
+            case BuildTool::Food:
+                tool_name = "FOOD TOOL";
+                tool_color = raylib::YELLOW;
+                break;
+            case BuildTool::Stage:
+                tool_name = "STAGE TOOL";
+                tool_color = raylib::MAGENTA;
+                break;
+        }
+
+        // Draw tool indicator at top center
+        int text_w = raylib::MeasureText(tool_name, 20);
+        int x = (DEFAULT_SCREEN_WIDTH - text_w) / 2;
+        raylib::DrawRectangle(x - 10, 40, text_w + 20, 28,
+                              raylib::Color{0, 0, 0, 180});
+        raylib::DrawText(tool_name, x, 44, 20, tool_color);
+    }
+};
+
+// Render build tools panel
+struct RenderBuildToolsPanelSystem : System<FestivalProgress, BuilderState> {
+    void for_each_with(const Entity&, const FestivalProgress& progress,
+                       const BuilderState& builder, float) const override {
+        // Draw slots UI in top-right area
+        int ui_x = DEFAULT_SCREEN_WIDTH - 220;
+        int ui_y = 40;
+
+        // Background
+        raylib::DrawRectangle(ui_x - 5, ui_y - 5, 215, 85,
+                              raylib::Color{30, 30, 30, 200});
+        raylib::DrawRectangleLines(ui_x - 5, ui_y - 5, 215, 105,
+                                   raylib::Color{80, 80, 80, 255});
+
+        raylib::DrawText("BUILD MODE", ui_x, ui_y, 14, raylib::LIGHTGRAY);
+
+        // Path mode row
+        int path_y = ui_y + 18;
+        bool path_selected = builder.tool == BuildTool::Path;
+        if (path_selected) {
+            raylib::DrawRectangle(ui_x - 3, path_y - 2, 208, 18,
+                                  raylib::Color{100, 200, 100, 60});
+        }
+        raylib::Color path_color = path_selected ? raylib::WHITE : raylib::GRAY;
+        raylib::DrawText("[1] Path", ui_x, path_y, 14, path_color);
+
+        struct SlotInfo {
+            FacilityType type;
+            const char* key;
+            const char* name;
+            raylib::Color color;
+        };
+
+        SlotInfo slots[] = {
+            {FacilityType::Bathroom, "2", "Bath", raylib::SKYBLUE},
+            {FacilityType::Food, "3", "Food", raylib::YELLOW},
+            {FacilityType::Stage, "4", "Stage", raylib::MAGENTA},
+        };
+
+        for (int i = 0; i < 3; i++) {
+            int row_y = ui_y + 38 + i * 20;
+            auto& slot = slots[i];
+
+            int placed = progress.get_placed(slot.type);
+            int total = progress.get_slots(slot.type);
+            bool can_place = progress.can_place(slot.type);
+
+            // Highlight if this tool is selected
+            bool is_selected = (builder.tool == BuildTool::Bathroom &&
+                                slot.type == FacilityType::Bathroom) ||
+                               (builder.tool == BuildTool::Food &&
+                                slot.type == FacilityType::Food) ||
+                               (builder.tool == BuildTool::Stage &&
+                                slot.type == FacilityType::Stage);
+
+            if (is_selected) {
+                raylib::DrawRectangle(ui_x - 3, row_y - 2, 208, 18,
+                                      raylib::Color{slot.color.r, slot.color.g,
+                                                    slot.color.b, 60});
+            }
+
+            // Key hint
+            auto key_text = fmt::format("[{}]", slot.key);
+            raylib::Color key_color = can_place ? slot.color : raylib::DARKGRAY;
+            raylib::DrawText(key_text.c_str(), ui_x, row_y, 14, key_color);
+
+            // Name and count
+            auto slot_text = fmt::format("{}: {}/{}", slot.name, placed, total);
+            raylib::Color text_color =
+                can_place ? raylib::WHITE : raylib::DARKGRAY;
+            raylib::DrawText(slot_text.c_str(), ui_x + 35, row_y, 14,
+                             text_color);
+
+            // "NEW!" indicator if slot just unlocked
+            if (can_place && placed < total) {
+                float blink =
+                    0.5f + 0.5f * sinf((float) raylib::GetTime() * 4.0f);
+                raylib::DrawText("+", ui_x + 140, row_y, 14,
+                                 raylib::Fade(raylib::GREEN, blink));
+            }
+        }
     }
 };
 
@@ -688,7 +929,9 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderGroundSystem>());
     sm.register_render_system(std::make_unique<RenderPathsSystem>());
     sm.register_render_system(
-        std::make_unique<RenderPathPreviewSystem>());  // Ghost tiles
+        std::make_unique<RenderPathPreviewSystem>());  // Ghost path tiles
+    sm.register_render_system(
+        std::make_unique<RenderFacilityPreviewSystem>());  // Ghost facilities
     sm.register_render_system(std::make_unique<RenderAttractionsSystem>());
     sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
@@ -697,7 +940,11 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
     sm.register_render_system(std::make_unique<RenderDataLayerSystem>());
     sm.register_render_system(
-        std::make_unique<RenderBuilderUISystem>());  // Confirm UI
+        std::make_unique<RenderBuilderUISystem>());  // Path confirm UI
+    sm.register_render_system(
+        std::make_unique<RenderBuildToolUISystem>());  // Current tool
+    sm.register_render_system(
+        std::make_unique<RenderBuildToolsPanelSystem>());  // Tools panel
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
