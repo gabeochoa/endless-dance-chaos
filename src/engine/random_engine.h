@@ -69,4 +69,3 @@ struct RandomEngine {
     static RandomEngine instance;
     static bool created;
 };
-

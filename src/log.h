@@ -8,4 +8,3 @@
 #define AFTER_HOURS_REPLACE_LOGGING
 #define AFTER_HOURS_LOG_WITH_COLOR
 #include "log/log.h"
-

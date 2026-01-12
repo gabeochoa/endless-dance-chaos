@@ -1,6 +1,6 @@
-#include "systems.h"
-#include "rl.h"
 #include "mcp_integration.h"
+#include "rl.h"
+#include "systems.h"
 
 extern bool running;
 
@@ -22,9 +22,7 @@ struct MCPRenderUISystem : System<> {
 };
 
 struct MCPClearFrameSystem : System<> {
-    void once(float) const override {
-        mcp_integration::clear_frame_state();
-    }
+    void once(float) const override { mcp_integration::clear_frame_state(); }
 };
 
 void register_mcp_update_systems(SystemManager& sm) {
