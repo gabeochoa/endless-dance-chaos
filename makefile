@@ -34,10 +34,10 @@ endif
 .PHONY: all clean run format
 .DEFAULT_GOAL := all
 
-all: $(OUTPUT_EXE)
+all: format $(OUTPUT_EXE)
 
 format:
-	@find src/ -type f \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
+	-@find src/ -type f \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
 
 $(OUTPUT_EXE): $(H_FILES) $(OBJ_FILES)
 	$(CXX) $(FLAGS) $(NOFLAGS) $(INCLUDES) $(OBJ_FILES) $(LIBS) -o $(OUTPUT_EXE)
