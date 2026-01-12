@@ -261,29 +261,73 @@ struct TargetFindingSystem
 
 struct PathFollowingSystem
     : System<Transform, Agent, AgentTarget, AgentSteering> {
-    vec2 pick_wander_direction(const Transform& t, int current_tile_id) {
+    // Pick a new random neighbor tile to wander to
+    int pick_random_neighbor_tile(int current_tile_id) {
         auto current = EntityHelper::getEntityForID(current_tile_id);
-        if (!current.valid() || !current->has<PathTile>()) return {0, 0};
+        if (!current.valid() || !current->has<PathTile>()) return -1;
 
         const PathTile& pt = current->get<PathTile>();
         const int dx[] = {1, -1, 0, 0};
         const int dz[] = {0, 0, 1, -1};
 
-        std::vector<vec2> neighbors;
-        neighbors.push_back(current->get<Transform>().position);
+        std::vector<int> neighbor_ids;
 
-        for (int i = 0; i < 4; i++) {
-            int nx = pt.grid_x + dx[i];
-            int nz = pt.grid_z + dz[i];
-            if (find_path_tile_at(nx, nz)) {
-                neighbors.push_back({nx * TILESIZE, nz * TILESIZE});
+        auto path_tiles = EntityQuery().whereHasComponent<PathTile>().gen();
+        for (Entity& tile : path_tiles) {
+            const PathTile& tile_pt = tile.get<PathTile>();
+            for (int i = 0; i < 4; i++) {
+                if (tile_pt.grid_x == pt.grid_x + dx[i] &&
+                    tile_pt.grid_z == pt.grid_z + dz[i]) {
+                    neighbor_ids.push_back(tile.id);
+                    break;
+                }
             }
         }
 
-        if (neighbors.empty()) return {0, 0};
+        if (neighbor_ids.empty()) return -1;
+        return neighbor_ids[rand() % neighbor_ids.size()];
+    }
 
-        vec2 target = neighbors[rand() % neighbors.size()];
-        vec2 dir = {target.x - t.position.x, target.y - t.position.y};
+    vec2 get_wander_direction(const Transform& t, AgentSteering& steering,
+                              int current_tile_id) {
+        // Check if we need a new wander target
+        bool need_new_target = (steering.wander_target_tile < 0);
+
+        // Check if current wander target is still valid
+        if (!need_new_target) {
+            auto target_tile =
+                EntityHelper::getEntityForID(steering.wander_target_tile);
+            if (!target_tile.valid() || !target_tile->has<Transform>()) {
+                need_new_target = true;
+            } else {
+                // Check if we've reached the target tile
+                vec2 target_pos = target_tile->get<Transform>().position;
+                float dist = vec::distance(t.position, target_pos);
+                if (dist < TILESIZE * 0.5f) {
+                    // Reached the target, pick a new one from this tile
+                    need_new_target = true;
+                    current_tile_id = steering.wander_target_tile;
+                }
+            }
+        }
+
+        if (need_new_target) {
+            steering.wander_target_tile =
+                pick_random_neighbor_tile(current_tile_id);
+        }
+
+        // If we still don't have a target, we're stuck
+        if (steering.wander_target_tile < 0) return {0, 0};
+
+        auto target_tile =
+            EntityHelper::getEntityForID(steering.wander_target_tile);
+        if (!target_tile.valid() || !target_tile->has<Transform>()) {
+            steering.wander_target_tile = -1;
+            return {0, 0};
+        }
+
+        vec2 target_pos = target_tile->get<Transform>().position;
+        vec2 dir = {target_pos.x - t.position.x, target_pos.y - t.position.y};
         return vec::length(dir) > EPSILON ? vec::norm(dir) : vec2{0, 0};
     }
 
@@ -346,7 +390,8 @@ struct PathFollowingSystem
                     return;
                 }
             }
-            steering.path_direction = pick_wander_direction(t, closest_tile_id);
+            steering.path_direction =
+                get_wander_direction(t, steering, closest_tile_id);
             return;
         }
 
@@ -355,9 +400,14 @@ struct PathFollowingSystem
         auto current_tile = EntityHelper::getEntityForID(closest_tile_id);
         if (!next_tile.valid() || !next_tile->has<Transform>() ||
             !current_tile.valid()) {
-            steering.path_direction = {0, 0};
+            // Next tile was deleted - fall back to wandering
+            steering.path_direction =
+                get_wander_direction(t, steering, closest_tile_id);
             return;
         }
+
+        // Clear wander target when following a valid path
+        steering.wander_target_tile = -1;
 
         vec2 current_pos = current_tile->get<Transform>().position;
         vec2 next_pos = next_tile->get<Transform>().position;

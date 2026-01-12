@@ -158,6 +158,8 @@ void calculate_path_signposts() {
 
     for (Entity& tile : path_tiles) {
         tile.addComponentIfMissing<PathSignpost>();
+        // Clear old signpost data before recalculating to remove stale tile IDs
+        tile.get<PathSignpost>().next_node_for.clear();
         const PathTile& pt = tile.get<PathTile>();
         for (int i = 0; i < 4; i++) {
             auto neighbor_it =
