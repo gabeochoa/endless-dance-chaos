@@ -413,18 +413,23 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
 
 struct FacilityAbsorptionSystem : System<Transform, Facility> {
     static constexpr float ABSORPTION_RADIUS = 1.5f;
+    static constexpr float FACILITY_SIZE = 1.5f;
 
-    void for_each_with(Entity&, Transform& f_t, Facility& f, float dt) override {
+    void for_each_with(Entity& facility_entity, Transform& f_t, Facility& f, float dt) override {
         f.absorption_timer += dt;
         
         float absorb_interval = 1.0f / f.absorption_rate;
         
+        // Find agents walking toward this facility (not already inside one)
         auto agents = EntityQuery()
             .whereHasComponent<Transform>()
             .whereHasComponent<Agent>()
             .gen();
         
         for (Entity& agent : agents) {
+            // Skip agents already inside a facility
+            if (agent.has<InsideFacility>()) continue;
+            
             Agent& a = agent.get<Agent>();
             if (a.want != f.type) continue;
             
@@ -436,19 +441,93 @@ struct FacilityAbsorptionSystem : System<Transform, Facility> {
                     f.absorption_timer -= absorb_interval;
                     f.current_occupants++;
                     
-                    auto origin = EntityHelper::getEntityForID(a.origin_id);
-                    if (origin.valid() && origin->has<Attraction>()) {
-                        origin->get<Attraction>().current_count--;
-                    }
+                    // Calculate a slot position inside the facility
+                    int slot = f.current_occupants - 1;
+                    int cols = (int)std::ceil(std::sqrt((float)f.capacity));
+                    int row = slot / cols;
+                    int col = slot % cols;
+                    float cell_size = FACILITY_SIZE / (float)cols;
+                    float start_offset = -FACILITY_SIZE * 0.5f + cell_size * 0.5f;
                     
-                    EntityHelper::markIDForCleanup(agent.id);
+                    // Add InsideFacility component - agent stays visible inside
+                    InsideFacility& inside = agent.addComponent<InsideFacility>();
+                    inside.facility_id = facility_entity.id;
+                    inside.time_inside = 0.f;
+                    inside.service_time = 2.0f + (rand() % 100) / 50.f;  // 2-4 seconds
+                    inside.slot_offset = {
+                        start_offset + col * cell_size,
+                        start_offset + row * cell_size
+                    };
+                    
+                    // Move agent to facility position (will be offset in render)
+                    a_t.position = f_t.position;
+                    a_t.velocity = {0, 0};
+                    
+                    // Clear steering so they stop moving
+                    if (agent.has<AgentSteering>()) {
+                        AgentSteering& steer = agent.get<AgentSteering>();
+                        steer.path_direction = {0, 0};
+                        steer.separation = {0, 0};
+                    }
                 }
                 break;
             }
         }
+    }
+};
+
+// Handle agents exiting facilities after service time - they get a new activity
+struct FacilityExitSystem : System<Transform, Agent, InsideFacility, AgentTarget, HasStress> {
+    FacilityType random_next_want(FacilityType current) {
+        // Pick a new want, weighted by common needs
+        // Avoid picking the same thing twice in a row
+        int r = rand() % 100;
         
-        if (f.current_occupants > 0) {
-            f.current_occupants = std::max(0, f.current_occupants - 1);
+        if (current == FacilityType::Stage) {
+            // After watching a show, probably need food or bathroom
+            if (r < 50) return FacilityType::Food;
+            if (r < 80) return FacilityType::Bathroom;
+            return FacilityType::Stage;  // Some people want more music!
+        } else if (current == FacilityType::Food) {
+            // After eating, might want bathroom or entertainment
+            if (r < 40) return FacilityType::Bathroom;
+            if (r < 80) return FacilityType::Stage;
+            return FacilityType::Food;  // Still hungry
+        } else {  // Bathroom
+            // After bathroom, probably want food or entertainment
+            if (r < 50) return FacilityType::Stage;
+            if (r < 80) return FacilityType::Food;
+            return FacilityType::Bathroom;
+        }
+    }
+    
+    void for_each_with(Entity& agent, Transform& t, Agent& a, InsideFacility& inside, AgentTarget& target, HasStress& stress, float dt) override {
+        inside.time_inside += dt;
+        
+        if (inside.time_inside >= inside.service_time) {
+            // Get the facility to update occupancy and get exit position
+            auto facility_opt = EntityHelper::getEntityForID(inside.facility_id);
+            if (facility_opt.valid() && facility_opt->has<Facility>() && facility_opt->has<Transform>()) {
+                Facility& f = facility_opt->get<Facility>();
+                const Transform& f_t = facility_opt->get<Transform>();
+                f.current_occupants = std::max(0, f.current_occupants - 1);
+                
+                // Move agent to facility entrance (offset from center)
+                t.position = {f_t.position.x - 1.0f, f_t.position.y};
+            }
+            
+            // Completing an activity reduces stress significantly
+            stress.stress = std::max(0.f, stress.stress - 0.3f);
+            
+            // Assign new activity
+            a.want = random_next_want(a.want);
+            
+            // Reset target so TargetFindingSystem finds a new one
+            target.facility_id = -1;
+            target.target_pos = {0, 0};
+            
+            // Remove InsideFacility component - agent is back in the world
+            agent.removeComponent<InsideFacility>();
         }
     }
 };
@@ -459,6 +538,9 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
     static constexpr float TIME_STRESS_THRESHOLD = 15.f;
 
     void for_each_with(Entity& e, Transform& t, Agent& a, HasStress& s, float dt) override {
+        // Agents inside facilities don't accumulate crowding stress
+        if (e.has<InsideFacility>()) return;
+        
         float stress_delta = 0.f;
         
         int nearby_count = 0;
@@ -469,6 +551,9 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
             .gen();
         
         for (const Entity& other : nearby) {
+            // Don't count agents inside facilities
+            if (other.has<InsideFacility>()) continue;
+            
             float dist = vec::distance(t.position, other.get<Transform>().position);
             if (dist < CROWDING_RADIUS) {
                 nearby_count++;
@@ -529,6 +614,7 @@ void register_update_systems(SystemManager& sm) {
     // Agent lifecycle
     sm.register_update_system(std::make_unique<AgentLifetimeSystem>());
     sm.register_update_system(std::make_unique<FacilityAbsorptionSystem>());
+    sm.register_update_system(std::make_unique<FacilityExitSystem>());
     
     // Stress systems
     sm.register_update_system(std::make_unique<StressBuildupSystem>());
