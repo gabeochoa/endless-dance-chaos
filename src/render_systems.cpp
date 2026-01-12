@@ -156,6 +156,22 @@ struct RenderPathsSystem : System<Transform, PathNode> {
     static constexpr raylib::Color SIDEWALK_MAIN = {180, 175, 165, 255};
     static constexpr raylib::Color SIDEWALK_EDGE = {140, 135, 125, 255};
     static constexpr raylib::Color SIDEWALK_CRACK = {120, 115, 105, 255};
+    static constexpr raylib::Color CONGESTED_COLOR = {200, 80, 80, 255};
+    static constexpr raylib::Color OVERCROWDED_COLOR = {220, 50, 50, 255};
+
+    raylib::Color get_path_color(float congestion_ratio) const {
+        if (congestion_ratio <= 0.5f) {
+            return SIDEWALK_MAIN;  // Normal
+        } else if (congestion_ratio <= 1.0f) {
+            // Lerp from normal to congested (yellow-ish warning)
+            float t = (congestion_ratio - 0.5f) * 2.0f;
+            return raylib::ColorLerp(SIDEWALK_MAIN, CONGESTED_COLOR, t);
+        } else {
+            // Overcrowded - red, with pulse
+            float pulse = 0.5f + 0.5f * sinf((float) raylib::GetTime() * 4.0f);
+            return raylib::ColorLerp(CONGESTED_COLOR, OVERCROWDED_COLOR, pulse);
+        }
+    }
 
     void for_each_with(const Entity&, const Transform& t, const PathNode& node,
                        float) const override {
@@ -179,6 +195,9 @@ struct RenderPathsSystem : System<Transform, PathNode> {
         float hw = node.width * 0.5f;
         float y = 0.01f;  // Slightly above ground to prevent z-fighting
 
+        // Get color based on congestion
+        raylib::Color path_color = get_path_color(node.congestion_ratio());
+
         // Calculate the four corners of the sidewalk segment
         raylib::Vector3 v1 = {a.x + perp.x * hw, y, a.y + perp.y * hw};
         raylib::Vector3 v2 = {a.x - perp.x * hw, y, a.y - perp.y * hw};
@@ -187,12 +206,17 @@ struct RenderPathsSystem : System<Transform, PathNode> {
 
         // Draw main sidewalk surface as two triangles (both sides for
         // visibility)
-        raylib::DrawTriangle3D(v1, v2, v3, SIDEWALK_MAIN);
-        raylib::DrawTriangle3D(v3, v2, v1, SIDEWALK_MAIN);  // Back face
-        raylib::DrawTriangle3D(v1, v3, v4, SIDEWALK_MAIN);
-        raylib::DrawTriangle3D(v4, v3, v1, SIDEWALK_MAIN);  // Back face
+        raylib::DrawTriangle3D(v1, v2, v3, path_color);
+        raylib::DrawTriangle3D(v3, v2, v1, path_color);  // Back face
+        raylib::DrawTriangle3D(v1, v3, v4, path_color);
+        raylib::DrawTriangle3D(v4, v3, v1, path_color);  // Back face
 
-        // Draw sidewalk edges (borders)
+        // Draw sidewalk edges (borders) - redder when congested
+        raylib::Color edge_color =
+            node.congestion_ratio() > 1.0f
+                ? raylib::ColorLerp(SIDEWALK_EDGE, raylib::RED, 0.5f)
+                : SIDEWALK_EDGE;
+
         raylib::Vector3 e1a = {a.x + perp.x * hw, y + 0.005f,
                                a.y + perp.y * hw};
         raylib::Vector3 e1b = {b.x + perp.x * hw, y + 0.005f,
@@ -202,8 +226,8 @@ struct RenderPathsSystem : System<Transform, PathNode> {
         raylib::Vector3 e2b = {b.x - perp.x * hw, y + 0.005f,
                                b.y - perp.y * hw};
 
-        raylib::DrawLine3D(e1a, e1b, SIDEWALK_EDGE);
-        raylib::DrawLine3D(e2a, e2b, SIDEWALK_EDGE);
+        raylib::DrawLine3D(e1a, e1b, edge_color);
+        raylib::DrawLine3D(e2a, e2b, edge_color);
 
         // Draw expansion joint lines across the sidewalk (every ~1 unit)
         float segLen = vec::length({b.x - a.x, b.y - a.y});
@@ -324,8 +348,86 @@ struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
 
 struct RenderUISystem : System<> {
     void once(float) const override {
+        auto* state = EntityHelper::get_singleton_cmp<GameState>();
+
+        // Title
         raylib::DrawText("Endless Dance Chaos", 10, 10, 20, raylib::WHITE);
         raylib::DrawFPS(DEFAULT_SCREEN_WIDTH - 100, 10);
+
+        if (!state) return;
+
+        // Stress meter
+        int meter_x = 10;
+        int meter_y = 40;
+        int meter_w = 200;
+        int meter_h = 20;
+
+        raylib::DrawRectangle(meter_x, meter_y, meter_w, meter_h,
+                              raylib::Color{40, 40, 40, 200});
+
+        float stress_ratio = state->global_stress;
+        raylib::Color stress_color =
+            raylib::ColorLerp(raylib::GREEN, raylib::RED, stress_ratio);
+        raylib::DrawRectangle(meter_x, meter_y, (int) (meter_w * stress_ratio),
+                              meter_h, stress_color);
+        raylib::DrawRectangleLines(meter_x, meter_y, meter_w, meter_h,
+                                   raylib::WHITE);
+
+        // Stress label
+        char stress_text[32];
+        snprintf(stress_text, sizeof(stress_text), "Stress: %.0f%%",
+                 stress_ratio * 100.f);
+        raylib::DrawText(stress_text, meter_x + 5, meter_y + 3, 14,
+                         raylib::WHITE);
+
+        // Time
+        char time_text[32];
+        int minutes = (int) state->game_time / 60;
+        int seconds = (int) state->game_time % 60;
+        snprintf(time_text, sizeof(time_text), "Time: %d:%02d", minutes,
+                 seconds);
+        raylib::DrawText(time_text, meter_x, meter_y + meter_h + 5, 16,
+                         raylib::WHITE);
+
+        // Game Over screen
+        if (state->is_game_over()) {
+            // Fade overlay
+            float fade = std::min(state->game_over_timer * 0.5f, 0.7f);
+            raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH,
+                                  DEFAULT_SCREEN_HEIGHT,
+                                  raylib::Fade(raylib::BLACK, fade));
+
+            // Game Over text with animation
+            float scale = 1.0f + 0.1f * sinf(state->game_over_timer * 2.0f);
+            int font_size = (int) (60 * scale);
+            const char* game_over = "CROWD PANIC!";
+            int text_w = raylib::MeasureText(game_over, font_size);
+            int text_x = (DEFAULT_SCREEN_WIDTH - text_w) / 2;
+            int text_y = DEFAULT_SCREEN_HEIGHT / 2 - 60;
+
+            raylib::DrawText(game_over, text_x + 3, text_y + 3, font_size,
+                             raylib::BLACK);  // Shadow
+            raylib::DrawText(game_over, text_x, text_y, font_size, raylib::RED);
+
+            // Stats
+            char stats[128];
+            snprintf(stats, sizeof(stats),
+                     "Survived: %d:%02d\nFinal Stress: %.0f%%", minutes,
+                     seconds, stress_ratio * 100.f);
+            int stats_w = raylib::MeasureText("Final Stress: 100%", 24);
+            raylib::DrawText(stats, (DEFAULT_SCREEN_WIDTH - stats_w) / 2,
+                             text_y + 80, 24, raylib::WHITE);
+
+            // Restart prompt
+            if (state->game_over_timer > 2.0f) {
+                float blink = 0.5f + 0.5f * sinf(state->game_over_timer * 3.0f);
+                const char* restart = "Press R to Restart";
+                int restart_w = raylib::MeasureText(restart, 20);
+                raylib::DrawText(
+                    restart, (DEFAULT_SCREEN_WIDTH - restart_w) / 2,
+                    text_y + 160, 20, raylib::Fade(raylib::WHITE, blink));
+            }
+        }
     }
 };
 

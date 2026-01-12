@@ -9,6 +9,59 @@ struct CameraInputSystem : System<ProvidesCamera> {
     }
 };
 
+// Tracks global stress levels and checks for lose condition
+struct GameStateSystem : System<> {
+    void once(float dt) override {
+        auto* state = EntityHelper::get_singleton_cmp<GameState>();
+        if (!state) return;
+
+        // Don't update if game is over
+        if (state->is_game_over()) {
+            state->game_over_timer += dt;
+            return;
+        }
+
+        state->game_time += dt;
+
+        // Calculate global stress metrics
+        auto agents = EntityQuery()
+                          .whereHasComponent<HasStress>()
+                          .whereHasComponent<Agent>()
+                          .gen();
+
+        if (agents.empty()) {
+            state->global_stress = 0.f;
+            state->max_stress = 0.f;
+            return;
+        }
+
+        float total_stress = 0.f;
+        float max_stress = 0.f;
+        int critical_count = 0;
+
+        for (const Entity& agent : agents) {
+            float stress = agent.get<HasStress>().stress;
+            total_stress += stress;
+            max_stress = std::max(max_stress, stress);
+            if (stress >= 0.95f) critical_count++;
+        }
+
+        state->global_stress = total_stress / (float) agents.size();
+        state->max_stress = max_stress;
+
+        // Check lose conditions
+        bool global_critical =
+            state->global_stress >= GameState::CRITICAL_GLOBAL_STRESS;
+        bool too_many_critical =
+            critical_count >= GameState::CRITICAL_MAX_STRESS_COUNT;
+
+        if (global_critical || too_many_critical) {
+            state->status = GameStatus::GameOver;
+            state->game_over_timer = 0.f;
+        }
+    }
+};
+
 // Find the nearest Facility matching the agent's want
 struct TargetFindingSystem
     : System<Transform, Agent, AgentTarget, Not<InsideFacility>> {
@@ -304,6 +357,10 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
 
     void for_each_with(Entity& e, Transform& t, Attraction& a,
                        float dt) override {
+        // Don't spawn during game over
+        auto* state = EntityHelper::get_singleton_cmp<GameState>();
+        if (state && state->is_game_over()) return;
+
         a.spawn_timer += dt;
 
         float spawn_interval = 1.0f / a.spawn_rate;
@@ -553,10 +610,102 @@ struct FacilityExitSystem
     }
 };
 
+// Counts agents near each path segment and updates congestion
+struct PathCongestionSystem : System<Transform, PathNode> {
+    void once(float) override {
+        // Reset all path loads at the start of each frame
+        auto paths = EntityQuery().whereHasComponent<PathNode>().gen();
+        for (Entity& path : paths) {
+            path.get<PathNode>().current_load = 0.f;
+        }
+    }
+
+    void for_each_with(Entity&, Transform& path_t, PathNode& node,
+                       float) override {
+        auto next_opt = EntityHelper::getEntityForID(node.next_node_id);
+        if (!next_opt.valid() || !next_opt->has<Transform>()) return;
+
+        vec2 a = path_t.position;
+        vec2 b = next_opt->get<Transform>().position;
+        vec2 segment = {b.x - a.x, b.y - a.y};
+        float segment_len = vec::length(segment);
+        if (segment_len < EPSILON) return;
+
+        vec2 segment_dir = {segment.x / segment_len, segment.y / segment_len};
+        float half_width = node.width * 0.5f;
+
+        // Count agents on this path segment
+        node.current_load =
+            (float) EntityQuery()
+                .whereHasComponent<Transform>()
+                .whereHasComponent<Agent>()
+                .whereMissingComponent<InsideFacility>()
+                .whereLambda([&](const Entity& agent) {
+                    vec2 agent_pos = agent.get<Transform>().position;
+                    vec2 to_agent = {agent_pos.x - a.x, agent_pos.y - a.y};
+                    float projection =
+                        to_agent.x * segment_dir.x + to_agent.y * segment_dir.y;
+                    if (projection < 0 || projection > segment_len)
+                        return false;
+                    vec2 closest = {a.x + segment_dir.x * projection,
+                                    a.y + segment_dir.y * projection};
+                    return vec::distance(agent_pos, closest) <= half_width;
+                })
+                .gen_count();
+    }
+};
+
 struct StressBuildupSystem : System<Transform, Agent, HasStress> {
     static constexpr float CROWDING_RADIUS = 1.5f;
     static constexpr int CROWDING_THRESHOLD = 5;
     static constexpr float TIME_STRESS_THRESHOLD = 15.f;
+    static constexpr float CONGESTION_STRESS_RATE = 0.15f;
+
+    // Check if a position is on a path segment
+    static bool is_on_path_segment(const vec2& pos, const Entity& path) {
+        const PathNode& node = path.get<PathNode>();
+        if (node.next_node_id < 0) return false;
+
+        auto next_opt = EntityHelper::getEntityForID(node.next_node_id);
+        if (!next_opt.valid() || !next_opt->has<Transform>()) return false;
+
+        vec2 a = path.get<Transform>().position;
+        vec2 b = next_opt->get<Transform>().position;
+        vec2 segment = {b.x - a.x, b.y - a.y};
+        float segment_len = vec::length(segment);
+        if (segment_len < EPSILON) return false;
+
+        vec2 segment_dir = {segment.x / segment_len, segment.y / segment_len};
+
+        // Project position onto segment
+        vec2 to_pos = {pos.x - a.x, pos.y - a.y};
+        float projection = to_pos.x * segment_dir.x + to_pos.y * segment_dir.y;
+        if (projection < 0 || projection > segment_len) return false;
+
+        vec2 closest = {a.x + segment_dir.x * projection,
+                        a.y + segment_dir.y * projection};
+        float dist = vec::distance(pos, closest);
+
+        return dist <= node.width * 0.5f;
+    }
+
+    // Find the path segment this agent is on and return its congestion ratio
+    float get_path_congestion(const vec2& pos) {
+        auto paths = EntityQuery()
+                         .whereHasComponent<Transform>()
+                         .whereHasComponent<PathNode>()
+                         .whereLambda([&pos](const Entity& path) {
+                             return is_on_path_segment(pos, path);
+                         })
+                         .orderByLambda([](const Entity& a, const Entity& b) {
+                             return a.get<PathNode>().congestion_ratio() >
+                                    b.get<PathNode>().congestion_ratio();
+                         })
+                         .gen();
+
+        if (paths.empty()) return 0.f;
+        return paths.front().get<PathNode>().congestion_ratio();
+    }
 
     void for_each_with(Entity& e, Transform& t, Agent& a, HasStress& s,
                        float dt) override {
@@ -565,26 +714,34 @@ struct StressBuildupSystem : System<Transform, Agent, HasStress> {
 
         float stress_delta = 0.f;
 
-        auto nearby = EntityQuery()
-                          .whereHasComponent<Transform>()
-                          .whereHasComponent<Agent>()
-                          .whereNotID(e.id)
-                          .whereMissingComponent<InsideFacility>()
-                          .whereLambda([&t](const Entity& other) {
-                              float dist = vec::distance(
-                                  t.position, other.get<Transform>().position);
-                              return dist < CROWDING_RADIUS;
-                          })
-                          .gen();
-
-        int nearby_count = (int) nearby.size();
+        // Crowding stress from nearby agents
+        int nearby_count =
+            (int) EntityQuery()
+                .whereHasComponent<Transform>()
+                .whereHasComponent<Agent>()
+                .whereNotID(e.id)
+                .whereMissingComponent<InsideFacility>()
+                .whereLambda([&t](const Entity& other) {
+                    float dist = vec::distance(t.position,
+                                               other.get<Transform>().position);
+                    return dist < CROWDING_RADIUS;
+                })
+                .gen_count();
 
         if (nearby_count > CROWDING_THRESHOLD) {
             stress_delta += (nearby_count - CROWDING_THRESHOLD) * 0.1f;
         }
 
+        // Time-based stress
         if (a.time_alive > TIME_STRESS_THRESHOLD) {
             stress_delta += (a.time_alive - TIME_STRESS_THRESHOLD) * 0.02f;
+        }
+
+        // Path congestion stress - builds when on overcrowded paths
+        float congestion = get_path_congestion(t.position);
+        if (congestion > 1.0f) {
+            // Stress scales with how overcrowded the path is
+            stress_delta += (congestion - 1.0f) * CONGESTION_STRESS_RATE;
         }
 
         s.stress += stress_delta * dt;
@@ -623,6 +780,9 @@ struct StressSpreadSystem : System<Transform, HasStress> {
 };
 
 void register_update_systems(SystemManager& sm) {
+    // Game state tracking (must run first)
+    sm.register_update_system(std::make_unique<GameStateSystem>());
+
     // Core systems
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
@@ -644,6 +804,9 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<AgentLifetimeSystem>());
     sm.register_update_system(std::make_unique<FacilityAbsorptionSystem>());
     sm.register_update_system(std::make_unique<FacilityExitSystem>());
+
+    // Path congestion tracking (must run before stress)
+    sm.register_update_system(std::make_unique<PathCongestionSystem>());
 
     // Stress systems
     sm.register_update_system(std::make_unique<StressBuildupSystem>());

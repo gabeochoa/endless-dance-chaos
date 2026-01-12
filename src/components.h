@@ -81,8 +81,16 @@ struct PathNode : BaseComponent {
     int next_node_id = -1;
     float width = 1.5f;
 
+    // Congestion tracking
+    float capacity = 8.f;      // Max comfortable agents on this segment
+    float current_load = 0.f;  // Agent count this frame (reset by system)
+
     PathNode() = default;
     PathNode(int next, float w = 1.5f) : next_node_id(next), width(w) {}
+
+    float congestion_ratio() const {
+        return (capacity > 0.f) ? current_load / capacity : 0.f;
+    }
 };
 
 // Signpost at each path node - tells agents which way to go for each facility
@@ -149,4 +157,23 @@ struct StageInfo : BaseComponent {
         }
         return 0.f;
     }
+};
+
+// Game state tracking - singleton component
+enum class GameStatus { Running, GameOver };
+
+struct GameState : BaseComponent {
+    GameStatus status = GameStatus::Running;
+    float game_time = 0.f;        // Total time played
+    float global_stress = 0.f;    // Average stress across all agents
+    float max_stress = 0.f;       // Highest individual stress
+    int total_agents_served = 0;  // Agents that completed a facility visit
+    float game_over_timer = 0.f;  // Time since game over (for animations)
+
+    // Lose condition thresholds
+    static constexpr float CRITICAL_GLOBAL_STRESS = 0.7f;  // Average stress
+    static constexpr float CRITICAL_MAX_STRESS_COUNT =
+        10;  // Agents at max stress
+
+    bool is_game_over() const { return status == GameStatus::GameOver; }
 };
