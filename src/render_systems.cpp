@@ -88,7 +88,7 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
     static constexpr float FACILITY_SIZE = 1.5f;
     static constexpr float FACILITY_HEIGHT = 0.5f;
     
-    void for_each_with(const Entity& e, const Transform& t, const Facility& f, float) const override {
+    void for_each_with(const Entity&, const Transform& t, const Facility& f, float) const override {
         raylib::Color color, wire_color;
         switch (f.type) {
             case FacilityType::Bathroom:
@@ -115,45 +115,7 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
             raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, 
                              {FACILITY_SIZE, FACILITY_SIZE}, 
                              raylib::Fade(color, 0.3f));
-            
-            // Render stage state indicator
-            if (e.has<StageInfo>()) {
-                const StageInfo& info = e.get<StageInfo>();
-                float progress = info.get_progress();
-                float bar_width = FACILITY_SIZE * 0.8f;
-                float bar_height = 0.1f;
-                float bar_y = FACILITY_HEIGHT + 0.2f;
-                
-                raylib::Color bar_color, bg_color;
-                switch (info.state) {
-                    case StageState::Idle:
-                        bar_color = raylib::GRAY;
-                        bg_color = raylib::DARKGRAY;
-                        break;
-                    case StageState::Announcing:
-                        bar_color = raylib::YELLOW;
-                        bg_color = raylib::ORANGE;
-                        break;
-                    case StageState::Performing:
-                        bar_color = raylib::GREEN;
-                        bg_color = raylib::DARKGREEN;
-                        break;
-                    case StageState::Clearing:
-                        bar_color = raylib::RED;
-                        bg_color = raylib::MAROON;
-                        break;
-                }
-                
-                // Background bar
-                raylib::DrawCube({t.position.x, bar_y, t.position.y}, 
-                                bar_width, bar_height, 0.1f, bg_color);
-                
-                // Progress bar (filled portion)
-                float filled_width = bar_width * progress;
-                float offset = (bar_width - filled_width) * 0.5f;
-                raylib::DrawCube({t.position.x - offset, bar_y + 0.01f, t.position.y}, 
-                                filled_width, bar_height, 0.12f, bar_color);
-            }
+            // State indicator rendered as 2D overlay by RenderStageIndicatorsSystem
         } else {
             // Other facilities: draw 3 walls (open on entry side - negative X)
             float hs = FACILITY_SIZE * 0.5f;  // half size
@@ -250,6 +212,92 @@ struct EndMode3DSystem : System<> {
     }
 };
 
+// Renders circular progress indicators above stages (2D overlay)
+struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
+    static constexpr float INDICATOR_RADIUS = 30.0f;
+    
+    void for_each_with(const Entity&, const Transform& t, const Facility&, 
+                       const StageInfo& info, float) const override {
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!cam) return;
+        
+        // Project 3D position to screen space
+        raylib::Vector3 world_pos = {t.position.x, 1.5f, t.position.y};  // Above the stage
+        raylib::Vector2 screen_pos = raylib::GetWorldToScreen(world_pos, cam->cam.camera);
+        
+        // Skip if off screen
+        if (screen_pos.x < -50 || screen_pos.x > DEFAULT_SCREEN_WIDTH + 50 ||
+            screen_pos.y < -50 || screen_pos.y > DEFAULT_SCREEN_HEIGHT + 50) return;
+        
+        float radius = INDICATOR_RADIUS;
+        float progress = info.get_progress();
+        
+        // Pick colors based on state
+        raylib::Color bg_color, fg_color, icon_color;
+        const char* icon_char = "?";
+        
+        switch (info.state) {
+            case StageState::Idle:
+                bg_color = raylib::Color{60, 60, 60, 200};
+                fg_color = raylib::Color{100, 100, 100, 220};
+                icon_color = raylib::Color{150, 150, 150, 255};
+                icon_char = "Z";  // Sleeping/idle
+                break;
+            case StageState::Announcing:
+                bg_color = raylib::Color{80, 60, 20, 200};
+                fg_color = raylib::Color{255, 200, 50, 230};
+                icon_color = raylib::Color{255, 230, 100, 255};
+                icon_char = "!";  // Alert/upcoming
+                break;
+            case StageState::Performing:
+                bg_color = raylib::Color{30, 80, 30, 200};
+                fg_color = raylib::Color{80, 220, 80, 230};
+                icon_color = raylib::Color{150, 255, 150, 255};
+                icon_char = "*";  // Music/performing (♫ not reliably rendered)
+                break;
+            case StageState::Clearing:
+                bg_color = raylib::Color{80, 30, 30, 200};
+                fg_color = raylib::Color{220, 60, 60, 230};
+                icon_color = raylib::Color{255, 100, 100, 255};
+                icon_char = "X";  // Clearing out
+                break;
+        }
+        
+        // Background circle
+        raylib::DrawCircle((int)screen_pos.x, (int)screen_pos.y, radius, bg_color);
+        
+        // Progress arc - starts at top (-90°), sweeps clockwise
+        float start_angle = -90.0f;
+        float end_angle = start_angle + (360.0f * progress);
+        raylib::DrawCircleSector(screen_pos, radius - 3, start_angle, end_angle, 32, fg_color);
+        
+        // Progress line showing current position
+        if (progress > 0.01f && progress < 0.99f) {
+            float angle_rad = end_angle * 0.0174533f;  // DEG2RAD
+            float line_x = screen_pos.x + (radius - 3) * cosf(angle_rad);
+            float line_y = screen_pos.y + (radius - 3) * sinf(angle_rad);
+            raylib::DrawLine((int)screen_pos.x, (int)screen_pos.y, 
+                            (int)line_x, (int)line_y, raylib::WHITE);
+        }
+        
+        // Inner circle for icon background
+        raylib::DrawCircle((int)screen_pos.x, (int)screen_pos.y, radius * 0.5f, 
+                          raylib::Color{30, 30, 30, 230});
+        
+        // Icon character (centered)
+        int font_size = (int)(radius * 0.7f);
+        int text_width = raylib::MeasureText(icon_char, font_size);
+        raylib::DrawText(icon_char, 
+                        (int)(screen_pos.x - text_width / 2), 
+                        (int)(screen_pos.y - font_size / 2),
+                        font_size, icon_color);
+        
+        // Outer ring
+        raylib::DrawCircleLines((int)screen_pos.x, (int)screen_pos.y, radius, 
+                               raylib::Color{200, 200, 200, 180});
+    }
+};
+
 struct RenderUISystem : System<> {
     void once(float) const override {
         raylib::DrawText("Endless Dance Chaos", 10, 10, 20, raylib::WHITE);
@@ -283,6 +331,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderFacilitiesSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
+    sm.register_render_system(std::make_unique<RenderStageIndicatorsSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
