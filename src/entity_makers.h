@@ -25,5 +25,8 @@ Entity& make_agent(float x, float z, FacilityType want, int origin_id = -1);
 // Camera
 Entity& make_camera();
 
+// Game state singleton
+Entity& make_game_state();
+
 // Calculate signposts after all paths are created
 void calculate_path_signposts();

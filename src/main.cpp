@@ -18,6 +18,7 @@ void game() {
     register_all_systems(systems);
 
     make_camera();
+    make_game_state();
 
     // Create an attraction (spawns agents)
     make_attraction(-5.f, -5.f, 5.0f, 100);

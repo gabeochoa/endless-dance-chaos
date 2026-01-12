@@ -62,6 +62,13 @@ Entity& make_camera() {
     return e;
 }
 
+Entity& make_game_state() {
+    Entity& e = EntityHelper::createPermanentEntity();
+    e.addComponent<GameState>();
+    EntityHelper::registerSingleton<GameState>(e);
+    return e;
+}
+
 // Calculate signposts using BIDIRECTIONAL BFS from facilities
 // This ensures EVERY node has directions to EVERY facility (Disney-style
 // signposts)
