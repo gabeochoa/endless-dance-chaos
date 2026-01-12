@@ -3,6 +3,7 @@
 #include "vec_util.h"
 #include "afterhours/src/core/entity_query.h"
 #include <queue>
+#include <unordered_set>
 
 // Calculate signposts using BIDIRECTIONAL BFS from facilities
 // This ensures EVERY node has directions to EVERY facility (Disney-style signposts)
@@ -178,11 +179,12 @@ struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
     }
 };
 
-// Follow signposts - find closest PathNode, look up direction for agent's want
+// Follow signposts - find closest node, go to next node, stay on path
 struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering> {
     void for_each_with(Entity&, Transform& t, Agent& a, AgentTarget& agent_target, AgentSteering& steering, float) override {
-        // Find closest PathNode with a signpost
-        float closest_dist = std::numeric_limits<float>::max();
+        // Find closest PathNode - but prefer nodes whose NEXT node is closer to our target
+        // This prevents oscillation at hub nodes
+        float best_score = std::numeric_limits<float>::max();
         int closest_node_id = -1;
         
         auto path_nodes = EntityQuery()
@@ -195,8 +197,23 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
             const Transform& node_t = node.get<Transform>();
             float dist = vec::distance(t.position, node_t.position);
             
-            if (dist < closest_dist) {
-                closest_dist = dist;
+            // Get this node's signpost
+            const PathSignpost& sp = node.get<PathSignpost>();
+            int next_id = sp.get_next_node(a.want);
+            
+            // Score: distance to node + distance from next_node to target
+            // This prefers nodes that lead us TOWARD our target
+            float score = dist;
+            if (next_id >= 0 && agent_target.facility_id >= 0) {
+                auto next_node = EntityHelper::getEntityForID(next_id);
+                if (next_node.valid() && next_node->has<Transform>()) {
+                    float next_to_target = vec::distance(next_node->get<Transform>().position, agent_target.target_pos);
+                    score = dist + next_to_target * 0.1f;  // Small weight on path quality
+                }
+            }
+            
+            if (score < best_score) {
+                best_score = score;
                 closest_node_id = node.id;
             }
         }
@@ -206,7 +223,7 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
             return;
         }
         
-        // Look up signpost for our want
+        // Ask this node: "where do I go next?"
         auto closest = EntityHelper::getEntityForID(closest_node_id);
         if (!closest.valid()) {
             steering.path_direction = {0, 0};
@@ -216,13 +233,12 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
         const PathSignpost& signpost = closest->get<PathSignpost>();
         int next_node_id = signpost.get_next_node(a.want);
         
-        // next_node_id == -1 means signpost says "arrived" or no signpost for this want
+        // -1 means we're at the destination
         if (next_node_id < 0) {
-            // Check if we're actually near the target facility - if not, fall back to direct movement
+            // Go directly to facility
             if (agent_target.facility_id >= 0) {
-                float dist_to_target = vec::distance(t.position, agent_target.target_pos);
-                if (dist_to_target > 1.0f) {  // Not near destination (must be closer than absorption radius)
-                    vec2 dir = {agent_target.target_pos.x - t.position.x, agent_target.target_pos.y - t.position.y};
+                vec2 dir = {agent_target.target_pos.x - t.position.x, agent_target.target_pos.y - t.position.y};
+                if (vec::length(dir) > EPSILON) {
                     steering.path_direction = vec::norm(dir);
                     return;
                 }
@@ -231,23 +247,24 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
             return;
         }
         
-        // Move toward the next node while staying close to the path
+        // Go toward the next node, but stay close to the path
         auto next_node = EntityHelper::getEntityForID(next_node_id);
-        if (!next_node.valid() || !next_node->has<Transform>()) {
+        auto current_node = EntityHelper::getEntityForID(closest_node_id);
+        if (!next_node.valid() || !next_node->has<Transform>() || !current_node.valid()) {
             steering.path_direction = {0, 0};
             return;
         }
         
-        vec2 current_node_pos = closest->get<Transform>().position;
-        vec2 next_node_pos = next_node->get<Transform>().position;
+        vec2 current_pos = current_node->get<Transform>().position;
+        vec2 next_pos = next_node->get<Transform>().position;
         
-        // Calculate path segment direction
-        vec2 path_vec = {next_node_pos.x - current_node_pos.x, next_node_pos.y - current_node_pos.y};
+        // Calculate path segment
+        vec2 path_vec = {next_pos.x - current_pos.x, next_pos.y - current_pos.y};
         float path_len = vec::length(path_vec);
         
         if (path_len < EPSILON) {
-            // Nodes are co-located, just move toward next
-            vec2 dir = {next_node_pos.x - t.position.x, next_node_pos.y - t.position.y};
+            // Nodes are co-located, just go to next
+            vec2 dir = {next_pos.x - t.position.x, next_pos.y - t.position.y};
             if (vec::length(dir) > EPSILON) {
                 steering.path_direction = vec::norm(dir);
             } else {
@@ -258,38 +275,30 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
         
         vec2 path_dir = {path_vec.x / path_len, path_vec.y / path_len};
         
-        // Find closest point on the path segment
-        vec2 to_agent = {t.position.x - current_node_pos.x, t.position.y - current_node_pos.y};
+        // Find closest point on path segment
+        vec2 to_agent = {t.position.x - current_pos.x, t.position.y - current_pos.y};
         float projection = to_agent.x * path_dir.x + to_agent.y * path_dir.y;
-        projection = std::max(0.0f, std::min(path_len, projection));  // Clamp to segment
+        projection = std::max(0.0f, std::min(path_len, projection));
         
-        vec2 closest_point_on_path = {
-            current_node_pos.x + path_dir.x * projection,
-            current_node_pos.y + path_dir.y * projection
+        vec2 closest_on_path = {
+            current_pos.x + path_dir.x * projection,
+            current_pos.y + path_dir.y * projection
         };
         
-        // Calculate distance from path
-        float dist_from_path = vec::distance(t.position, closest_point_on_path);
+        // How far are we from the path?
+        float dist_from_path = vec::distance(t.position, closest_on_path);
         
-        // Blend: if far from path, pull toward path; if close, move along path
-        constexpr float PATH_ATTRACTION_RADIUS = 0.5f;  // Start pulling toward path at this distance
+        // Blend: pull toward path + move along path
+        constexpr float PATH_PULL_RADIUS = 0.3f;  // Pull toward path within this distance
         
         vec2 final_dir;
-        if (dist_from_path > PATH_ATTRACTION_RADIUS) {
-            // Too far from path - move toward closest point on path
-            vec2 to_path = {closest_point_on_path.x - t.position.x, closest_point_on_path.y - t.position.y};
-            vec2 to_path_norm = vec::norm(to_path);
-            
-            // Blend path attraction with forward progress (70% toward path, 30% forward)
-            float blend = std::min(1.0f, dist_from_path / (PATH_ATTRACTION_RADIUS * 3.0f));
-            final_dir = {
-                to_path_norm.x * blend + path_dir.x * (1.0f - blend),
-                to_path_norm.y * blend + path_dir.y * (1.0f - blend)
-            };
+        if (dist_from_path > PATH_PULL_RADIUS) {
+            // Too far - move toward the path
+            vec2 to_path = {closest_on_path.x - t.position.x, closest_on_path.y - t.position.y};
+            final_dir = vec::norm(to_path);
         } else {
-            // Close to path - move along path toward next node
-            // But also pull slightly toward the path for stability
-            vec2 to_next = {next_node_pos.x - t.position.x, next_node_pos.y - t.position.y};
+            // Close enough - move along path toward next node
+            vec2 to_next = {next_pos.x - t.position.x, next_pos.y - t.position.y};
             final_dir = vec::norm(to_next);
         }
         
@@ -303,7 +312,7 @@ struct PathFollowingSystem : System<Transform, Agent, AgentTarget, AgentSteering
 
 // Calculate separation forces
 struct SeparationSystem : System<Transform, Agent, AgentSteering> {
-    static constexpr float SEPARATION_RADIUS = 0.8f;
+    static constexpr float SEPARATION_RADIUS = 0.4f;  // Smaller radius - only push when very close
     
     void for_each_with(Entity& e, Transform& t, Agent&, AgentSteering& steering, float) override {
         vec2 force{0, 0};
@@ -324,7 +333,7 @@ struct SeparationSystem : System<Transform, Agent, AgentSteering> {
                     t.position.y - other_t.position.y
                 };
                 away = vec::norm(away);
-                float strength = (1.0f - (dist / SEPARATION_RADIUS)) * 2.0f;
+                float strength = (1.0f - (dist / SEPARATION_RADIUS)) * 1.0f;  // Weaker force
                 force.x += away.x * strength;
                 force.y += away.y * strength;
             }
@@ -334,12 +343,13 @@ struct SeparationSystem : System<Transform, Agent, AgentSteering> {
     }
 };
 
-// Combine steering forces into final velocity
+// Combine steering forces into final velocity - SIMPLE version
 struct VelocityCombineSystem : System<Transform, AgentSteering> {
     static constexpr float MOVE_SPEED = 3.0f;
-    static constexpr float SEPARATION_WEIGHT = 0.3f;
+    static constexpr float SEPARATION_WEIGHT = 0.2f;  // Light separation
     
     void for_each_with(Entity&, Transform& t, AgentSteering& steering, float) override {
+        // Path direction is primary, separation is secondary
         vec2 move_dir = {
             steering.path_direction.x + steering.separation.x * SEPARATION_WEIGHT,
             steering.path_direction.y + steering.separation.y * SEPARATION_WEIGHT
@@ -348,10 +358,11 @@ struct VelocityCombineSystem : System<Transform, AgentSteering> {
         float move_len = vec::length(move_dir);
         if (move_len > EPSILON) {
             move_dir = vec::norm(move_dir);
+            t.velocity.x = move_dir.x * MOVE_SPEED;
+            t.velocity.y = move_dir.y * MOVE_SPEED;
+        } else {
+            t.velocity = {0, 0};
         }
-        
-        t.velocity.x = move_dir.x * MOVE_SPEED;
-        t.velocity.y = move_dir.y * MOVE_SPEED;
     }
 };
 
