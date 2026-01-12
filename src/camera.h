@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "input_mapping.h"
 #include "log.h"
 #include "rl.h"
 
@@ -88,10 +89,10 @@ struct IsometricCamera {
     // Handle input for camera controls
     void handle_input(float dt) {
         // Rotation: Q and E keys
-        if (raylib::IsKeyPressed(raylib::KEY_Q)) {
+        if (action_pressed(InputAction::CameraRotateLeft)) {
             rotate_counter_clockwise();
         }
-        if (raylib::IsKeyPressed(raylib::KEY_E)) {
+        if (action_pressed(InputAction::CameraRotateRight)) {
             rotate_clockwise();
         }
 
@@ -105,20 +106,16 @@ struct IsometricCamera {
         float move_x = 0.0f;
         float move_z = 0.0f;
 
-        if (raylib::IsKeyDown(raylib::KEY_W) ||
-            raylib::IsKeyDown(raylib::KEY_UP)) {
+        if (action_down(InputAction::CameraForward)) {
             move_z -= pan_speed * dt;
         }
-        if (raylib::IsKeyDown(raylib::KEY_S) ||
-            raylib::IsKeyDown(raylib::KEY_DOWN)) {
+        if (action_down(InputAction::CameraBack)) {
             move_z += pan_speed * dt;
         }
-        if (raylib::IsKeyDown(raylib::KEY_A) ||
-            raylib::IsKeyDown(raylib::KEY_LEFT)) {
+        if (action_down(InputAction::CameraLeft)) {
             move_x -= pan_speed * dt;
         }
-        if (raylib::IsKeyDown(raylib::KEY_D) ||
-            raylib::IsKeyDown(raylib::KEY_RIGHT)) {
+        if (action_down(InputAction::CameraRight)) {
             move_x += pan_speed * dt;
         }
 

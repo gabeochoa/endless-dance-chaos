@@ -186,6 +186,9 @@ struct PathTile : BaseComponent {
     }
 };
 
+// Build tool - what the player is currently placing
+enum class BuildTool { Path, Bathroom, Food, Stage };
+
 struct BuilderState : BaseComponent {
     struct PendingTile {
         int grid_x = 0;
@@ -203,7 +206,10 @@ struct BuilderState : BaseComponent {
     bool hover_valid = false;           // Is mouse over valid ground?
     bool path_exists_at_hover = false;  // Already a path here?
 
-    // Staged changes - not yet committed
+    // Current build tool
+    BuildTool tool = BuildTool::Path;
+
+    // Staged path changes - not yet committed
     std::vector<PendingTile> pending_tiles;
 
     // TODO: Future cost tracking
@@ -218,5 +224,125 @@ struct BuilderState : BaseComponent {
             if (p.grid_x == gx && p.grid_z == gz) return true;
         }
         return false;
+    }
+};
+
+// Festival progression - tracks unlocked facility slots
+struct FestivalProgress : BaseComponent {
+    // Available slots per facility type
+    int bathroom_slots = 1;
+    int food_slots = 1;
+    int stage_slots = 1;
+
+    // Currently placed counts
+    int bathrooms_placed = 1;
+    int food_placed = 1;
+    int stages_placed = 1;
+
+    // Milestone tracking
+    int last_milestone_agents = 0;
+
+    bool can_place(FacilityType type) const {
+        switch (type) {
+            case FacilityType::Bathroom:
+                return bathrooms_placed < bathroom_slots;
+            case FacilityType::Food:
+                return food_placed < food_slots;
+            case FacilityType::Stage:
+                return stages_placed < stage_slots;
+        }
+        return false;
+    }
+
+    int get_slots(FacilityType type) const {
+        switch (type) {
+            case FacilityType::Bathroom:
+                return bathroom_slots;
+            case FacilityType::Food:
+                return food_slots;
+            case FacilityType::Stage:
+                return stage_slots;
+        }
+        return 0;
+    }
+
+    int get_placed(FacilityType type) const {
+        switch (type) {
+            case FacilityType::Bathroom:
+                return bathrooms_placed;
+            case FacilityType::Food:
+                return food_placed;
+            case FacilityType::Stage:
+                return stages_placed;
+        }
+        return 0;
+    }
+
+    void increment_placed(FacilityType type) {
+        switch (type) {
+            case FacilityType::Bathroom:
+                bathrooms_placed++;
+                break;
+            case FacilityType::Food:
+                food_placed++;
+                break;
+            case FacilityType::Stage:
+                stages_placed++;
+                break;
+        }
+    }
+
+    void decrement_placed(FacilityType type) {
+        switch (type) {
+            case FacilityType::Bathroom:
+                if (bathrooms_placed > 0) bathrooms_placed--;
+                break;
+            case FacilityType::Food:
+                if (food_placed > 0) food_placed--;
+                break;
+            case FacilityType::Stage:
+                if (stages_placed > 0) stages_placed--;
+                break;
+        }
+    }
+};
+
+// Agent lingering at stage waiting for next performance
+struct LingeringAtStage : BaseComponent {
+    int stage_id = -1;
+    float linger_time = 0.f;
+    float max_linger = 15.f;   // How long before they give up waiting
+    vec2 wander_offset{0, 0};  // Random offset for wandering near stage
+
+    LingeringAtStage() = default;
+    LingeringAtStage(int sid, float max_time, vec2 wander)
+        : stage_id(sid), max_linger(max_time), wander_offset(wander) {}
+};
+
+// Demand heatmap data - tracks what agents want at each grid cell
+struct DemandHeatmap : BaseComponent {
+    // Grid cell -> demand counts [Bathroom, Food, Stage]
+    std::map<std::pair<int, int>, std::array<int, 3>> demand_grid;
+
+    // Which demand type to display (0=all, 1=bathroom, 2=food, 3=stage)
+    int display_filter = 0;
+
+    void clear() { demand_grid.clear(); }
+
+    void add_demand(int grid_x, int grid_z, FacilityType type) {
+        auto& cell = demand_grid[{grid_x, grid_z}];
+        cell[static_cast<int>(type)]++;
+    }
+
+    int get_demand(int grid_x, int grid_z, FacilityType type) const {
+        auto it = demand_grid.find({grid_x, grid_z});
+        if (it == demand_grid.end()) return 0;
+        return it->second[static_cast<int>(type)];
+    }
+
+    int get_total_demand(int grid_x, int grid_z) const {
+        auto it = demand_grid.find({grid_x, grid_z});
+        if (it == demand_grid.end()) return 0;
+        return it->second[0] + it->second[1] + it->second[2];
     }
 };

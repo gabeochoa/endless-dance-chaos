@@ -4,11 +4,16 @@
 
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "engine/random_engine.h"
 #include "entity_makers.h"
 #include "game.h"
+#include "input_mapping.h"
 #include "rl.h"
 #include "systems.h"
 #include "vec_util.h"
+
+// Shorthand for random access
+static RandomEngine& rng() { return RandomEngine::get(); }
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -57,12 +62,13 @@ struct PathStagingSystem : System<BuilderState, GameState> {
                        float) override {
         if (!builder.active || !builder.hover_valid) return;
         if (state.is_game_over()) return;
+        if (builder.tool != BuildTool::Path) return;  // Only in path mode
 
         bool left_down = raylib::IsMouseButtonDown(raylib::MOUSE_LEFT_BUTTON);
-        bool right_down = raylib::IsMouseButtonDown(raylib::MOUSE_RIGHT_BUTTON);
         bool shift_down = raylib::IsKeyDown(raylib::KEY_LEFT_SHIFT);
 
-        bool is_removing = right_down || (left_down && shift_down);
+        // Only handle placing in path mode (demolition handled by
+        // DemolitionSystem)
         bool is_placing = left_down && !shift_down;
 
         int gx = builder.hover_grid_x;
@@ -75,10 +81,224 @@ struct PathStagingSystem : System<BuilderState, GameState> {
         if (is_placing && !find_path_tile_at(gx, gz)) {
             builder.pending_tiles.push_back({gx, gz, false});
         }
+    }
+};
 
-        // Drag-to-remove: queue existing tiles for removal
-        if (is_removing && find_path_tile_at(gx, gz)) {
-            builder.pending_tiles.push_back({gx, gz, true});
+// Handle number keys to toggle build tools
+struct BuildToolSystem : System<BuilderState, GameState> {
+    void for_each_with(Entity&, BuilderState& builder, GameState& state,
+                       float) override {
+        (void) state;  // We only read state
+        if (!builder.active) return;
+        // Don't switch tools when data layer is showing (1/2/3 filter heatmap)
+        if (state.show_data_layer) return;
+
+        // Switch tools with 1/2/3/4 keys
+        if (action_pressed(InputAction::ToolPath)) {
+            builder.tool = BuildTool::Path;
+        }
+        if (action_pressed(InputAction::ToolBathroom)) {
+            builder.tool = BuildTool::Bathroom;
+        }
+        if (action_pressed(InputAction::ToolFood)) {
+            builder.tool = BuildTool::Food;
+        }
+        if (action_pressed(InputAction::ToolStage)) {
+            builder.tool = BuildTool::Stage;
+        }
+    }
+};
+
+// TODO move to util
+// Check if a grid position has a path tile
+static bool is_on_path(int grid_x, int grid_z) {
+    return find_path_tile_at(grid_x, grid_z);
+}
+
+// Check if a grid position has a facility already
+static bool has_facility_at(int grid_x, int grid_z) {
+    float world_x = grid_x * TILESIZE;
+    float world_z = grid_z * TILESIZE;
+
+    return EntityQuery()
+        .whereHasComponent<Transform>()
+        .whereHasComponent<Facility>()
+        .whereLambda([world_x, world_z](const Entity& e) {
+            vec2 pos = e.get<Transform>().position;
+            return std::abs(pos.x - world_x) < TILESIZE * 0.5f &&
+                   std::abs(pos.y - world_z) < TILESIZE * 0.5f;
+        })
+        .has_values();
+}
+
+// Remove facility at grid position, returns the type if found
+static std::optional<FacilityType> remove_facility_at(int grid_x, int grid_z) {
+    float world_x = grid_x * TILESIZE;
+    float world_z = grid_z * TILESIZE;
+
+    auto facilities =
+        EntityQuery()
+            .whereHasComponent<Transform>()
+            .whereHasComponent<Facility>()
+            .whereLambda([world_x, world_z](const Entity& e) {
+                vec2 pos = e.get<Transform>().position;
+                return std::abs(pos.x - world_x) < TILESIZE * 0.5f &&
+                       std::abs(pos.y - world_z) < TILESIZE * 0.5f;
+            })
+            .gen();
+
+    for (Entity& facility : facilities) {
+        FacilityType type = facility.get<Facility>().type;
+        facility.cleanup = true;
+        return type;
+    }
+    return std::nullopt;
+}
+
+// Shift+click or right-click demolishes anything (path tiles and facilities)
+struct DemolitionSystem : System<BuilderState, GameState, FestivalProgress> {
+    void for_each_with(Entity&, BuilderState& builder, GameState& state,
+                       FestivalProgress& progress, float) override {
+        if (!builder.active || !builder.hover_valid) return;
+        if (state.is_game_over()) return;
+
+        bool left_down = raylib::IsMouseButtonDown(raylib::MOUSE_LEFT_BUTTON);
+        bool right_down = raylib::IsMouseButtonDown(raylib::MOUSE_RIGHT_BUTTON);
+        bool shift_down = raylib::IsKeyDown(raylib::KEY_LEFT_SHIFT);
+
+        bool is_demolishing = right_down || (left_down && shift_down);
+        if (!is_demolishing) return;
+
+        int gx = builder.hover_grid_x;
+        int gz = builder.hover_grid_z;
+
+        // Try to remove facility first
+        auto removed_type = remove_facility_at(gx, gz);
+        if (removed_type) {
+            // Decrement the placed count so we can place another
+            progress.decrement_placed(*removed_type);
+            calculate_path_signposts();  // Recalculate since facility is gone
+            log_info("Demolished facility at ({}, {})", gx, gz);
+            return;
+        }
+
+        // If no facility, queue path tile for removal (if in path mode)
+        if (builder.tool == BuildTool::Path) {
+            if (!builder.is_pending_at(gx, gz) && find_path_tile_at(gx, gz)) {
+                builder.pending_tiles.push_back({gx, gz, true});
+            }
+        }
+    }
+};
+
+// Handle clicking to place facilities
+struct FacilityPlacementSystem
+    : System<BuilderState, GameState, FestivalProgress> {
+    void for_each_with(Entity&, BuilderState& builder, GameState& state,
+                       FestivalProgress& progress, float) override {
+        if (!builder.active || !builder.hover_valid) return;
+        if (state.is_game_over()) return;
+        if (builder.tool == BuildTool::Path) return;  // Path handled elsewhere
+
+        // Only place on left click
+        if (!raylib::IsMouseButtonPressed(raylib::MOUSE_LEFT_BUTTON)) return;
+
+        int gx = builder.hover_grid_x;
+        int gz = builder.hover_grid_z;
+
+        // Validate placement - must be on a path tile
+        if (!is_on_path(gx, gz)) {
+            log_info("Cannot place facility: must be on a path");
+            return;
+        }
+        if (has_facility_at(gx, gz)) {
+            log_info("Cannot place facility: space occupied");
+            return;
+        }
+
+        FacilityType type;
+        switch (builder.tool) {
+            case BuildTool::Bathroom:
+                type = FacilityType::Bathroom;
+                break;
+            case BuildTool::Food:
+                type = FacilityType::Food;
+                break;
+            case BuildTool::Stage:
+                type = FacilityType::Stage;
+                break;
+            case BuildTool::Path:
+                return;  // Already handled above
+        }
+
+        if (!progress.can_place(type)) {
+            log_info("Cannot place facility: no slots available");
+            return;
+        }
+
+        // Place the facility
+        float world_x = gx * TILESIZE;
+        float world_z = gz * TILESIZE;
+
+        switch (type) {
+            case FacilityType::Bathroom:
+                make_bathroom(world_x, world_z);
+                break;
+            case FacilityType::Food:
+                make_food(world_x, world_z);
+                break;
+            case FacilityType::Stage:
+                make_stage(world_x, world_z);
+                break;
+        }
+
+        progress.increment_placed(type);
+        EntityHelper::merge_entity_arrays();
+        calculate_path_signposts();
+
+        log_info("Placed {} at ({}, {})",
+                 type == FacilityType::Bathroom ? "bathroom"
+                 : type == FacilityType::Food   ? "food"
+                 : type == FacilityType::Stage  ? "stage"
+                                                : "unknown",
+                 gx, gz);
+
+        // Keep tool selected so player can place multiple of same type
+    }
+};
+
+// Check milestones and unlock facility slots
+struct FestivalProgressSystem : System<> {
+    void once(float) override {
+        auto* progress = EntityHelper::get_singleton_cmp<FestivalProgress>();
+        if (!progress) return;
+
+        int agent_count =
+            (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+
+        // TODO find a better way later
+        // Check milestones (only unlock once per threshold)
+        if (agent_count >= 25 && progress->last_milestone_agents < 25) {
+            progress->bathroom_slots++;
+            progress->last_milestone_agents = 25;
+            log_info("Milestone: 25 agents - unlocked +1 bathroom slot");
+        }
+        if (agent_count >= 50 && progress->last_milestone_agents < 50) {
+            progress->food_slots++;
+            progress->last_milestone_agents = 50;
+            log_info("Milestone: 50 agents - unlocked +1 food slot");
+        }
+        if (agent_count >= 75 && progress->last_milestone_agents < 75) {
+            progress->stage_slots++;
+            progress->last_milestone_agents = 75;
+            log_info("Milestone: 75 agents - unlocked +1 stage slot");
+        }
+        if (agent_count >= 100 && progress->last_milestone_agents < 100) {
+            progress->bathroom_slots++;
+            progress->food_slots++;
+            progress->stage_slots++;
+            progress->last_milestone_agents = 100;
+            log_info("Milestone: 100 agents - unlocked +1 of each facility");
         }
     }
 };
@@ -89,13 +309,13 @@ struct PathConfirmationSystem : System<BuilderState> {
         if (!builder.has_pending()) return;
 
         // Confirm with Enter key
-        if (raylib::IsKeyPressed(raylib::KEY_ENTER)) {
+        if (action_pressed(InputAction::PlaceOrConfirm)) {
             commit_pending_tiles(builder);
             builder.clear_pending();
         }
 
         // Cancel with Escape key
-        if (raylib::IsKeyPressed(raylib::KEY_ESCAPE)) {
+        if (action_pressed(InputAction::Cancel)) {
             builder.clear_pending();
         }
     }
@@ -128,7 +348,7 @@ struct GameStateSystem : System<> {
         if (!state) return;
 
         // Toggle data layer overlay with TAB (like Cities: Skylines info views)
-        if (raylib::IsKeyPressed(raylib::KEY_TAB)) {
+        if (action_pressed(InputAction::ToggleDataLayer)) {
             state->show_data_layer = !state->show_data_layer;
         }
 
@@ -184,8 +404,8 @@ struct GameStateSystem : System<> {
 // Find the nearest Facility matching the agent's want
 struct TargetFindingSystem
     : System<Transform, Agent, AgentTarget, Not<InsideFacility>> {
-    void for_each_with(Entity& e, Transform& t, Agent& a, AgentTarget& target,
-                       float) override {
+    void for_each_with(Entity& /*e*/, Transform& t, Agent& a,
+                       AgentTarget& target, float) override {
         // Skip if we already have a valid target
         if (target.facility_id >= 0) {
             auto existing = EntityHelper::getEntityForID(target.facility_id);
@@ -250,7 +470,7 @@ struct TargetFindingSystem
         // If wanting stage but no stage is open, pick a different activity
         if (a.want == FacilityType::Stage && best_id < 0) {
             a.want =
-                (rand() % 2 == 0) ? FacilityType::Food : FacilityType::Bathroom;
+                rng().get_bool() ? FacilityType::Food : FacilityType::Bathroom;
             return;  // Will find new target next frame
         }
 
@@ -285,7 +505,7 @@ struct PathFollowingSystem
         }
 
         if (neighbor_ids.empty()) return -1;
-        return neighbor_ids[rand() % neighbor_ids.size()];
+        return neighbor_ids[rng().get_index(neighbor_ids)];
     }
 
     vec2 get_wander_direction(const Transform& t, AgentSteering& steering,
@@ -564,19 +784,18 @@ struct AgentLifetimeSystem : System<Agent> {
     }
 };
 
-struct AttractionSpawnSystem : System<Transform, Attraction> {
+struct AttractionSpawnSystem : System<Transform, Attraction, GameState> {
     FacilityType random_want() {
-        int r = rand() % 100;
+        int r = rng().get_int(0, 99);
         if (r < 40) return FacilityType::Food;
         if (r < 70) return FacilityType::Bathroom;
         return FacilityType::Stage;
     }
 
-    void for_each_with(Entity& e, Transform& t, Attraction& a,
+    void for_each_with(Entity& e, Transform& t, Attraction& a, GameState& state,
                        float dt) override {
         // Don't spawn during game over
-        auto* state = EntityHelper::get_singleton_cmp<GameState>();
-        if (state && state->is_game_over()) return;
+        if (state.is_game_over()) return;
 
         a.spawn_timer += dt;
 
@@ -586,8 +805,8 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
             a.spawn_timer -= spawn_interval;
 
             Entity& agent = EntityHelper::createEntity();
-            float offset_x = ((float) (rand() % 100) / 100.f - 0.5f) * 0.5f;
-            float offset_z = ((float) (rand() % 100) / 100.f - 0.5f) * 0.5f;
+            float offset_x = rng().get_float(-0.25f, 0.25f);
+            float offset_z = rng().get_float(-0.25f, 0.25f);
             agent.addComponent<Transform>(t.position.x + offset_x,
                                           t.position.y + offset_z);
             Agent& ag = agent.addComponent<Agent>();
@@ -607,7 +826,7 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
 // Manages stage state machine: Idle -> Announcing -> Performing -> Clearing ->
 // Idle
 struct StageManagementSystem : System<Facility, StageInfo> {
-    void for_each_with(Entity& stage_entity, Facility& f, StageInfo& info,
+    void for_each_with(Entity& /*stage_entity*/, Facility& f, StageInfo& info,
                        float dt) override {
         info.state_timer += dt;
 
@@ -617,7 +836,7 @@ struct StageManagementSystem : System<Facility, StageInfo> {
                     info.state = StageState::Announcing;
                     info.state_timer = 0.f;
                     // Could randomize artist popularity here
-                    info.artist_popularity = 0.3f + (rand() % 70) / 100.f;
+                    info.artist_popularity = rng().get_float(0.3f, 1.0f);
                 }
                 break;
 
@@ -648,7 +867,14 @@ struct StageManagementSystem : System<Facility, StageInfo> {
 };
 
 // Forces agents to leave stage when it's clearing
+// Forces agents to leave stage when it's clearing - with percentage-based
+// behavior
 struct StageClearingSystem : System<Agent, InsideFacility> {
+    // Track which agents have already had their fate decided this clearing
+    // phase
+    std::set<int> decided_agents;
+    int last_clearing_stage_id = -1;
+
     void for_each_with(Entity& agent, Agent& a, InsideFacility& inside,
                        float) override {
         if (a.want != FacilityType::Stage) return;
@@ -658,9 +884,81 @@ struct StageClearingSystem : System<Agent, InsideFacility> {
 
         const StageInfo& info = stage_opt->get<StageInfo>();
 
-        // If stage is clearing, kick everyone out immediately
+        // Reset tracking when a new clearing phase starts
+        if (info.state == StageState::Clearing && info.state_timer < 0.1f) {
+            if (last_clearing_stage_id != inside.facility_id) {
+                decided_agents.clear();
+                last_clearing_stage_id = inside.facility_id;
+            }
+        }
+
+        // If stage is clearing, decide each agent's fate once
         if (info.state == StageState::Clearing) {
-            inside.service_time = 0.f;  // Will trigger exit next frame
+            if (decided_agents.count(agent.id)) return;  // Already decided
+            decided_agents.insert(agent.id);
+
+            int roll = rng().get_int(0, 99);
+
+            if (roll < 40) {
+                // 40% - Stay and linger (wait for next show)
+                // Add LingeringAtStage component and extend service time
+                {
+                    agent.addComponentIfMissing<LingeringAtStage>(
+                        inside.facility_id, rng().get_float(10.f, 20.f),
+                        rng().get_vec(-0.5f, 0.5f));
+                }
+                // Keep them inside a bit longer, lingering system will handle
+                inside.service_time = inside.time_inside + 1.0f;
+            } else if (roll < 75) {
+                // 35% - Get hungry, leave after brief delay
+                a.want = FacilityType::Food;
+                inside.service_time =
+                    inside.time_inside + rng().get_float(1.0f, 3.0f);
+            } else {
+                // 25% - Need bathroom, leave immediately
+                a.want = FacilityType::Bathroom;
+                inside.service_time = 0.f;
+            }
+        }
+
+        // Clear lingering component if stage starts announcing again
+        if (info.state == StageState::Announcing &&
+            agent.has<LingeringAtStage>()) {
+            agent.removeComponent<LingeringAtStage>();
+            // Reset service time to watch the full show
+            inside.service_time = inside.time_inside + info.announce_duration +
+                                  info.perform_duration;
+        }
+    }
+};
+
+// Handle lingering agents who are waiting for the next show
+struct LingeringAgentSystem : System<Agent, InsideFacility, LingeringAtStage> {
+    void for_each_with(Entity& agent, Agent& a, InsideFacility& inside,
+                       LingeringAtStage& linger, float dt) override {
+        linger.linger_time += dt;
+
+        // Check if the stage is announcing again - they can stay!
+        auto stage_opt = EntityHelper::getEntityForID(linger.stage_id);
+        if (stage_opt.valid() && stage_opt->has<StageInfo>()) {
+            const StageInfo& info = stage_opt->get<StageInfo>();
+            if (info.state == StageState::Announcing ||
+                info.state == StageState::Performing) {
+                // Show is starting, they can stay
+                agent.removeComponent<LingeringAtStage>();
+                inside.service_time =
+                    inside.time_inside + info.perform_duration + 1.0f;
+                return;
+            }
+        }
+
+        // If they've waited too long, they give up and leave
+        if (linger.linger_time >= linger.max_linger) {
+            // Pick a new activity
+            a.want =
+                rng().get_bool() ? FacilityType::Food : FacilityType::Bathroom;
+            inside.service_time = 0.f;  // Leave now
+            agent.removeComponent<LingeringAtStage>();
         }
     }
 };
@@ -747,7 +1045,7 @@ struct FacilityAbsorptionSystem : System<Transform, Facility> {
         if (is_stage) {
             inside.service_time = stage_remaining_time + 1.0f;  // +1 buffer
         } else {
-            inside.service_time = 2.0f + (rand() % 100) / 50.f;
+            inside.service_time = rng().get_float(2.0f, 4.0f);
         }
 
         inside.slot_offset = {start_offset + col * cell_size,
@@ -772,7 +1070,7 @@ struct FacilityExitSystem
     FacilityType random_next_want(FacilityType current) {
         // Pick a new want, weighted by common needs
         // Avoid picking the same thing twice in a row
-        int r = rand() % 100;
+        int r = rng().get_int(0, 99);
 
         if (current == FacilityType::Stage) {
             // After watching a show, probably need food or bathroom
@@ -962,15 +1260,61 @@ struct StressSpreadSystem : System<Transform, HasStress> {
     }
 };
 
+// Tracks agent wants at each grid cell for the demand heatmap
+struct DemandHeatmapSystem : System<DemandHeatmap, GameState> {
+    void for_each_with(Entity&, DemandHeatmap& heatmap, GameState& state,
+                       float) override {
+        // Handle filter toggle with 1/2/3 keys (only when TAB overlay is
+        // active)
+        if (state.show_data_layer) {
+            if (action_pressed(InputAction::FilterBathroom)) {
+                heatmap.display_filter = (heatmap.display_filter == 1) ? 0 : 1;
+            }
+            if (action_pressed(InputAction::FilterFood)) {
+                heatmap.display_filter = (heatmap.display_filter == 2) ? 0 : 2;
+            }
+            if (action_pressed(InputAction::FilterStage)) {
+                heatmap.display_filter = (heatmap.display_filter == 3) ? 0 : 3;
+            }
+        }
+
+        // Clear and recalculate demand grid each frame
+        heatmap.clear();
+
+        auto agents = EntityQuery()
+                          .whereHasComponent<Transform>()
+                          .whereHasComponent<Agent>()
+                          .whereMissingComponent<InsideFacility>()
+                          .gen();
+
+        for (const Entity& agent : agents) {
+            vec2 pos = agent.get<Transform>().position;
+            FacilityType want = agent.get<Agent>().want;
+
+            // Convert to grid coordinates
+            int grid_x = (int) std::floor(pos.x / TILESIZE + 0.5f);
+            int grid_z = (int) std::floor(pos.y / TILESIZE + 0.5f);
+
+            heatmap.add_demand(grid_x, grid_z, want);
+        }
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     // Game state tracking (must run first)
     sm.register_update_system(std::make_unique<GameStateSystem>());
+
+    // Festival progression (milestone unlocks)
+    sm.register_update_system(std::make_unique<FestivalProgressSystem>());
 
     // Core systems
     sm.register_update_system(std::make_unique<CameraInputSystem>());
 
     // Path builder systems (mouse picking, staging, confirmation)
     sm.register_update_system(std::make_unique<MousePickingSystem>());
+    sm.register_update_system(std::make_unique<BuildToolSystem>());
+    sm.register_update_system(std::make_unique<DemolitionSystem>());
+    sm.register_update_system(std::make_unique<FacilityPlacementSystem>());
     sm.register_update_system(std::make_unique<PathStagingSystem>());
     sm.register_update_system(std::make_unique<PathConfirmationSystem>());
 
@@ -979,6 +1323,7 @@ void register_update_systems(SystemManager& sm) {
     // Facility state machines
     sm.register_update_system(std::make_unique<StageManagementSystem>());
     sm.register_update_system(std::make_unique<StageClearingSystem>());
+    sm.register_update_system(std::make_unique<LingeringAgentSystem>());
 
     // Target finding and path following
     sm.register_update_system(std::make_unique<TargetFindingSystem>());
@@ -996,6 +1341,9 @@ void register_update_systems(SystemManager& sm) {
 
     // Path congestion tracking (must run before stress)
     sm.register_update_system(std::make_unique<PathCongestionSystem>());
+
+    // Demand heatmap tracking
+    sm.register_update_system(std::make_unique<DemandHeatmapSystem>());
 
     // Stress systems
     sm.register_update_system(std::make_unique<StressBuildupSystem>());
