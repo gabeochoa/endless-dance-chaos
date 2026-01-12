@@ -217,3 +217,11 @@ void calculate_path_signposts() {
 
     log_info("Calculated path signposts for {} path tiles", path_tiles.size());
 }
+
+bool should_escape_quit() {
+    auto* builder = EntityHelper::get_singleton_cmp<BuilderState>();
+    if (builder && builder->has_pending()) {
+        return false;  // Don't quit - we have pending tiles to cancel
+    }
+    return true;
+}

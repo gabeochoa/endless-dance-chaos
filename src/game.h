@@ -16,3 +16,6 @@ constexpr float TILESIZE = 1.0f;
 
 // Version
 constexpr std::string_view VERSION = "0.0.1";
+
+// Check if escape should quit (false if something is consuming it)
+bool should_escape_quit();

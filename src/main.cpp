@@ -36,8 +36,16 @@ void game() {
     calculate_path_signposts();
 
     while (running && !raylib::WindowShouldClose()) {
+        // Check Escape BEFORE systems run (while pending tiles still exist)
+        bool escape_should_quit =
+            raylib::IsKeyPressed(raylib::KEY_ESCAPE) && should_escape_quit();
+
         float dt = raylib::GetFrameTime();
         systems.run(dt);
+
+        if (escape_should_quit) {
+            running = false;
+        }
     }
 }
 
@@ -57,6 +65,7 @@ int main(int argc, char* argv[]) {
     raylib::InitWindow(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
                        "Endless Dance Chaos");
     raylib::SetTargetFPS(60);
+    raylib::SetExitKey(0);  // Disable Escape from closing window
 
     // Create render texture for MCP screenshots
     g_render_texture =
