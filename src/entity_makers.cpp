@@ -160,7 +160,8 @@ void calculate_path_signposts() {
         tile.addComponentIfMissing<PathSignpost>();
         const PathTile& pt = tile.get<PathTile>();
         for (int i = 0; i < 4; i++) {
-            auto neighbor_it = grid_to_id.find({pt.grid_x + dx[i], pt.grid_z + dz[i]});
+            auto neighbor_it =
+                grid_to_id.find({pt.grid_x + dx[i], pt.grid_z + dz[i]});
             if (neighbor_it != grid_to_id.end()) {
                 adjacency[tile.id].push_back(neighbor_it->second);
             }
