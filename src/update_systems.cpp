@@ -138,14 +138,30 @@ struct CameraInputSystem : System<ProvidesCamera> {
 
 // Find the nearest Facility matching the agent's want
 struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
-    void for_each_with(Entity&, Transform& t, Agent& a, AgentTarget& target, float) override {
+    void for_each_with(Entity& e, Transform& t, Agent& a, AgentTarget& target, float) override {
+        // Agents inside facilities don't need to find targets
+        if (e.has<InsideFacility>()) return;
+        
         // Skip if we already have a valid target
         if (target.facility_id >= 0) {
             auto existing = EntityHelper::getEntityForID(target.facility_id);
             if (existing.valid() && existing->has<Facility>()) {
+                const Facility& f = existing->get<Facility>();
                 // Check if facility still matches our want
-                if (existing->get<Facility>().type == a.want) {
-                    return;  // Target is still valid
+                if (f.type == a.want) {
+                    // Special check for stages - is it still open?
+                    if (f.type == FacilityType::Stage && existing->has<StageInfo>()) {
+                        const StageInfo& info = existing->get<StageInfo>();
+                        if (info.state != StageState::Announcing && 
+                            info.state != StageState::Performing) {
+                            // Stage closed, need new target
+                            target.facility_id = -1;
+                        } else {
+                            return;  // Stage still valid
+                        }
+                    } else {
+                        return;  // Target is still valid
+                    }
                 }
             }
         }
@@ -164,6 +180,15 @@ struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
             const Facility& f = facility.get<Facility>();
             if (f.type != a.want) continue;
             
+            // For stages, only target if announcing or performing
+            if (f.type == FacilityType::Stage && facility.has<StageInfo>()) {
+                const StageInfo& info = facility.get<StageInfo>();
+                if (info.state != StageState::Announcing && 
+                    info.state != StageState::Performing) {
+                    continue;  // Stage not accepting people
+                }
+            }
+            
             const Transform& f_t = facility.get<Transform>();
             float dist = vec::distance(t.position, f_t.position);
             
@@ -172,6 +197,12 @@ struct TargetFindingSystem : System<Transform, Agent, AgentTarget> {
                 best_id = facility.id;
                 best_pos = f_t.position;
             }
+        }
+        
+        // If wanting stage but no stage is open, pick a different activity
+        if (a.want == FacilityType::Stage && best_id < 0) {
+            a.want = (rand() % 2 == 0) ? FacilityType::Food : FacilityType::Bathroom;
+            return;  // Will find new target next frame
         }
         
         target.facility_id = best_id;
@@ -411,12 +442,92 @@ struct AttractionSpawnSystem : System<Transform, Attraction> {
     }
 };
 
+// Manages stage state machine: Idle -> Announcing -> Performing -> Clearing -> Idle
+struct StageManagementSystem : System<Facility, StageInfo> {
+    void for_each_with(Entity& stage_entity, Facility& f, StageInfo& info, float dt) override {
+        info.state_timer += dt;
+        
+        switch (info.state) {
+            case StageState::Idle:
+                if (info.state_timer >= info.idle_duration) {
+                    info.state = StageState::Announcing;
+                    info.state_timer = 0.f;
+                    // Could randomize artist popularity here
+                    info.artist_popularity = 0.3f + (rand() % 70) / 100.f;
+                }
+                break;
+                
+            case StageState::Announcing:
+                if (info.state_timer >= info.announce_duration) {
+                    info.state = StageState::Performing;
+                    info.state_timer = 0.f;
+                }
+                break;
+                
+            case StageState::Performing:
+                if (info.state_timer >= info.perform_duration) {
+                    info.state = StageState::Clearing;
+                    info.state_timer = 0.f;
+                }
+                break;
+                
+            case StageState::Clearing:
+                // Force all agents inside this stage to leave
+                if (info.state_timer >= info.clear_duration) {
+                    info.state = StageState::Idle;
+                    info.state_timer = 0.f;
+                    f.current_occupants = 0;  // Reset occupancy
+                }
+                break;
+        }
+    }
+};
+
+// Forces agents to leave stage when it's clearing
+struct StageClearingSystem : System<Agent, InsideFacility> {
+    void for_each_with(Entity& agent, Agent& a, InsideFacility& inside, float) override {
+        if (a.want != FacilityType::Stage) return;
+        
+        auto stage_opt = EntityHelper::getEntityForID(inside.facility_id);
+        if (!stage_opt.valid() || !stage_opt->has<StageInfo>()) return;
+        
+        const StageInfo& info = stage_opt->get<StageInfo>();
+        
+        // If stage is clearing, kick everyone out immediately
+        if (info.state == StageState::Clearing) {
+            inside.service_time = 0.f;  // Will trigger exit next frame
+        }
+    }
+};
+
 struct FacilityAbsorptionSystem : System<Transform, Facility> {
     static constexpr float ABSORPTION_RADIUS = 1.5f;
     static constexpr float FACILITY_SIZE = 1.5f;
 
     void for_each_with(Entity& facility_entity, Transform& f_t, Facility& f, float dt) override {
         f.absorption_timer += dt;
+        
+        // Check if this is a stage and if it's accepting people
+        bool is_stage = f.type == FacilityType::Stage;
+        bool stage_open = true;
+        float stage_remaining_time = 0.f;
+        
+        if (is_stage && facility_entity.has<StageInfo>()) {
+            const StageInfo& info = facility_entity.get<StageInfo>();
+            // Only let people in during Announcing or Performing
+            stage_open = (info.state == StageState::Announcing || 
+                         info.state == StageState::Performing);
+            
+            // Calculate how much time is left in the performance
+            if (info.state == StageState::Performing) {
+                stage_remaining_time = info.perform_duration - info.state_timer;
+            } else if (info.state == StageState::Announcing) {
+                // If announcing, they'll stay for the whole performance
+                stage_remaining_time = (info.announce_duration - info.state_timer) + info.perform_duration;
+            }
+        }
+        
+        if (is_stage && !stage_open) return;  // Stage not accepting people
         
         float absorb_interval = 1.0f / f.absorption_rate;
         
@@ -453,7 +564,14 @@ struct FacilityAbsorptionSystem : System<Transform, Facility> {
                     InsideFacility& inside = agent.addComponent<InsideFacility>();
                     inside.facility_id = facility_entity.id;
                     inside.time_inside = 0.f;
-                    inside.service_time = 2.0f + (rand() % 100) / 50.f;  // 2-4 seconds
+                    
+                    // Stage: stay for the whole performance; others: 2-4 seconds
+                    if (is_stage) {
+                        inside.service_time = stage_remaining_time + 1.0f;  // +1 buffer
+                    } else {
+                        inside.service_time = 2.0f + (rand() % 100) / 50.f;
+                    }
+                    
                     inside.slot_offset = {
                         start_offset + col * cell_size,
                         start_offset + row * cell_size
@@ -601,6 +719,10 @@ void register_update_systems(SystemManager& sm) {
     // Core systems
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<AttractionSpawnSystem>());
+    
+    // Facility state machines
+    sm.register_update_system(std::make_unique<StageManagementSystem>());
+    sm.register_update_system(std::make_unique<StageClearingSystem>());
     
     // Target finding and path following
     sm.register_update_system(std::make_unique<TargetFindingSystem>());

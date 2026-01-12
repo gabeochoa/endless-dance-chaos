@@ -39,6 +39,7 @@ void game() {
     Entity& stage = EntityHelper::createEntity();
     stage.addComponent<Transform>(5.f, 3.f);
     stage.addComponent<Facility>().type = FacilityType::Stage;
+    stage.addComponent<StageInfo>();  // Stage state machine
     
     // Path to bathroom (bottom)
     Entity& bath_end = EntityHelper::createEntity();

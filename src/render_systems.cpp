@@ -88,7 +88,7 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
     static constexpr float FACILITY_SIZE = 1.5f;
     static constexpr float FACILITY_HEIGHT = 0.5f;
     
-    void for_each_with(const Entity&, const Transform& t, const Facility& f, float) const override {
+    void for_each_with(const Entity& e, const Transform& t, const Facility& f, float) const override {
         raylib::Color color, wire_color;
         switch (f.type) {
             case FacilityType::Bathroom:
@@ -115,6 +115,45 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
             raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, 
                              {FACILITY_SIZE, FACILITY_SIZE}, 
                              raylib::Fade(color, 0.3f));
+            
+            // Render stage state indicator
+            if (e.has<StageInfo>()) {
+                const StageInfo& info = e.get<StageInfo>();
+                float progress = info.get_progress();
+                float bar_width = FACILITY_SIZE * 0.8f;
+                float bar_height = 0.1f;
+                float bar_y = FACILITY_HEIGHT + 0.2f;
+                
+                raylib::Color bar_color, bg_color;
+                switch (info.state) {
+                    case StageState::Idle:
+                        bar_color = raylib::GRAY;
+                        bg_color = raylib::DARKGRAY;
+                        break;
+                    case StageState::Announcing:
+                        bar_color = raylib::YELLOW;
+                        bg_color = raylib::ORANGE;
+                        break;
+                    case StageState::Performing:
+                        bar_color = raylib::GREEN;
+                        bg_color = raylib::DARKGREEN;
+                        break;
+                    case StageState::Clearing:
+                        bar_color = raylib::RED;
+                        bg_color = raylib::MAROON;
+                        break;
+                }
+                
+                // Background bar
+                raylib::DrawCube({t.position.x, bar_y, t.position.y}, 
+                                bar_width, bar_height, 0.1f, bg_color);
+                
+                // Progress bar (filled portion)
+                float filled_width = bar_width * progress;
+                float offset = (bar_width - filled_width) * 0.5f;
+                raylib::DrawCube({t.position.x - offset, bar_y + 0.01f, t.position.y}, 
+                                filled_width, bar_height, 0.12f, bar_color);
+            }
         } else {
             // Other facilities: draw 3 walls (open on entry side - negative X)
             float hs = FACILITY_SIZE * 0.5f;  // half size
