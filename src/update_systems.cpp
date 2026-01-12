@@ -331,9 +331,12 @@ struct PathFollowingSystem
         return vec::length(dir) > EPSILON ? vec::norm(dir) : vec2{0, 0};
     }
 
+    static constexpr float WANDER_TIMEOUT =
+        3.0f;  // Seconds before picking new target
+
     void for_each_with(Entity&, Transform& t, Agent& a,
                        AgentTarget& agent_target, AgentSteering& steering,
-                       float) override {
+                       float dt) override {
         auto score_tile = [&](const Entity& tile) {
             const Transform& tile_t = tile.get<Transform>();
             float dist = vec::distance(t.position, tile_t.position);
@@ -387,8 +390,19 @@ struct PathFollowingSystem
                             agent_target.target_pos.y - t.position.y};
                 if (vec::length(dir) > EPSILON) {
                     steering.path_direction = vec::norm(dir);
+                    steering.wander_time =
+                        0.f;  // Reset - we're heading to target
                     return;
                 }
+            }
+            // No path to target - wander and track time
+            steering.wander_time += dt;
+            if (steering.wander_time >= WANDER_TIMEOUT) {
+                // Give up on current target, pick a new one
+                agent_target.facility_id = -1;
+                agent_target.target_pos = {0, 0};
+                steering.wander_time = 0.f;
+                steering.wander_target_tile = -1;
             }
             steering.path_direction =
                 get_wander_direction(t, steering, closest_tile_id);
@@ -401,13 +415,21 @@ struct PathFollowingSystem
         if (!next_tile.valid() || !next_tile->has<Transform>() ||
             !current_tile.valid()) {
             // Next tile was deleted - fall back to wandering
+            steering.wander_time += dt;
+            if (steering.wander_time >= WANDER_TIMEOUT) {
+                agent_target.facility_id = -1;
+                agent_target.target_pos = {0, 0};
+                steering.wander_time = 0.f;
+                steering.wander_target_tile = -1;
+            }
             steering.path_direction =
                 get_wander_direction(t, steering, closest_tile_id);
             return;
         }
 
-        // Clear wander target when following a valid path
+        // Following valid path - clear wander state
         steering.wander_target_tile = -1;
+        steering.wander_time = 0.f;
 
         vec2 current_pos = current_tile->get<Transform>().position;
         vec2 next_pos = next_tile->get<Transform>().position;
