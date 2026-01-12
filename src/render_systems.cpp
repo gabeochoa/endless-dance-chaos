@@ -35,7 +35,7 @@ struct RenderGroundSystem : System<> {
 };
 
 struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
-    void for_each_with(const Entity&, const Transform& t, const Agent& a, const HasStress& s, float) const override {
+    void for_each_with(const Entity& e, const Transform& t, const Agent& a, const HasStress& s, float) const override {
         raylib::Color color = raylib::ColorLerp(raylib::GRAY, raylib::RED, s.stress);
         
         float jitter_x = 0.f, jitter_z = 0.f;
@@ -46,6 +46,13 @@ struct RenderAgentsSystem : System<Transform, Agent, HasStress> {
         }
         
         raylib::Vector3 pos = {t.position.x + jitter_x, t.radius, t.position.y + jitter_z};
+        
+        // If inside a facility, offset position to slot location
+        if (e.has<InsideFacility>()) {
+            const InsideFacility& inside = e.get<InsideFacility>();
+            pos.x += inside.slot_offset.x;
+            pos.z += inside.slot_offset.y;
+        }
         
         switch (a.want) {
             case FacilityType::Stage:
@@ -78,6 +85,9 @@ struct RenderAttractionsSystem : System<Transform, Attraction> {
 };
 
 struct RenderFacilitiesSystem : System<Transform, Facility> {
+    static constexpr float FACILITY_SIZE = 1.5f;
+    static constexpr float FACILITY_HEIGHT = 0.5f;
+    
     void for_each_with(const Entity&, const Transform& t, const Facility& f, float) const override {
         raylib::Color color, wire_color;
         switch (f.type) {
@@ -95,14 +105,39 @@ struct RenderFacilitiesSystem : System<Transform, Facility> {
                 break;
         }
         
-        raylib::DrawCube(vec::to3(t.position), 1.5f, 0.5f, 1.5f, color);
-        raylib::DrawCubeWires(vec::to3(t.position), 1.5f, 0.5f, 1.5f, wire_color);
+        raylib::Vector3 pos = vec::to3(t.position);
+        pos.y = FACILITY_HEIGHT * 0.5f;
         
-        float fill_pct = (float)f.current_occupants / (float)f.capacity;
-        float fill_height = fill_pct * 1.0f;
-        if (fill_height > 0.01f) {
-            raylib::Vector3 fill_pos = {t.position.x, 0.5f + fill_height * 0.5f, t.position.y};
-            raylib::DrawCube(fill_pos, 1.4f, fill_height, 1.4f, raylib::Fade(wire_color, 0.6f));
+        if (f.type == FacilityType::Stage) {
+            // Stage: wireframe only so we can see people inside
+            raylib::DrawCubeWires(pos, FACILITY_SIZE, FACILITY_HEIGHT, FACILITY_SIZE, wire_color);
+            // Draw a floor
+            raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, 
+                             {FACILITY_SIZE, FACILITY_SIZE}, 
+                             raylib::Fade(color, 0.3f));
+        } else {
+            // Other facilities: draw 3 walls (open on entry side - negative X)
+            float hs = FACILITY_SIZE * 0.5f;  // half size
+            float hh = FACILITY_HEIGHT * 0.5f;  // half height
+            float wall_thick = 0.05f;
+            
+            // Back wall (positive X side)
+            raylib::DrawCube({t.position.x + hs, hh, t.position.y}, 
+                            wall_thick, FACILITY_HEIGHT, FACILITY_SIZE, color);
+            // Left wall (negative Z side)  
+            raylib::DrawCube({t.position.x, hh, t.position.y - hs}, 
+                            FACILITY_SIZE, FACILITY_HEIGHT, wall_thick, color);
+            // Right wall (positive Z side)
+            raylib::DrawCube({t.position.x, hh, t.position.y + hs}, 
+                            FACILITY_SIZE, FACILITY_HEIGHT, wall_thick, color);
+            
+            // Draw floor
+            raylib::DrawPlane({t.position.x, 0.02f, t.position.y}, 
+                             {FACILITY_SIZE, FACILITY_SIZE}, 
+                             raylib::Fade(color, 0.3f));
+            
+            // Wireframe outline
+            raylib::DrawCubeWires(pos, FACILITY_SIZE, FACILITY_HEIGHT, FACILITY_SIZE, wire_color);
         }
     }
 };

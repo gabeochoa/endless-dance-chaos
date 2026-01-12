@@ -86,3 +86,11 @@ struct AgentSteering : BaseComponent {
     vec2 path_direction{0, 0};  // Direction from path following
     vec2 separation{0, 0};      // Separation force from neighbors
 };
+
+// Marks an agent as being inside a facility
+struct InsideFacility : BaseComponent {
+    int facility_id = -1;       // Which facility we're inside
+    float time_inside = 0.f;    // How long we've been inside
+    float service_time = 2.0f;  // How long until we're done
+    vec2 slot_offset{0, 0};     // Our position offset within the facility
+};
