@@ -31,9 +31,12 @@ ifdef CCACHE
     CXX := ccache $(CXX)
 endif
 
-.PHONY: all clean run
+.PHONY: all clean run format
 
-all: $(OUTPUT_EXE)
+format:
+	@find src/ -type f \( -name "*.cpp" -o -name "*.h" \) -exec clang-format -i {} +
+
+all: format $(OUTPUT_EXE)
 
 $(OUTPUT_EXE): $(H_FILES) $(OBJ_FILES)
 	$(CXX) $(FLAGS) $(NOFLAGS) $(INCLUDES) $(OBJ_FILES) $(LIBS) -o $(OUTPUT_EXE)
