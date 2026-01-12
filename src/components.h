@@ -94,3 +94,35 @@ struct InsideFacility : BaseComponent {
     float service_time = 2.0f;  // How long until we're done
     vec2 slot_offset{0, 0};     // Our position offset within the facility
 };
+
+// Stage facility state machine
+enum class StageState { 
+    Idle,       // No artist, no one should go here
+    Announcing, // Artist coming soon, people start heading there
+    Performing, // Artist playing, people can stay/leave
+    Clearing    // Performance ended, everyone must leave
+};
+
+struct StageInfo : BaseComponent {
+    StageState state = StageState::Idle;
+    float state_timer = 0.f;
+    
+    // Timing configuration
+    float idle_duration = 10.f;      // How long between sets
+    float announce_duration = 8.f;   // How long the "coming soon" phase lasts
+    float perform_duration = 20.f;   // How long the artist performs
+    float clear_duration = 5.f;      // How long people have to leave
+    
+    // Artist info (for future use)
+    float artist_popularity = 0.5f;  // 0-1, affects how many people come
+    
+    float get_progress() const {
+        switch (state) {
+            case StageState::Idle: return state_timer / idle_duration;
+            case StageState::Announcing: return state_timer / announce_duration;
+            case StageState::Performing: return state_timer / perform_duration;
+            case StageState::Clearing: return state_timer / clear_duration;
+        }
+        return 0.f;
+    }
+};
