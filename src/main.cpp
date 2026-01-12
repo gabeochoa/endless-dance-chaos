@@ -1,7 +1,7 @@
 
 #include "game.h"
-#include "components.h"
 #include "systems.h"
+#include "entity_makers.h"
 #include "mcp_integration.h"
 #include <argh.h>
 
@@ -16,75 +16,35 @@ void game() {
     SystemManager systems;
     register_all_systems(systems);
     
-    Entity& cam_entity = EntityHelper::createPermanentEntity();
-    cam_entity.addComponent<ProvidesCamera>();
-    EntityHelper::registerSingleton<ProvidesCamera>(cam_entity);
+    make_camera();
     
     // Create an attraction (spawns agents)
-    Entity& attraction = EntityHelper::createEntity();
-    attraction.addComponent<Transform>(-5.f, -5.f);
-    Attraction& attr = attraction.addComponent<Attraction>();
-    attr.spawn_rate = 5.0f;
-    attr.capacity = 100;
+    make_attraction(-5.f, -5.f, 5.0f, 100);
     
-    // Create facilities of each type
-    Entity& bathroom = EntityHelper::createEntity();
-    bathroom.addComponent<Transform>(5.f, -3.f);
-    bathroom.addComponent<Facility>().type = FacilityType::Bathroom;
-    
-    Entity& food = EntityHelper::createEntity();
-    food.addComponent<Transform>(5.f, 0.f);
-    food.addComponent<Facility>().type = FacilityType::Food;
-    
-    Entity& stage = EntityHelper::createEntity();
-    stage.addComponent<Transform>(5.f, 3.f);
-    stage.addComponent<Facility>().type = FacilityType::Stage;
-    stage.addComponent<StageInfo>();  // Stage state machine
+    // Create facilities
+    make_bathroom(5.f, -3.f);
+    make_food(5.f, 0.f);
+    make_stage(5.f, 3.f);
     
     // Path to bathroom (bottom)
-    Entity& bath_end = EntityHelper::createEntity();
-    bath_end.addComponent<Transform>(5.f, -3.f);
-    bath_end.addComponent<PathNode>().next_node_id = -1;
-    
-    Entity& bath_mid = EntityHelper::createEntity();
-    bath_mid.addComponent<Transform>(0.f, -3.f);
-    bath_mid.addComponent<PathNode>().next_node_id = bath_end.id;
+    Entity& bath_end = make_path_node(5.f, -3.f);
+    Entity& bath_mid = make_path_node(0.f, -3.f, bath_end.id);
     
     // Path to food (middle)
-    Entity& food_end = EntityHelper::createEntity();
-    food_end.addComponent<Transform>(5.f, 0.f);
-    food_end.addComponent<PathNode>().next_node_id = -1;
-    
-    Entity& food_mid = EntityHelper::createEntity();
-    food_mid.addComponent<Transform>(0.f, 0.f);
-    food_mid.addComponent<PathNode>().next_node_id = food_end.id;
+    Entity& food_end = make_path_node(5.f, 0.f);
+    Entity& food_mid = make_path_node(0.f, 0.f, food_end.id);
     
     // Path to stage (top)
-    Entity& stage_end = EntityHelper::createEntity();
-    stage_end.addComponent<Transform>(5.f, 3.f);
-    stage_end.addComponent<PathNode>().next_node_id = -1;
-    
-    Entity& stage_mid = EntityHelper::createEntity();
-    stage_mid.addComponent<Transform>(0.f, 3.f);
-    stage_mid.addComponent<PathNode>().next_node_id = stage_end.id;
+    Entity& stage_end = make_path_node(5.f, 3.f);
+    Entity& stage_mid = make_path_node(0.f, 3.f, stage_end.id);
     
     // Central hub connecting attraction to all paths
-    Entity& hub = EntityHelper::createEntity();
-    hub.addComponent<Transform>(-3.f, 0.f);
-    hub.addComponent<PathNode>().next_node_id = food_mid.id;
-    
-    Entity& hub_to_bath = EntityHelper::createEntity();
-    hub_to_bath.addComponent<Transform>(-3.f, 0.f);
-    hub_to_bath.addComponent<PathNode>().next_node_id = bath_mid.id;
-    
-    Entity& hub_to_stage = EntityHelper::createEntity();
-    hub_to_stage.addComponent<Transform>(-3.f, 0.f);
-    hub_to_stage.addComponent<PathNode>().next_node_id = stage_mid.id;
+    Entity& hub = make_path_node(-3.f, 0.f, food_mid.id);
+    make_path_node(-3.f, 0.f, bath_mid.id);  // hub_to_bath (co-located with hub)
+    make_path_node(-3.f, 0.f, stage_mid.id); // hub_to_stage (co-located with hub)
     
     // Path from attraction to hub
-    Entity& start = EntityHelper::createEntity();
-    start.addComponent<Transform>(-5.f, -5.f);
-    start.addComponent<PathNode>().next_node_id = hub.id;
+    make_path_node(-5.f, -5.f, hub.id);
     
     EntityHelper::merge_entity_arrays();
     
