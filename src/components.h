@@ -101,6 +101,7 @@ struct AgentSteering : BaseComponent {
     vec2 path_direction{0, 0};    // Direction from path following
     vec2 separation{0, 0};        // Separation force from neighbors
     int wander_target_tile = -1;  // Tile ID we're wandering toward
+    float wander_time = 0.f;      // How long we've been wandering (no path)
 };
 
 // Marks an agent as being inside a facility
