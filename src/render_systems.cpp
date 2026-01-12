@@ -1,4 +1,9 @@
+// AFTER_HOURS_REPLACE_LOGGING and log.h must come first
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
+
 #include "afterhours/src/core/entity_helper.h"
+#include "afterhours/src/core/entity_query.h"
 #include "components.h"
 #include "systems.h"
 #include "vec_util.h"
@@ -346,6 +351,208 @@ struct RenderStageIndicatorsSystem : System<Transform, Facility, StageInfo> {
     }
 };
 
+// Minimap showing agent distribution and facilities
+struct RenderMinimapSystem : System<> {
+    static constexpr int MAP_SIZE = 150;
+    static constexpr int MAP_MARGIN = 8;
+    static constexpr float WORLD_SIZE = 15.0f;  // World units to show
+
+    // Convert world position to minimap position
+    static raylib::Vector2 world_to_map(vec2 world_pos, int map_x, int map_y) {
+        float scale = MAP_SIZE / (WORLD_SIZE * 2.0f);
+        return {map_x + (world_pos.x + WORLD_SIZE) * scale,
+                map_y + (world_pos.y + WORLD_SIZE) * scale};
+    }
+
+    void once(float) const override {
+        // Position: bottom-right corner
+        int map_x = DEFAULT_SCREEN_WIDTH - MAP_SIZE - MAP_MARGIN;
+        int map_y = DEFAULT_SCREEN_HEIGHT - MAP_SIZE - MAP_MARGIN;
+
+        // Background
+        raylib::DrawRectangle(map_x - 2, map_y - 2, MAP_SIZE + 4, MAP_SIZE + 4,
+                              raylib::Color{20, 20, 20, 220});
+        raylib::DrawRectangleLines(map_x - 2, map_y - 2, MAP_SIZE + 4,
+                                   MAP_SIZE + 4,
+                                   raylib::Color{100, 100, 100, 255});
+
+        // Draw paths
+        auto paths = EntityQuery()
+                         .whereHasComponent<Transform>()
+                         .whereHasComponent<PathNode>()
+                         .gen();
+        for (const Entity& path : paths) {
+            const PathNode& node = path.get<PathNode>();
+            if (node.next_node_id < 0) continue;
+
+            auto next = EntityHelper::getEntityForID(node.next_node_id);
+            if (!next.valid() || !next->has<Transform>()) continue;
+
+            vec2 a = path.get<Transform>().position;
+            vec2 b = next->get<Transform>().position;
+            raylib::Vector2 ma = world_to_map(a, map_x, map_y);
+            raylib::Vector2 mb = world_to_map(b, map_x, map_y);
+            raylib::DrawLineV(ma, mb, raylib::Color{80, 80, 80, 255});
+        }
+
+        // Draw facilities
+        auto facilities = EntityQuery()
+                              .whereHasComponent<Transform>()
+                              .whereHasComponent<Facility>()
+                              .gen();
+        for (const Entity& fac : facilities) {
+            vec2 pos = fac.get<Transform>().position;
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            FacilityType type = fac.get<Facility>().type;
+
+            raylib::Color color;
+            switch (type) {
+                case FacilityType::Stage:
+                    color = raylib::MAGENTA;
+                    break;
+                case FacilityType::Bathroom:
+                    color = raylib::BLUE;
+                    break;
+                case FacilityType::Food:
+                    color = raylib::YELLOW;
+                    break;
+            }
+            raylib::DrawRectangle((int) mp.x - 4, (int) mp.y - 4, 8, 8, color);
+        }
+
+        // Draw attractions
+        auto attractions = EntityQuery()
+                               .whereHasComponent<Transform>()
+                               .whereHasComponent<Attraction>()
+                               .gen();
+        for (const Entity& attr : attractions) {
+            vec2 pos = attr.get<Transform>().position;
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            raylib::DrawRectangle((int) mp.x - 3, (int) mp.y - 3, 6, 6,
+                                  raylib::PURPLE);
+        }
+
+        // Draw agents
+        auto agents = EntityQuery()
+                          .whereHasComponent<Transform>()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<HasStress>()
+                          .gen();
+        for (const Entity& agent : agents) {
+            vec2 pos = agent.get<Transform>().position;
+            float stress = agent.get<HasStress>().stress;
+            raylib::Vector2 mp = world_to_map(pos, map_x, map_y);
+            raylib::Color color =
+                raylib::ColorLerp(raylib::GREEN, raylib::RED, stress);
+            raylib::DrawCircle((int) mp.x, (int) mp.y, 2, color);
+        }
+
+        // Draw camera view rectangle (like Civilization)
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (cam) {
+            // For orthographic camera, fovy is the vertical size in world units
+            float view_height = cam->cam.camera.fovy;
+            float aspect =
+                (float) DEFAULT_SCREEN_WIDTH / (float) DEFAULT_SCREEN_HEIGHT;
+            float view_width = view_height * aspect;
+
+            // Camera target is the center of the view
+            vec2 center = {cam->cam.target.x, cam->cam.target.z};
+
+            // Calculate corners in world space (rotated by camera yaw)
+            float cos_yaw = cosf(cam->cam.yaw);
+            float sin_yaw = sinf(cam->cam.yaw);
+            float hw = view_width / 2.0f;
+            float hh = view_height / 2.0f;
+
+            // Rotated corners
+            vec2 corners[4];
+            corners[0] = {center.x + (-hw * cos_yaw - -hh * sin_yaw),
+                          center.y + (-hw * sin_yaw + -hh * cos_yaw)};
+            corners[1] = {center.x + (hw * cos_yaw - -hh * sin_yaw),
+                          center.y + (hw * sin_yaw + -hh * cos_yaw)};
+            corners[2] = {center.x + (hw * cos_yaw - hh * sin_yaw),
+                          center.y + (hw * sin_yaw + hh * cos_yaw)};
+            corners[3] = {center.x + (-hw * cos_yaw - hh * sin_yaw),
+                          center.y + (-hw * sin_yaw + hh * cos_yaw)};
+
+            // Draw the view rectangle on minimap
+            for (int i = 0; i < 4; i++) {
+                raylib::Vector2 a = world_to_map(corners[i], map_x, map_y);
+                raylib::Vector2 b =
+                    world_to_map(corners[(i + 1) % 4], map_x, map_y);
+                raylib::DrawLineV(a, b, raylib::WHITE);
+            }
+        }
+
+        // Label
+        raylib::DrawText("MAP", map_x + 4, map_y + 4, 10,
+                         raylib::Color{150, 150, 150, 200});
+    }
+};
+
+// Data layer overlay showing path congestion (toggled with TAB)
+// Like Cities: Skylines info views for traffic, happiness, etc.
+struct RenderDataLayerSystem : System<> {
+    void once(float) const override {
+        auto* state = EntityHelper::get_singleton_cmp<GameState>();
+        if (!state || !state->show_data_layer) return;
+
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!cam) return;
+
+        // Draw congestion values on each path segment
+        auto paths = EntityQuery()
+                         .whereHasComponent<Transform>()
+                         .whereHasComponent<PathNode>()
+                         .gen();
+
+        for (const Entity& path : paths) {
+            const PathNode& node = path.get<PathNode>();
+            if (node.next_node_id < 0) continue;
+
+            auto next = EntityHelper::getEntityForID(node.next_node_id);
+            if (!next.valid() || !next->has<Transform>()) continue;
+
+            vec2 a = path.get<Transform>().position;
+            vec2 b = next->get<Transform>().position;
+
+            // Get midpoint of segment
+            vec2 mid = {(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f};
+            raylib::Vector3 world_pos = {mid.x, 0.5f, mid.y};
+            raylib::Vector2 screen_pos =
+                raylib::GetWorldToScreen(world_pos, cam->cam.camera);
+
+            // Skip if off screen
+            if (screen_pos.x < 0 || screen_pos.x > DEFAULT_SCREEN_WIDTH ||
+                screen_pos.y < 0 || screen_pos.y > DEFAULT_SCREEN_HEIGHT)
+                continue;
+
+            // Draw congestion info
+            float ratio = node.congestion_ratio();
+            raylib::Color color =
+                ratio > 1.0f
+                    ? raylib::RED
+                    : raylib::ColorLerp(raylib::GREEN, raylib::YELLOW, ratio);
+
+            auto text =
+                fmt::format("{:.0f}/{:.0f}", node.current_load, node.capacity);
+
+            // Background for readability
+            int text_w = raylib::MeasureText(text.c_str(), 12);
+            raylib::DrawRectangle((int) screen_pos.x - text_w / 2 - 2,
+                                  (int) screen_pos.y - 8, text_w + 4, 16,
+                                  raylib::Color{0, 0, 0, 180});
+            raylib::DrawText(text.c_str(), (int) screen_pos.x - text_w / 2,
+                             (int) screen_pos.y - 6, 12, color);
+        }
+
+        // Overlay indicator
+        raylib::DrawText("[TAB] Traffic View", 10, DEFAULT_SCREEN_HEIGHT - 24,
+                         14, raylib::YELLOW);
+    }
+};
+
 struct RenderUISystem : System<> {
     void once(float) const override {
         auto* state = EntityHelper::get_singleton_cmp<GameState>();
@@ -374,20 +581,23 @@ struct RenderUISystem : System<> {
                                    raylib::WHITE);
 
         // Stress label
-        char stress_text[32];
-        snprintf(stress_text, sizeof(stress_text), "Stress: %.0f%%",
-                 stress_ratio * 100.f);
-        raylib::DrawText(stress_text, meter_x + 5, meter_y + 3, 14,
+        auto stress_text = fmt::format("Stress: {:.0f}%", stress_ratio * 100.f);
+        raylib::DrawText(stress_text.c_str(), meter_x + 5, meter_y + 3, 14,
                          raylib::WHITE);
 
         // Time
-        char time_text[32];
         int minutes = (int) state->game_time / 60;
         int seconds = (int) state->game_time % 60;
-        snprintf(time_text, sizeof(time_text), "Time: %d:%02d", minutes,
-                 seconds);
-        raylib::DrawText(time_text, meter_x, meter_y + meter_h + 5, 16,
+        auto time_text = fmt::format("Time: {}:{:02d}", minutes, seconds);
+        raylib::DrawText(time_text.c_str(), meter_x, meter_y + meter_h + 5, 16,
                          raylib::WHITE);
+
+        // Agent count
+        int agent_count =
+            (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+        auto agent_text = fmt::format("Agents: {}", agent_count);
+        raylib::DrawText(agent_text.c_str(), meter_x, meter_y + meter_h + 24,
+                         16, raylib::WHITE);
 
         // Game Over screen
         if (state->is_game_over()) {
@@ -410,13 +620,13 @@ struct RenderUISystem : System<> {
             raylib::DrawText(game_over, text_x, text_y, font_size, raylib::RED);
 
             // Stats
-            char stats[128];
-            snprintf(stats, sizeof(stats),
-                     "Survived: %d:%02d\nFinal Stress: %.0f%%", minutes,
-                     seconds, stress_ratio * 100.f);
+            auto stats =
+                fmt::format("Survived: {}:{:02d}\nFinal Stress: {:.0f}%",
+                            minutes, seconds, stress_ratio * 100.f);
             int stats_w = raylib::MeasureText("Final Stress: 100%", 24);
-            raylib::DrawText(stats, (DEFAULT_SCREEN_WIDTH - stats_w) / 2,
-                             text_y + 80, 24, raylib::WHITE);
+            raylib::DrawText(stats.c_str(),
+                             (DEFAULT_SCREEN_WIDTH - stats_w) / 2, text_y + 80,
+                             24, raylib::WHITE);
 
             // Restart prompt
             if (state->game_over_timer > 2.0f) {
@@ -456,6 +666,8 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<RenderStageIndicatorsSystem>());
+    sm.register_render_system(std::make_unique<RenderMinimapSystem>());
+    sm.register_render_system(std::make_unique<RenderDataLayerSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
