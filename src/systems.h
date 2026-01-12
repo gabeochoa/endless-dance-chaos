@@ -1,5 +1,9 @@
 #pragma once
 
+// AFTER_HOURS_REPLACE_LOGGING and log.h must come first
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
+
 #include "afterhours/src/core/system.h"
 
 using namespace afterhours;

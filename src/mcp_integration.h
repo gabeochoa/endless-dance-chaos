@@ -2,6 +2,10 @@
 
 #ifdef AFTER_HOURS_ENABLE_MCP
 
+// Must include rl.h first - it sets up AFTER_HOURS_REPLACE_LOGGING
+// and includes log.h before afterhours
+#include "rl.h"
+
 #include <afterhours/src/plugins/input_system.h>
 #include <afterhours/src/plugins/mcp_server.h>
 
@@ -9,7 +13,6 @@
 #include <sstream>
 
 #include "game.h"
-#include "rl.h"
 
 namespace mcp_integration {
 
@@ -173,6 +176,8 @@ inline bool is_mouse_clicked() { return detail::mouse_clicked; }
 }  // namespace mcp_integration
 
 #else
+
+#include "rl.h"  // Need raylib::Vector2 for stub
 
 // Stub implementation when MCP is disabled
 namespace mcp_integration {

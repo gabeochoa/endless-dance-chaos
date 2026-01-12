@@ -32,6 +32,14 @@ inline const std::string_view level_to_string(LogLevel level) {
     return magic_enum::enum_name(level);
 }
 
+// Set to true to redirect logs to stderr (for MCP mode)
+// Default to true in MCP builds to avoid stdout pollution before main() runs
+#ifdef AFTER_HOURS_ENABLE_MCP
+inline bool g_log_to_stderr = true;
+#else
+inline bool g_log_to_stderr = false;
+#endif
+
 inline void vlog(LogLevel level, const char *file, int line,
                  fmt::string_view format, fmt::format_args args) {
     if (level < AFTER_HOURS_LOG_LEVEL) return;
@@ -47,8 +55,11 @@ inline void vlog(LogLevel level, const char *file, int line,
 
     const auto message = fmt::vformat(format, args);
     const auto full_output = fmt::format("{}{}", file_info, message);
-    fmt::print("{}{}{}", color_start, full_output, color_reset);
-    fmt::print("\n");
+    if (g_log_to_stderr) {
+        fmt::print(stderr, "{}{}{}\n", color_start, full_output, color_reset);
+    } else {
+        fmt::print("{}{}{}\n", color_start, full_output, color_reset);
+    }
 }
 
 template<typename... Args>

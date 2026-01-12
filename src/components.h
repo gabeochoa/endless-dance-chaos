@@ -1,5 +1,9 @@
 #pragma once
 
+// AFTER_HOURS_REPLACE_LOGGING and log.h must come first
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
+
 #include "afterhours/src/core/base_component.h"
 #include "camera.h"
 #include "rl.h"
@@ -169,6 +173,9 @@ struct GameState : BaseComponent {
     float max_stress = 0.f;       // Highest individual stress
     int total_agents_served = 0;  // Agents that completed a facility visit
     float game_over_timer = 0.f;  // Time since game over (for animations)
+
+    // Data layer overlay toggle (TAB key) - like Cities: Skylines info views
+    bool show_data_layer = false;
 
     // Lose condition thresholds
     static constexpr float CRITICAL_GLOBAL_STRESS = 0.7f;  // Average stress

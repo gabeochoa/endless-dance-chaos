@@ -65,12 +65,15 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 #define MAGIC_ENUM_RANGE_MAX 400
 #include <magic_enum/magic_enum.hpp>
 
-#include "log.h"
-
 #define AFTER_HOURS_ENTITY_HELPER
 #define AFTER_HOURS_ENTITY_QUERY
 #define AFTER_HOURS_SYSTEM
 #define AFTER_HOURS_USE_RAYLIB
+
+// Tell afterhours to skip its log functions - we provide our own via log.h
+// log.h must come BEFORE afterhours so our log macros are available
+#define AFTER_HOURS_REPLACE_LOGGING
+#include "log.h"
 
 #define RectangleType raylib::Rectangle
 #define Vector2Type raylib::Vector2

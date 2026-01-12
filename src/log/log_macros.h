@@ -33,5 +33,5 @@
         if (x) log_me(level, __FILE__, __LINE__, __VA_ARGS__); \
     }
 
-#define log_once_per(interval, level, ...) \
+#define LOG_ONCE_PER(interval, level, ...) \
     log_once_per(interval, level, __FILE__, __LINE__, __VA_ARGS__)
