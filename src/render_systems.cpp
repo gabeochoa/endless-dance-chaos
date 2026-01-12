@@ -456,10 +456,10 @@ struct RenderMinimapSystem : System<> {
                 (float) DEFAULT_SCREEN_WIDTH / (float) DEFAULT_SCREEN_HEIGHT;
             float view_width = view_height * aspect;
 
-            // Hide rectangle when viewing more than 75% of the minimap area
+            // Hide rectangle when viewing more than 60% of the minimap area
             float map_area = (WORLD_SIZE * 2.0f) * (WORLD_SIZE * 2.0f);
             float view_area = view_width * view_height;
-            if (view_area < map_area * 0.75f) {
+            if (view_area < map_area * 0.20f) {
                 // Camera target is the center of the view
                 vec2 center = {cam->cam.target.x, cam->cam.target.z};
 
