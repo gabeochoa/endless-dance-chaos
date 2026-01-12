@@ -19,8 +19,8 @@ void game() {
 
     make_sophie();
 
-    // Create an attraction (spawns agents)
-    make_attraction(-5.f, -5.f, 5.0f, 100);
+    // Create an attraction (spawns agents slowly - 1 every 2 seconds)
+    make_attraction(-5.f, -5.f, 0.5f, 100);
 
     // Create facilities
     make_bathroom(5.f, -3.f);

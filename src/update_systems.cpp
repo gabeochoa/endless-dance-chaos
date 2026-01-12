@@ -747,7 +747,7 @@ struct SeparationSystem : System<Transform, Agent, AgentSteering> {
 
 // Combine steering forces into final velocity - SIMPLE version
 struct VelocityCombineSystem : System<Transform, AgentSteering> {
-    static constexpr float MOVE_SPEED = 3.0f;
+    static constexpr float MOVE_SPEED = 1.0f;  // Slower walking speed
     static constexpr float SEPARATION_WEIGHT = 0.2f;
 
     void for_each_with(Entity&, Transform& t, AgentSteering& steering,
@@ -784,7 +784,7 @@ struct AgentLifetimeSystem : System<Agent> {
     }
 };
 
-struct AttractionSpawnSystem : System<Transform, Attraction, GameState> {
+struct AttractionSpawnSystem : System<Transform, Attraction> {
     FacilityType random_want() {
         int r = rng().get_int(0, 99);
         if (r < 40) return FacilityType::Food;
@@ -792,14 +792,18 @@ struct AttractionSpawnSystem : System<Transform, Attraction, GameState> {
         return FacilityType::Stage;
     }
 
-    void for_each_with(Entity& e, Transform& t, Attraction& a, GameState& state,
+    void for_each_with(Entity& e, Transform& t, Attraction& a,
                        float dt) override {
         // Don't spawn during game over
-        if (state.is_game_over()) return;
+        auto* state = EntityHelper::get_singleton_cmp<GameState>();
+        if (state && state->is_game_over()) {
+            return;
+        }
 
         a.spawn_timer += dt;
 
         float spawn_interval = 1.0f / a.spawn_rate;
+
         while (a.spawn_timer >= spawn_interval &&
                a.current_count < a.capacity) {
             a.spawn_timer -= spawn_interval;
@@ -819,6 +823,9 @@ struct AttractionSpawnSystem : System<Transform, Attraction, GameState> {
             agent.addComponent<AgentSteering>();
 
             a.current_count++;
+            log_info("Spawned agent {} at ({:.1f}, {:.1f}) wanting {}",
+                     a.current_count, t.position.x, t.position.y,
+                     static_cast<int>(ag.want));
         }
     }
 };
