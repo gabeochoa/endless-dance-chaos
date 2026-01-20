@@ -12,13 +12,15 @@ Start here:
 
 1. Read `roadmap.md` to understand the game
 2. Read `phases/00-overview.md` to understand the development approach
-3. Start with `phases/01-density-system.md`
-4. Complete each phase, get feedback, then move to next
+3. Start with `phases/00-testing-framework.md` to set up E2E testing
+4. Then proceed to `phases/01-density-system.md`
+5. Complete each phase, get feedback, then move to next
 
 ## Phase Order
 
 | # | Phase | Est. Time | Status |
 |---|-------|-----------|--------|
+| 00 | [Testing Framework](phases/00-testing-framework.md) | 3-4 hrs | ⬜ |
 | 01 | [Density System](phases/01-density-system.md) | 2-3 hrs | ⬜ |
 | 02 | [Crush Damage](phases/02-crush-damage.md) | 2-3 hrs | ⬜ |
 | 03 | [Game Over](phases/03-game-over.md) | 2 hrs | ⬜ |
@@ -35,7 +37,7 @@ Start here:
 | 14 | [Density Overlay](phases/14-density-overlay.md) | 2-3 hrs | ⬜ |
 | 15 | [Polish Pass](phases/15-polish-pass.md) | 3-4 hrs | ⬜ |
 
-**Total: ~40-50 hours**
+**Total: ~45-55 hours**
 
 ## Key Principles
 
@@ -64,6 +66,16 @@ The `vendor/afterhours` library provides:
 - Timer plugin
 - Collision system
 - Color utilities
+- **E2E Testing** (sync from wordproc if missing)
 
 See `vendor/afterhours/example/` for usage examples.
+
+## E2E Testing
+
+Run tests with:
+```bash
+./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_name.e2e"
+```
+
+Create `.e2e` script files in `tests/e2e_scripts/`. See [Testing Framework](phases/00-testing-framework.md) for details.
 

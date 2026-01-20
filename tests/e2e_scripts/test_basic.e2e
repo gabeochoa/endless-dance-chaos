@@ -1,0 +1,25 @@
+# Test: Basic game functionality
+# Verifies game starts and can be interacted with
+
+# Wait for game to initialize
+wait 30
+
+# Take initial screenshot
+screenshot 01_startup
+
+# Toggle density overlay (TAB)
+key TAB
+wait 10
+screenshot 02_density_overlay
+
+# Toggle off
+key TAB
+wait 10
+
+# Rotate camera (E key)
+key E
+wait 10
+screenshot 03_rotated
+
+# Done
+

@@ -67,6 +67,36 @@ Ensure paths are visually distinct from grass:
 - [ ] Paths are visually distinct from grass
 - [ ] No jittering at path/grass boundaries
 
+## Testing
+
+### E2E Test Script: `test_path_speed.e2e`
+
+```
+# Test: Path speed differential
+reset_game
+wait 5
+
+# Spawn agent on path
+spawn_agent 0 0 stage
+wait 60
+
+screenshot agent_on_path
+
+# Spawn agent on grass (offset from paths)
+spawn_agent -10 -10 stage
+wait 60
+
+screenshot agent_on_grass
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_path_speed.e2e"`
+
+### Manual Testing
+
+1. Watch agent walking on path vs grass
+2. Verify visible speed difference (2x)
+3. Check no jittering at path/grass boundaries
+
 ## Out of Scope
 - Path building (Phase 08)
 - Path cost for pathfinding

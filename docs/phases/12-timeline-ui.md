@@ -82,6 +82,42 @@ Each block shows:
 - [ ] Timeline scrolls as time passes
 - [ ] Block height corresponds to set duration
 
+## Testing
+
+### E2E Test Script: `test_timeline.e2e`
+
+```
+# Test: Timeline UI
+reset_game
+wait 10
+
+screenshot timeline_initial
+
+# Set time just before artist
+set_time 9 45
+wait 30
+screenshot timeline_before_artist
+
+# Set time during performance
+set_time 10 30
+wait 30
+screenshot timeline_during_performance
+
+# Set time between artists
+set_time 11 30
+wait 30
+screenshot timeline_between_artists
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_timeline.e2e"`
+
+### Manual Testing
+
+1. Verify timeline visible in sidebar
+2. Watch NOW marker stay fixed as time passes
+3. Verify artist blocks scroll up as time passes
+4. Verify current performer is highlighted
+
 ## Out of Scope
 - Hover tooltips
 - Click to jump to stage

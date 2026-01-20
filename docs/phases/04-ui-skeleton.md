@@ -77,6 +77,30 @@ constexpr int UI_MINIMAP_SIZE = 150;
 - [ ] Placeholder text visible in each region
 - [ ] UI does not overlap game view
 
+## Testing
+
+### E2E Test Script: `test_ui_skeleton.e2e`
+
+```
+# Test: UI skeleton layout
+reset_game
+wait 10
+
+screenshot ui_skeleton_layout
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_ui_skeleton.e2e"`
+
+### Manual Testing
+
+1. Run game
+2. Verify UI regions are visible:
+   - Top bar at top (40px height)
+   - Sidebar on right (150px width)
+   - Build bar at bottom (50px height)
+3. Verify placeholder text shows in each region
+4. Compare screenshot to spec diagram
+
 ## Out of Scope
 - Actual data in UI (Phase 10-13)
 - Interactivity

@@ -53,6 +53,44 @@ constexpr float DENSITY_CRITICAL = 0.90f;   // 36 agents
 - [ ] Count updates in real-time as agents move
 - [ ] Performance: handles 100+ agents without frame drop
 
+## Testing
+
+### E2E Test Script: `test_density.e2e`
+
+```
+# Test: Density tracking
+clear_agents
+wait 5
+
+# Spawn agents at origin
+spawn_agents 0 0 10 stage
+wait 10
+get_density 0 0
+screenshot density_10_agents
+
+# Add more to hit thresholds
+spawn_agents 0 0 10 stage
+wait 5
+screenshot density_20_agents_yellow
+
+spawn_agents 0 0 16 stage
+wait 5
+screenshot density_36_agents_red
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_density.e2e"`
+
+### Manual Testing
+
+1. Run game normally
+2. Press TAB to toggle density overlay
+3. Watch agents cluster at facilities
+4. Verify colors match thresholds:
+   - Green: < 20 agents (< 50%)
+   - Yellow: 20-30 agents (50-75%)
+   - Orange: 30-36 agents (75-90%)
+   - Red: > 36 agents (> 90%)
+
 ## Out of Scope
 - Crush damage (Phase 02)
 - Gradient heat map (Phase 14)

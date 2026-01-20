@@ -81,6 +81,45 @@ if (new_phase != old_phase) {
 - [ ] Pause (SPACE) stops clock
 - [ ] Clock wraps correctly at midnight
 
+## Testing
+
+### E2E Test Script: `test_time.e2e`
+
+```
+# Test: Time system
+reset_game
+wait 5
+
+# Set to morning
+set_time 10 0
+wait 5
+screenshot time_10_00_day
+
+# Set to evening
+set_time 18 0
+wait 5
+screenshot time_18_00_night
+
+# Set to exodus
+set_time 0 30
+wait 5
+screenshot time_00_30_exodus
+
+# Set to dead hours
+set_time 4 0
+wait 5
+screenshot time_04_00_dead
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_time.e2e"`
+
+### Manual Testing
+
+1. Watch clock tick in top bar
+2. Verify 24-hour format (e.g., "14:30")
+3. Press SPACE to pause, verify time stops
+4. Set different times and verify correct phase display
+
 ## Out of Scope
 - Exodus behavior (agents leaving)
 - Spawning changes based on phase

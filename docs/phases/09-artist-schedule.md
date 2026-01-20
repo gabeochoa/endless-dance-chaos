@@ -103,6 +103,58 @@ Link schedule to existing `StageInfo` state machine:
 - [ ] Can see artist names (in console for now)
 - [ ] Schedule wraps to next day
 
+## Testing
+
+### New E2E Commands
+
+Add to `e2e_commands.h`:
+```cpp
+// Handle 'make_schedule' - generate a test schedule
+struct HandleMakeScheduleCommand : System<testing::PendingE2ECommand> {
+    // Creates schedule with known times for testing
+};
+
+// Handle 'get_current_artist' - logs current artist
+struct HandleGetCurrentArtistCommand : System<testing::PendingE2ECommand> {
+    // Logs artist name and state
+};
+```
+
+### E2E Test Script: `test_artist_schedule.e2e`
+
+```
+# Test: Artist schedule
+reset_game
+wait 5
+
+# Jump to 10am (first artist)
+set_time 9 45
+wait 60
+
+screenshot before_first_artist
+
+# Jump to performance time
+set_time 10 0
+wait 60
+
+screenshot during_performance
+
+# Jump to end of set
+set_time 11 0
+wait 60
+
+screenshot after_performance
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_artist_schedule.e2e"`
+
+### Manual Testing
+
+1. Run game, let clock advance
+2. Verify stage announces before performance
+3. Verify stage performs at scheduled time
+4. Verify spawn rate increases before performance
+
 ## Out of Scope
 - Timeline UI display (Phase 12)
 - Multiple stages
