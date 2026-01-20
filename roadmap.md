@@ -39,7 +39,10 @@ A **Mini Metro-style minimalist management game** about running a music festival
 - **Map size**: 50×50 tiles (1600×1600 pixels) — fixed for MVP
 - **Real-world scale**: 1 tile = 2m × 2m = 4 m²
 - **Target**: 120 FPS, minimum 720p resolution
+- **Resolution scaling**: Letterboxing (fixed game window, black bars for excess space)
 - **Performance**: Must maintain 60 FPS at 100k agents (aggressive LOD required)
+  - Frame budget: ~8ms logic, ~8ms render (16ms total)
+  - Agents updated in batches across frames (imperceptible to user)
 
 ### Density System
 - **Max capacity**: 40 agents per tile (based on 5× fire code density)
@@ -54,13 +57,15 @@ A **Mini Metro-style minimalist management game** about running a music festival
 ## Visual Style: RollerCoaster Tycoon 2 Style
 
 ### Isometric View
-- **Camera**: RCT-style isometric with 4 rotations (90° increments)
+- **Projection**: Standard 2:1 isometric (like RCT2)
+- **Camera**: RCT-style isometric with 4 rotations (90° increments, instant snap)
+- **Orientation indicator**: Show "N" compass indicator on screen
 - **Zoom**: 3 levels
   - Close: ~25 tiles visible (see agent detail)
   - Medium: ~40 tiles visible (natural 720p view)
   - Far: ~60 tiles visible (entire map + margin)
 - **Camera speed**: Scales with zoom level (~10 tiles/sec at medium)
-- **Camera bounds**: Small padding past map edge allowed
+- **Camera bounds**: 10 tiles padding past map edge allowed
 
 ### Color Palette
 
@@ -90,8 +95,9 @@ A **Mini Metro-style minimalist management game** about running a music festival
 - **Sprite size**: 8×8 pixels (tiny dots that pile up into crowds)
 - **Animation**: 2 frames (simple toggle)
 - **Directions**: None — same sprite always (MVP)
-- **Colors**: Varied per agent for crowd diversity
-- **Death effect**: Simple particle burst matching agent color
+- **Colors**: Natural/human appearance — skin tones and realistic clothing colors (not arbitrary bright colors)
+- **Death effect**: Particle burst (5-8 square particles, 2-4px, 8-12px radius, 0.3-0.5 sec duration)
+- **Mass death**: Multiple simultaneous deaths merge into one bigger explosion
 
 ### LOD System (100k agents)
 | Zoom Level | Visual |
@@ -102,6 +108,11 @@ A **Mini Metro-style minimalist management game** about running a music festival
 
 ### Danger Visualization
 - **Overlay**: Gradient heat map (per-tile data, smoothly interpolated)
+  - 0% density: Transparent (no overlay)
+  - 50% density: Yellow (#FFFF00)
+  - 75% density: Orange (#FFA500)
+  - 90% density: Red (#FF0000)
+  - 100% density: Black (#000000)
 - **Death visual**: Agent pops → particle burst in agent's color
 - **Screen shake**: None for MVP
 
@@ -140,6 +151,7 @@ The clock always ticks. No hard day boundaries - just phases:
 
 ### Exodus Rules
 - Agents who can't exit in time **stay for next day** (carryover punishment)
+- Dead Hours (3am-10am): Standard gameplay, just no agents — full building access
 
 ---
 
@@ -157,22 +169,30 @@ See Lineup → Prepare Layout → Artist Performs → Crowd Surges → Survive �
 
 **MVP: One artist at a time, one stage.**
 
-1. **Artist names**: Procedurally generated (prefix + suffix tables: "DJ Nova", "The Midnight Collective")
-2. **Performance duration**: Variable by tier — small artists ~30 min, headliners ~1 hour game time
-3. As festival grows, bigger artists appear → bigger crowds → more danger
-4. Timeline shows what's coming so player can prepare
-5. **Stage effect**: Lights up / particle effect when artist starts performing
+1. **Artist names**: "Artist XXX" (random 3-digit number) for MVP — fancy names post-MVP
+2. **Performance duration**: 1-hour sets in 2-hour slots (~4 artists per day phase)
+3. **Continuous scaling**: Artist crowd sizes grow with festival size (no hard tiers)
+   - Early (0-500 attendees): 50-200 crowd, 30 min sets
+   - Mid (500-2k): 200-800 crowd, 30-45 min sets
+   - Late (2k+): 500-2000+ crowd, 45-60 min sets
+4. **Spawn rate**: Tied to upcoming artist's crowd size — bigger artists = faster spawning
+5. Timeline shows what's coming so player can prepare
+6. **Stage effect**: Color tint overlay when artist starts performing (simple for MVP)
 
 ### Spawning & Flow
 - **Map starts with**: Perimeter fence + 1 gate + 1 stage pre-placed
 - **Agents spawn** on grass outside fence, enter through gates
+- **Entry animation**: Either fade in near gate OR appear in "bus stop" area then walk to gate (intern's choice)
 - **Arrival pattern**: Continuous stream, ramps up ~15 min before each performance
 - On spawn, agent has:
   - Target artist they want to see
   - Optional secondary needs (food, bathroom)
-  - Patience timer (60-120 sec — leave unhappy if stuck too long)
+  - Patience timer (60-120 sec — starts when pathing fails)
+- **Goal priority**: Urgency-based (bathroom > food > stage), but agents avoid visibly crowded areas
+- **Facility search**: Try next 2-3 closest of same type if first is full
 - **Stage watching**: Random duration per agent (30-120 sec), then leave or get needs
-- **Cannot reach goal**: Wander randomly, then eventually exit unhappy
+- **Cannot reach goal**: Wander randomly
+- **Patience expired**: Walk to nearest exit (TBD — may tune during playtesting)
 
 ---
 
@@ -209,8 +229,9 @@ See Lineup → Prepare Layout → Artist Performs → Crowd Surges → Survive �
 
 **Movement Speeds**:
 - **Paths**: Full speed (0.5 tiles/sec)
-- **Grass**: Slower (agents can still walk, just reduced speed)
+- **Grass**: Half speed (0.25 tiles/sec)
 - **Fence**: Blocks movement completely
+- **Dangerous zone (75-90%)**: Linear slowdown — speed decreases proportionally with density
 
 ### 3. Pheromone Trail Pathfinding (BGP-style)
 
@@ -220,6 +241,9 @@ Agents don't have global knowledge. Emergent pathfinding:
 2. More agents leaving = stronger pheromone trail
 3. New agents follow strongest trails toward destinations
 4. Trails decay over time if not reinforced
+   - **Trail lifespan**: 60 seconds
+   - **Fresh strength**: 10 (1-10 scale)
+   - **Decay rate**: ~0.17/sec (loses 1 point every 6 sec)
 5. Recalculated async over several frames (avoid frame drops)
 
 **Creates emergent behavior**:
@@ -245,7 +269,9 @@ Agents don't have global knowledge. Emergent pathfinding:
 | **Fence** | 1×1 tile | 2m segment | Blocks all movement |
 | **Path** | 1 tile wide | 2m | Fast movement, can merge into plazas |
 
-**Stage "watching" zone**: Agents within ~8-10 tiles count as watching (stop moving)
+**Stage "watching" zone**: Semi-circle, 8-10 tile radius in front of stage
+- "Front" = the side touching the path (stage faces toward adjacent path tiles)
+- Agents in zone stop moving and watch
 
 **Queue capacity**: Same as tile density (40 agents) — agents crowd around facility
 
@@ -289,9 +315,10 @@ More capacity = bigger festivals = bigger artists = more danger.
 - **Facilities**: Limited by progression slots (+1 per 100 attendees)
 - **Timing**: Build any time (paused or live) — react in real-time
 - **Cost**: None for MVP
-- **Placement**: Blocked on occupied tiles (red highlight, must demolish first)
+- **Placement**: Blocked on occupied tiles (red highlight only, no text feedback)
+- **Cursor**: Highlighted tile with semi-transparent fill
 - **Movement**: Facilities can be picked up and moved freely
-- **Path drawing**: Click start corner → move cursor → click end → fills rectangle
+- **Path drawing**: A to start → move cursor → A to confirm (B to cancel) → preview shown during drag
 
 ### Demolition
 - Instant removal
@@ -325,27 +352,32 @@ More capacity = bigger festivals = bigger artists = more danger.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Font & Styling
+- **Font**: Fredoka (friendly rounded sans-serif)
+- **Font sizes**: Top bar 16px, timeline artist names 14px, timeline numbers 12px, build bar 12px
+
 ### Top Bar
 - Current time (24-hour format: 14:34)
-- Death counter (Deaths: 3/10)
+- Death counter (Deaths: 3/10) — increment only, no flash (MVP)
 - Attendees currently in park
 
 ### Right Sidebar (150px width)
 - **Timeline**: Google Calendar day view style
   - "NOW" marker fixed at ~20% from top
   - Timeline scrolls upward as time passes
-  - Events are blocks sized by duration (taller = longer set)
+  - Events are blocks sized by duration: **2px per game minute** (30-min set = 60px)
   - Per artist: name, duration, expected crowd size (number)
   - Civ-style scroll: auto-follows current, manual peek ahead
+  - No hover state for MVP
 - **Minimap** (150×150px, bottom of sidebar)
   - Shows map layout only (paths, buildings, fence, gates)
   - NO agent density (use TAB overlay for that)
   - Shows camera viewport rectangle
-  - Click to jump camera
+  - Click = instant camera jump, drag = continuous panning
 
 ### Build Bar (Bottom)
-- Tool icons
-- Current tool highlighted
+- Simple flat icons
+- Current tool: highlight box + icon scales up
 - Cycle with L/R bumpers
 
 ---
@@ -358,14 +390,19 @@ Simple: New Game, Options, Quit
 ### Playing
 Normal gameplay with pause (Spacebar) and pause menu (Escape)
 
+**Pause Menu**: Resume, Restart, Options, Main Menu, Quit
+
 ### Game Over
 Triggered at 10 deaths.
+
+**Transition**: Brief pause (2-3 sec) showing the fatal death, then Game Over screen
 
 **Game Over Screen**:
 - "FESTIVAL SHUT DOWN"
 - Stats: Days survived, max attendees, total served
-- Heatmap of death locations (later)
+- Heatmap of death locations (post-MVP)
 - "Try Again" button
+- No high score tracking for MVP (add post-MVP)
 
 ### Victory
 **Endless mode** - no formal victory. Goal is survival and growth.
@@ -373,6 +410,8 @@ Triggered at 10 deaths.
 ---
 
 ## The Emotional Loop
+
+**Core Feel**: Spinning plates until it all comes crashing down. The tension of juggling multiple growing problems, knowing eventually something will slip — and that glorious/tragic moment when it finally does.
 
 ### Success Feeling
 "Damn, I just survived a 2000-person headliner rush with zero deaths. My path layout worked perfectly. Like beating a boss in tower defense - held my breath the whole time."
@@ -384,12 +423,12 @@ Triggered at 10 deaths.
 
 ## Visual References
 
+- **Breaking the Tower (Notch)** — **STUDY THIS CLOSELY** for creative tower defense feel and emergent chaos
 - **Mini Motorways** (minimalist flow, emergent complexity)
 - **RollerCoaster Tycoon 2** (isometric view, nostalgic charm)
 - **Train Valley 1 & 2** (path drawing, timing challenge)
 - **Package Inc** (logistics management)
 - **Freeways** (road drawing)
-- **Breaking the Tower (Notch)** (creative tower defense)
 
 ---
 
@@ -415,7 +454,7 @@ Game begins with:
 - **No tutorial** — learn by doing
 
 ### OUT OF MVP SCOPE
-- Sound effects / Music (post-MVP: festival atmosphere, tension audio)
+- Sound effects / Music (post-MVP: minimalist ambient style like Mini Metro)
 - Tutorial (post-MVP: optional tutorial level)
 - Save / Load
 - Speed controls (2x, 4x)
@@ -426,6 +465,8 @@ Game begins with:
 - Heatmap replay
 - Complex management menus
 - Screen shake / juice effects (except stage lights up)
+- High score tracking (add post-MVP)
+- Colorblind accessibility patterns (add post-MVP)
 
 ---
 
@@ -496,13 +537,17 @@ Game begins with:
 | `AGENT_HP` | 1 | Dies in ~5 sec |
 | `crush_damage_rate` | 0.2/sec | Flat damage in critical zone |
 | `MAX_DEATHS` | 10 | Game over threshold |
-| `agent_speed` | 0.5 tiles/sec | Base walking speed (1 m/s) |
+| `agent_speed` | 0.5 tiles/sec | Base walking speed on paths (1 m/s) |
+| `agent_speed_grass` | 0.25 tiles/sec | 50% speed on grass |
 | `separation_radius` | 0.25 tiles | How close before push apart |
 | `service_time` | 1 sec | Bathroom/Food service (MVP) |
 | `phase_length` | 3 min | Real-time per phase |
 | `day_cycle` | 12 min | Full 24-hour cycle |
 | `patience_timer` | 60-120 sec | Before agent leaves unhappy |
 | `watch_duration` | 30-120 sec | Random time at stage |
+| `pheromone_lifespan` | 60 sec | How long trails last |
+| `pheromone_strength` | 10 | Fresh trail strength (1-10) |
+| `pheromone_decay` | 0.17/sec | Decay rate |
 
 ---
 
@@ -543,6 +588,25 @@ Only add after core loop is fun:
 
 ---
 
-*Last updated: Integrated all 75 answered questions from questions.md — full MVP spec complete.*
+## Prototype Timeline
+
+| Milestone | Duration |
+|-----------|----------|
+| First playable build | 1 week |
+| MVP feature complete | 4 weeks (1 month) |
+| Polish/iteration | 2 weeks |
+| **Total** | **~7 weeks** |
+
+## Scope Priorities
+
+**CANNOT CUT**: Agent system (movement, crowd density, crush mechanic) — this is the core
+
+**CAN CUT IF NEEDED**: Minimap, density overlay system. Focus on agents first.
+
+**SCOPE CREEP DANGER**: Polish. Visual effects, animations, juice, "one more tweak" — these consume infinite time. Get core gameplay working first, polish last.
+
+---
+
+*Last updated: Integrated all 50 answered questions from questions.md — full MVP spec complete.*
 
 **See also**: `questions.md` for detailed rationale behind each decision.
