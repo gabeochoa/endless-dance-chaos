@@ -1,477 +1,475 @@
-# Endless Dance Chaos - Design Questions
+# Endless Dance Chaos - Clarification Questions
 
-These questions need answers before an intern can implement the prototype. Please answer each one to remove ambiguity from the design.
-
----
-
-## Grid & Map
-
-### Q1. What is the tile size in pixels?
-**ANSWER: 32x32 pixels** (at 1x zoom, 720p)
-
-At 720p this gives ~40x22 tiles visible on screen. Buildings occupy multiple tiles.
-
-### Q2. What is the starting map size in tiles?
-**ANSWER: 50x50 tiles** (1600x1600 pixels at 32px/tile)
-
-At 720p (~40x22 visible), player sees about 80% of map width at once when zoomed in. Good starting size for MVP.
-
-### Q3. Can the map be expanded during gameplay, or is it fixed?
-**ANSWER: Fixed** — 50x50 tiles for MVP. Map expansion could be a post-MVP feature.
-
-### Q4. What is outside the festival boundary?
-**ANSWER: Grass with a pre-built perimeter fence**
-
-- The playable area (50x50) has a **starting perimeter fence** around it
-- Outside the fence is grass where agents spawn and queue to enter
-- Agents must enter through **gates** the player places in the perimeter fence
-- Player builds/modifies everything INSIDE the fence
-- The perimeter fence itself can be edited (add gates, move sections)
-
-### Q5. How many agents can occupy a single tile before it's at 100% density?
-**ANSWER: 40 agents per tile**
-
-Real-world basis:
-- 1 tile = 2m × 2m = 4 m²
-- Fire code: 1 person per 0.5 m² (2 people/m²)
-- Festival crush density: 5× fire code = 10 people/m²
-- 4 m² × 10 people/m² = **40 agents at 100% density**
-
-Density thresholds:
-| Level | Agents/Tile | % Capacity |
-|-------|-------------|------------|
-| Normal | 0-20 | <50% |
-| Warning | 20-30 | 50-75% |
-| Dangerous | 30-36 | 75-90% |
-| Critical | 36-40+ | >90% (crush damage) |
+These questions need answers before an intern can begin prototyping. Please answer each one to make the spec as prescriptive as possible.
 
 ---
 
-## Agent Visuals & Animation
+## Visual Style & Art
 
-### Q6. What is the sprite size for agents at close zoom?
-**ANSWER: 8×8 pixels**
+### Q1: Isometric Projection Angle
+What is the exact isometric projection ratio?
+- [x] A) Standard 2:1 isometric (common in classic games like RCT2)
+- [ ] B) True isometric (30° from horizontal)
+- [ ] C) Dimetric (like Diablo 2, steeper angle)
+- [ ] D) Something else: _______
 
-At 40 agents per 32×32 tile at crush density, 8×8 sprites will overlap and pile up visually — creates the "packed crowd" feel. Can adjust later if it feels too abstract.
+### Q2: Agent Color Palette
+The roadmap mentions "varied colors for crowd diversity." How many agent colors should there be, and what are the specific hex values?
+- [ ] A) 5 colors (e.g., red, blue, green, yellow, purple)
+- [ ] B) 8 colors (wider variety)
+- [ ] C) 12+ colors (high diversity)
 
-### Q7. What are the walking animation frames?
-**ANSWER: 2 frames** — simple toggle between frames. At 8×8px, more frames wouldn't be noticeable anyway.
+**ANSWERED:** Agents should look like people (natural/human appearance). Use skin tones and realistic clothing colors rather than arbitrary bright colors. The "diversity" refers to varied but natural-looking festival-goer appearances.
 
-### Q8. Do agents have directional sprites (facing left/right/up/down)?
-**ANSWER: D) Same sprite always** — no directional facing for MVP. Keeps art requirements minimal. Can add directions post-MVP.
+### Q3: Cursor Visual Design
+What does the placement cursor look like?
+- [ ] A) Simple white square outline (1px border)
+- [x] B) Highlighted tile with semi-transparent fill
+- [ ] C) Pulsing/animated selection indicator
+- [ ] D) Different cursor per tool type
 
-### Q9. At far zoom, what do the "density blobs" look like?
-**ANSWER: B) Heat map gradient** — transparent overlay on ground, green→yellow→red based on density. Clear data visualization style, easy to read danger zones at a glance.
+What color should valid placement be? _______ (hex)
+What color should invalid placement be? _______ (hex)
 
-### Q10. Describe the "pops like a balloon" death effect:
-**ANSWER: D) Simple particle burst** — agent instantly vanishes, replaced by a burst of particles. Quick, punchy, no elaborate animation.
+### Q4: Facility Sprites
+Should facilities have:
+- [x] A) Static sprites only (no animation) — for MVP
+- [ ] B) Idle animations (subtle movement)
+- [ ] C) State-based animations (e.g., bathroom when occupied vs empty)
 
-### Q11. What colors are the death particles?
-**ANSWER: C) Match the agent's color** — implies agents have varied colors for visual diversity. Death particles inherit their color.
+Describe the visual appearance for each facility:
+- **Stage**: _______
+- **Bathroom**: _______
+- **Food**: _______
+- **Gate**: _______
+- **Fence segment**: _______
 
----
+### Q5: Stage "Lights Up" Effect
+When an artist starts performing, the stage "lights up." What exactly does this mean?
+- [x] A) Color tint overlay on stage sprite — simple for MVP
+- [ ] B) Particle effects emanating from stage
+- [ ] C) Pulsing glow around stage
+- [ ] D) Spotlight beams (simple rays)
+- [ ] E) All of the above
 
-## Agent Behavior
+**ANSWERED:** Keep it simple for MVP — just a color tint overlay.
 
-### Q12. What is the agent base walking speed in tiles per second?
-**ANSWER: 0.5 tiles/sec** (1 m/s real-world)
+### Q6: Death Particle Effect
+The death effect is a "particle burst in agent's color." Specify:
+- Number of particles: 5-8 (simple burst)
+- Particle size: 2-4px (small squares)
+- Burst radius: 8-12px
+- Duration: 0.3-0.5 sec (quick pop)
+- Shape: [x] Square [ ] Circle [ ] Star
 
-This is a slow festival shuffle — crowds move slowly. At 50 tiles across the map, it takes 100 seconds to cross. Gives player time to react to developing crushes.
+**ANSWERED:** Keep it simple for MVP — small square particles, quick burst, nothing fancy.
 
-### Q13. What is the agent separation radius (how close before they push apart)?
-**ANSWER: A) 0.25 tiles** (8px / 0.5m real-world)
-
-Tight packing — agents can get very close before separation force kicks in. Allows for realistic crowd crushing behavior.
-
-### Q14. When an agent wants food AND wants to see an artist, how do they prioritize?
-**ANSWER: B) Needs first if urgent, otherwise artist**
-
-Simple threshold check: if hunger/bathroom need exceeds X%, go handle it first. Otherwise, head to stage. Post-MVP can add more nuanced decision-making.
-
-### Q15. What happens when an agent cannot reach their goal (no path exists)?
-**ANSWER: B then C** — Agent wanders randomly for a while, then eventually gives up and exits unhappy.
-
-Post-MVP: Add toast/notification system showing why people are leaving (e.g., "Guest left: couldn't find bathroom")
-
-### Q16. Do agents have a "patience" timer? What happens when it expires?
-**ANSWER: B) Yes, they leave unhappy after X seconds**
-
-Agents have limited patience. If stuck/waiting too long, they give up and exit. (Exact timeout TBD — maybe 60-120 seconds?)
-
-### Q17. How long (in real seconds) does an agent typically stay at a stage before leaving?
-**ANSWER: D) Random between min/max**
-
-Each agent gets a random watch duration (e.g., 30-120 seconds). Creates natural crowd turnover — some leave early, some stay the whole set. (Exact min/max TBD)
-
----
-
-## Facilities
-
-### Q18. How large is each facility in tiles? (32x32 per tile)
-
-| Facility | Size | Pixels |
-|----------|------|--------|
-| Stage | ___x___ tiles | ___x___ px |
-| Bathroom | ___x___ tiles | ___x___ px |
-| Food Stand | ___x___ tiles | ___x___ px |
-| Gate | ___x___ tiles | ___x___ px |
-| Fence segment | ___x___ tiles | ___x___ px |
-| Path segment | ___x___ tiles | ___x___ px |
-
-**CONFIRMED:**
-| Facility | Size | Pixels | Real-world |
-|----------|------|--------|------------|
-| Stage | 4x4 tiles | 128x128px | 8m × 8m |
-| Bathroom | 2x2 tiles | 64x64px | 4m × 4m |
-| Food Stand | 2x2 tiles | 64x64px | 4m × 4m |
-| Gate | 2x1 tiles | 64x32px | 4m × 2m opening |
-| Fence | 1x1 tile | 32x32px | 2m segment |
-| Path | 1 tile wide | 32px | 2m wide |
-
-### Q19. What is the service time for each facility (in real seconds)?
-**ANSWER: 1 second for both (MVP starting point)**
-
-| Facility | Service Time |
-|----------|--------------|
-| Bathroom | 1 sec |
-| Food Stand | 1 sec |
-
-Fast for now — can tune up if facilities become too efficient at absorbing crowds.
-
-### Q20. What is the queue capacity for each facility?
-**ANSWER: Same as path tile density (40 agents)**
-
-Default queue = agents just crowd around facility like any tile.
-
-Post-MVP upgrade: Add formal "queue lane" upgrade → faster service but lower capacity (trade-off between throughput speed vs. buffer size).
-
-### Q21. When a facility queue is full, what happens to arriving agents?
-**ANSWER: Depends on urgency**
-
-- **Urgent need (bathroom, high hunger)**: B) Try to find another facility of same type
-- **Non-urgent**: C) Give up and wander, maybe try again later
-
-Agents don't just stand there blocking — they make a decision based on how badly they need it.
-
-### Q22. How is the stage "attraction zone" defined?
-**ANSWER: Pheromone trail system (BGP-style)**
-
-Agents don't have global knowledge. Instead:
-1. Agents leaving a stage mark tiles with "stage is ~X tiles THAT direction"
-2. More agents leaving = stronger pheromone trail
-3. New agents follow strongest trails toward stages
-4. Trails decay over time if not reinforced
-
-Creates emergent crowd flow — popular routes get reinforced, natural bottlenecks form. More complex than BFS signposts but much more interesting behavior.
-
-**"Watching" distance**: Agent counts as watching once within ~8-10 tiles of stage (they stop moving and enjoy the show).
+### Q7: Heat Map Gradient Colors
+For the density overlay, what are the exact gradient colors?
+```
+0% density:   Transparent (no overlay)
+50% density:  Yellow (#FFFF00)
+75% density:  Orange (#FFA500)
+90% density:  Red (#FF0000)
+100% density: Black (#000000)
+```
+**ANSWERED:** Gradient goes transparent → yellow → orange → red → black as density increases.
 
 ---
 
-## Building & Paths
+## UI/UX Details
 
-### Q23. How wide are paths?
-**ANSWER: Always 1 tile (32px)**
+### Q8: Font Selection
+What font family should be used?
+- [ ] A) Pixel font (retro aesthetic, matching RCT2 vibe)
+- [x] B) Clean sans-serif (modern, readable)
+- [ ] C) Custom font: _______
 
-But multiple adjacent paths merge visually into larger open areas (plazas). Simple placement, flexible results.
+**ANSWERED:** Use **Fredoka** (`Fredoka-VariableFont_wdth,wght.ttf` from wm_afterhours2). It's a friendly rounded sans-serif that's modern and readable.
 
-### Q24. How does path drawing work with the controller?
-**ANSWER: A) Click start → move cursor → click end → fills rectangle**
+Font sizes:
+- Top bar text: 16px
+- Timeline artist names: 14px
+- Timeline crowd numbers: 12px
+- Build bar labels (if any): 12px
 
-Most controller-friendly: click corner, move to opposite corner, confirm. Fills rectangle of path tiles. Fast for both long paths and open plazas. Can adjust if it feels wrong.
+### Q9: Build Bar Icons
+What style should the build tool icons be?
+- [ ] A) Pixel art icons (16x16 or 24x24)
+- [x] B) Simple flat icons
+- [ ] C) Outlined/stroke icons
+- [ ] D) Text labels only
 
-### Q25. Can paths be placed diagonally?
-**ANSWER: A) No, cardinal only** — grid-aligned paths keep visuals clean and simple.
+What size should each icon be? _______
 
-### Q26. What happens when you try to place a building on an occupied tile?
-**ANSWER: A) Blocked** — red highlight, build fails. Must demolish first.
+### Q10: Tool Selection Indicator
+How should the currently selected build tool be indicated?
+- [x] A) Highlight box around icon
+- [x] B) Icon enlarges/scales up
+- [ ] C) Underline bar
+- [ ] D) Different background color
 
-### Q27. Can you build while the game is running (unpaused)?
-**ANSWER: A) Yes, no restrictions** — live building allowed. React to problems in real-time.
+**ANSWERED:** Both — highlight box AND icon scales up slightly when selected.
 
----
+What color for selected state? _______
+What color for unselected state? _______
 
-## Fence & Gates
+### Q11: Timeline Block Sizing
+How tall should each minute of game time be in the timeline (in pixels)? **2px per minute**
 
-### Q28. Is the fence required at game start, or optional?
-**ANSWER: A) Default perimeter fence at start** — matches Q4, festival has pre-built boundary.
+Example: A 30-minute set = 60px tall, a 1-hour headliner = 120px tall.
 
-### Q29. If the player builds no fence/gates, where do agents spawn and enter?
-**ANSWER: C) Game starts with one default gate** — like the perimeter fence, there's one gate pre-placed. Agents spawn outside and enter through it. Player can add more gates or move the default one.
+**ANSWERED:** 2px per game minute keeps the timeline compact.
 
-### Q30. Can gates have capacity upgrades, or is throughput fixed?
-**ANSWER: C) Place multiple gates** — no upgrade system, just add more gates for more throughput. Simple.
+### Q12: Timeline Hover State
+When hovering over an artist in the timeline, what happens?
+- [x] A) Nothing (no hover state) — MVP
+- [ ] B) Tooltip with more details
+- [ ] C) Artist block expands to show more info
+- [ ] D) Camera jumps to associated stage
 
-### Q31. What happens if all gates are deleted while agents are inside?
-**ANSWER: C) Game prevents deleting last gate** — can't soft-lock yourself. Always at least one entry/exit.
+### Q13: Minimap Click Behavior
+When clicking on the minimap:
+- [x] A) Instant camera jump
+- [ ] B) Smooth camera pan to location
+- [x] C) Drag to pan continuously
 
----
+**ANSWERED:** Click = instant jump, drag = continuous panning.
 
-## Time & Artists
+### Q14: Death Counter Visual Treatment
+When a death occurs, how is the player notified?
+- [x] A) Death counter increments only (subtle) — MVP
+- [ ] B) Counter flashes red briefly
+- [ ] C) Full-screen red vignette flash
+- [ ] D) Pop-up notification (e.g., "CROWD CRUSH - 3/10")
+- [ ] E) Sound only (no visual beyond counter)
 
-### Q32. How is time displayed in the UI?
-**ANSWER: B) 24-hour format** (14:34) — cleaner, no AM/PM ambiguity.
+### Q15: Pause Menu Contents
+What options should be in the Escape pause menu?
+- [x] Resume
+- [x] Restart
+- [x] Options (volume, etc.)
+- [x] Main Menu
+- [x] Quit
 
-### Q33. How long is each time phase in real minutes?
-**ANSWER: Equal length — 3 min each, 12 min total cycle**
+**ANSWERED:** All of the above.
 
-| Phase | Real Minutes |
-|-------|--------------|
-| Day (10am-6pm) | 3 min |
-| Night (6pm-Midnight) | 3 min |
-| Exodus (Midnight-3am) | 3 min |
-| Dead Hours (3am-10am) | 3 min |
-| **Total cycle** | **12 min** |
-
-### Q34. How are artist names generated?
-**ANSWER: B) Procedurally generated** — prefix + suffix tables (e.g., "DJ" + "Nova", "The" + "Midnight" + "Collective"). Infinite variety, fun names.
-
-### Q35. How long does each artist performance last in game-time?
-**ANSWER: C) Variable by tier** — small artists ~30 min, headliners ~1 hour. Bigger acts = longer sustained crowd pressure.
-
-### Q36. During Exodus phase, what happens to agents who can't exit in time?
-**ANSWER: A) Stay for next day** — stragglers become part of tomorrow's crowd. Creates carryover consequences for bad exit flow.
-
-### Q37. Do agents arrive throughout the day, or all at once before each performance?
-**ANSWER: A + C combined** — continuous stream, but spawn rate ramps up ~15 min before each performance based on artist popularity. Creates predictable waves tied to schedule.
-
----
-
-## Camera & Controls
-
-### Q38. How many tiles are visible at each zoom level?
-**ANSWER: Reasonable defaults (tune as needed)**
-
-| Zoom Level | Visible Width | Notes |
-|------------|---------------|-------|
-| Close | ~25 tiles | Half map, see agent detail |
-| Medium | ~40 tiles | Natural 720p view |
-| Far | ~60 tiles | Entire 50x50 map + margin |
-
-### Q39. How fast does the camera pan (tiles per second when holding stick)?
-**ANSWER: D) Scales with zoom** — faster when zoomed out, slower when zoomed in. ~10 tiles/sec at medium zoom as baseline.
-
-### Q40. Is there camera momentum/smoothing, or instant stop?
-**ANSWER: B) Slight momentum** — small ease-out for polish, but not floaty. Feels responsive.
-
-### Q41. Can the camera go outside the map bounds?
-**ANSWER: B) Small padding** — can see slightly past map edge (helpful for placing gates at perimeter), but not unlimited.
+Any other options? _______
 
 ---
 
-## UI Specifics
+## Gameplay Mechanics
 
-### Q42. What is the sidebar width?
-**ANSWER: Same width as minimap** — keeps things aligned. (See Q52 for minimap size, likely ~150-200px)
+### Q16: Grass Movement Speed
+Agents move at 0.5 tiles/sec on paths. How fast on grass?
+- [x] A) 0.25 tiles/sec (50% speed)
+- [ ] B) 0.375 tiles/sec (75% speed)
+- [ ] C) 0.4 tiles/sec (80% speed)
+- [ ] D) Other: _______
 
-### Q43. When the timeline has more artists than fit, how does scrolling work?
-**ANSWER: Civ-style** — auto-scrolls to keep current/next artist visible, but player can manually scroll to peek ahead. Best of both worlds.
+### Q17: Stage Watching Zone Shape
+The stage watching zone is ~8-10 tiles. What shape is it?
+- [ ] A) Square (8×8 tiles in front of stage)
+- [ ] B) Circle (radius from stage center)
+- [x] C) Semi-circle (in front direction only)
+- [ ] D) Custom trapezoid (wider at back)
 
-### Q44. What information shows for each artist in the timeline?
-**ANSWER: Google Calendar day view style**
+Which direction is "front" of the stage? 
 
-Layout:
-- Vertical timeline like Google Calendar day view
-- "NOW" marker fixed at ~20% from top
-- Timeline scrolls upward as time passes
-- Events are blocks that span their duration (taller = longer set)
+**ANSWERED:** The side touching the path. Stage "faces" toward adjacent path tiles.
 
-Per artist block:
-- ✓ Artist name
-- ✓ Duration (block height represents this visually)
-- ✓ Expected crowd size (number)
+### Q18: Agent Goal Selection Priority
+When an agent enters the festival, how do they pick their target?
+- [ ] A) Always go to stage first, then needs
+- [ ] B) Random: 70% stage, 30% immediate need (food/bathroom)
+- [x] C) Urgency-based (bathroom > food > stage)
+- [ ] D) Other priority system: _______
 
-Reference: Google Calendar day view with time slots and event blocks
+**ANSWERED:** Urgency-based, BUT agents also avoid visibly crowded areas if possible. If a destination looks too packed, they'll try alternatives or wait.
 
-### Q45. What does the death counter look like when approaching game over?
-**ANSWER: Nothing special for MVP** — just a number display. Polish effects (color/pulse/shake) can be added post-MVP.
+### Q19: Facility Search Radius
+When an agent needs a bathroom but the nearest one is full, how far do they search for another?
+- [ ] A) Entire map
+- [ ] B) Within X tiles: _______
+- [x] C) Next 2-3 closest of same type
+- [ ] D) Give up immediately
 
----
+**ANSWERED:** Try next 2-3 closest of same type. (May need tuning during playtesting.)
 
-## Danger & Crush Details
+### Q20: Pheromone System Details
+How long does a pheromone trail last before fully decaying? **60 seconds**
+How strong is a fresh pheromone mark (1-10 scale)? **10**
+How fast does it decay per second? **~0.17** (loses 1 point every 6 sec)
 
-### Q46. What is the agent's crush health value?
-**ANSWER: C) 1 HP** — dies in ~5 seconds in critical zone. Fast and punishing — forces immediate action.
+**ANSWERED:** Starting values — will tune during playtesting.
 
-### Q47. Does crush damage increase with density level?
-**ANSWER: A) Flat damage** — 0.2/sec in any critical zone (>90% density). Simple for MVP, can add scaling later.
+### Q21: "Dangerous" Zone Movement Slowdown
+At 75-90% density (dangerous zone), movement slows. By how much?
+- [ ] A) 50% speed reduction
+- [ ] B) 25% speed reduction
+- [x] C) Linear scaling (more crowded = slower)
+- [ ] D) Other: _______
 
-### Q48. Is there screen shake when agents die?
-**ANSWER: A) No shake for MVP** — keep it simple. Juice effects post-MVP.
+**ANSWERED:** Linear scaling — speed decreases proportionally with density.
 
-### Q49. How is the "dangerous zone" overlay rendered?
-**ANSWER: B) Gradient** — blends into surroundings, shows density as smooth heat map rather than hard tile edges.
+### Q22: Patience Timer Trigger
+When does an agent's patience timer (60-120s) start counting?
+- [ ] A) On spawn
+- [x] B) When they can't find a path to their goal
+- [ ] C) When stuck in one place for X seconds
+- [ ] D) When in a crowded area
 
-### Q50. Does the danger overlay show for individual tiles or continuous regions?
-**ANSWER: Per-tile but smoothly interpolated** — density calculated per tile, but rendered with smooth gradients between tiles so it looks like a continuous heat map, not blocky squares.
+**ANSWERED:** Starts when pathing fails. (May revisit during playtesting.)
 
----
+What happens when patience runs out?
+- [ ] A) Agent walks straight to nearest exit
+- [ ] B) Agent despawns immediately
+- [ ] C) Agent becomes "angry" (visual change) then exits
+- [ ] D) Agent wanders randomly then exits
 
-## Minimap
+**TBD:** Decide during implementation/playtesting. For now, default to A (walk to exit).
 
-### Q51. Where is the minimap positioned?
-**ANSWER: A) Bottom-right of sidebar** — below the artist timeline.
-
-### Q52. What is the minimap size?
-**ANSWER: 150x150 pixels** — current codebase value (MAP_SIZE = 150). Sidebar should match this width.
-
-### Q53. What does the minimap show?
-**ANSWER: Map layout only, no people**
-- ✓ Paths
-- ✓ Buildings (as blocks)
-- ✓ Fence
-- ✓ Gates
-- ✓ Current camera viewport rectangle
-- ✗ NO agent density / heat map
-- ✗ NO danger zones
-
-Keeps minimap clean. Use TAB overlay on main view for density info.
-
-### Q54. Can the player click/select on the minimap to move the camera?
-**ANSWER: A) Yes** — click minimap to jump camera. Standard RTS behavior.
-
----
-
-## Color Palette Specifics
-
-### Q55. Day palette (Miami pastel):
-
-| Element | Hex Code | Description |
-|---------|----------|-------------|
-| Background/Ground | #F5E6D3 | Warm sand |
-| Grass | #98D4A8 | Soft mint green |
-| Path | #E8DDD4 | Light concrete |
-| Building Accent 1 | #7ECFC0 | Soft teal |
-| Building Accent 2 | #F4A4A4 | Coral pink |
-| Stage | #FFD93D | Sunny yellow |
-| UI Background | #FFF8F0 | Warm off-white |
-| UI Text | #4A4A4A | Soft black |
-
-### Q56. Night palette (EDC neon):
-
-| Element | Hex Code | Description |
-|---------|----------|-------------|
-| Background/Ground | #1A1A2E | Deep navy |
-| Grass | #2D4A3E | Dark forest |
-| Path | #2A2A3A | Dark slate |
-| Building Accent 1 | #00F5FF | Electric cyan |
-| Building Accent 2 | #FF00AA | Hot magenta |
-| Stage | #FFE600 | Bright yellow (lights) |
-| UI Background | #16162A | Dark purple |
-| UI Text | #FFFFFF | White |
-
-### Q57. How does the Day→Night transition work?
-**ANSWER: C) Gradual fade over 1 hour game time** — slow, subtle palette shift. Day melts into night naturally.
+### Q23: Agent Stuck Behavior
+If an agent literally cannot path to their goal (completely blocked by fences), what happens?
+- [ ] A) They wait at the blockage forever
+- [x] B) They wander randomly
+- [ ] C) They exit the festival (counting as "unhappy")
+- [ ] D) They despawn after patience timer
 
 ---
 
-## Audio Hints (for later)
+## Progression & Balance
 
-### Q58. What is the audio mood/style you're envisioning?
-**ANSWER: Out of scope for MVP** — no audio for now.
+### Q24: Initial Spawn Rate
+At game start (0 attendees ever), how many agents spawn per minute? 
 
-Post-MVP vision: Should FEEL like a music festival. Thumping bass you can feel, crowd energy, distant stages bleeding sound. Think: standing outside a festival tent and hearing the muffled drop.
+**ANSWERED:** Based on artists scheduled — spawn rate determined by upcoming artist's expected crowd size.
 
-### Q59. Should there be audio cues for danger?
-**ANSWER: Out of scope for MVP** — visual only for now.
+### Q25: Spawn Rate Scaling
+How does spawn rate increase as the festival grows?
+- [ ] A) Linear: +X agents/min per 100 max attendees
+- [ ] B) Exponential curve
+- [ ] C) Step function (big jumps at milestones)
+- [x] D) Tied to upcoming artist crowd size
 
-Post-MVP: Rising tension audio as density climbs, crowd panic sounds, maybe heartbeat SFX at 8+ deaths.
+**ANSWERED:** Spawn rate scales with upcoming artist's crowd size. Bigger artists = faster spawning leading up to their set.
 
----
+### Q26: Artist Tier System
+How many tiers of artists are there?
+- [ ] A) 3 tiers (Small, Medium, Headliner)
+- [ ] B) 5 tiers (more granularity)
+- [x] C) Continuous scaling (no discrete tiers)
 
-## Technical Constraints
+**ANSWERED:** Continuous scaling — artist crowd sizes scale based on festival progression. No hard tier boundaries. Crowd size and set duration grow gradually as festival grows.
 
-### Q60. What is the target frame rate?
-**ANSWER: 120 FPS** — smooth high refresh rate target.
+Example ranges (will tune):
+| Festival Size | Typical Crowd | Set Duration |
+|---------------|---------------|--------------|
+| Early (0-500) | 50-200        | 30 min       |
+| Mid (500-2k)  | 200-800       | 30-45 min    |
+| Late (2k+)    | 500-2000+     | 45-60 min    |
 
-### Q61. What is the minimum supported screen resolution?
-**ANSWER: A) 1280x720** — matches DEFAULT_SCREEN_WIDTH/HEIGHT in code.
+### Q27: Artist Name Generation
+For procedural artist names, provide the prefix and suffix tables:
 
-### Q62. At 100k agents, what's acceptable?
-**ANSWER: A) Must maintain 60 FPS** — aggressive LOD/culling required. Performance is non-negotiable even at scale.
+**ANSWERED:** Keep it simple for MVP — just use `"Artist XXX"` where XXX is a random 3-digit number (e.g., "Artist 472", "Artist 831").
 
----
+Can add fancy name generation (DJ Nova, The Midnight Collective, etc.) post-MVP.
 
-## Game Feel & Juice
+### Q28: Schedule Generation Algorithm
+How are artists scheduled throughout the day?
+- [x] A) Fixed slots (every 2 hours) — MVP
+- [ ] B) Random with minimum gap
+- [ ] C) Player-controlled schedule
+- [ ] D) Auto-generated based on festival size
 
-### Q63. When placing a building successfully, what feedback occurs?
-**ANSWER: E) None for MVP** — instant silent placement. Juice post-MVP.
+How many artists perform per day cycle? **~4 artists** (Day phase 10am-6pm = 8 hours, one every 2 hours)
+Minimum gap between performances? **1 hour** (2 hour slots, 1 hour set = 1 hour gap)
 
-### Q64. When an artist starts performing, what happens?
-**ANSWER: C) Stage lights up / particle effect** — visual feedback that something is happening. Makes the stage feel alive.
-
-### Q65. Is there a "beat" to the gameplay (screen pulses to music)?
-**ANSWER: D) No rhythmic elements for MVP** — no audio, no pulse. Post-MVP idea.
-
----
-
-## Edge Cases
-
-### Q66. What happens if the player places no stage?
-**ANSWER: C) Default stage pre-placed** — game starts with one stage (see Q74).
-
-### Q67. What happens if all paths are deleted mid-game?
-**ANSWER: A) Agents walk on grass (slower)** — they can still move, just at reduced speed.
-
-### Q68. Can facilities be moved, or only demolished and rebuilt?
-**ANSWER: A) Move freely** — pick up and place anywhere. More flexible for the player.
-
-### Q69. If a gate is deleted while agents are walking through it, what happens?
-**ANSWER: B) Agents clip through until clear** — simplest solution. Gate just vanishes, agents continue.
-
-### Q70. What's the max number of facilities at each milestone?
-**ANSWER: Simple formula — +1 of each type per 100 attendees**
-
-| Attendees | Stages | Bathrooms | Food | Gates |
-|-----------|--------|-----------|------|-------|
-| Start | 1 | 1 | 1 | 1 |
-| 100 | 2 | 2 | 2 | 2 |
-| 200 | 3 | 3 | 3 | 3 |
-| etc. | +1 | +1 | +1 | +1 |
-
-Simple linear scaling. Can tune later if needed.
+**ANSWERED:** Fixed 2-hour slots with 1-hour performances for MVP.
 
 ---
 
-## Signpost System
+## Technical Implementation
 
-### Q71. How often are signposts/pheromones recalculated after path changes?
-**ANSWER: B) Async over several frames** — avoid frame drops on big maps.
+### Q29: Camera Rotation Implementation
+When rotating the camera 90°:
+- [x] A) Instant snap — MVP
+- [ ] B) Smooth animated rotation over X ms: _______
+- [ ] C) Cross-fade between views
 
-### Q72. What happens in areas with no signpost/pheromone coverage?
-**ANSWER: A) Direct line-to-goal** — agents beeline toward target, may hit walls and get stuck (realistic for lost festival-goer).
+Should map orientation text appear (e.g., "N" indicator)? [x] Yes [ ] No
 
-### Q73. Do signposts/pheromones show visually in debug mode?
-**ANSWER: In-game overlay with facility filter**
+### Q30: Camera Bounds Padding
+"Small padding past map edge allowed." How many tiles? **10 tiles**
 
-"Festival Pathing" overlay mode (toggle):
-- Shows arrows on each tile indicating "where would you go from here?"
-- Filter by facility type: Stage, Bathroom, Food, Exit
-- Arrows show pheromone direction/strength
-- Helps player understand crowd flow and debug pathfinding
+### Q31: Path Drawing Mechanics
+Step-by-step, how does path drawing work with a controller?
+1. Press A to start drawing at current cursor position
+2. Move cursor to define rectangle corner
+3. Press A again to confirm, B to cancel
+4. Yes — preview shows highlighted rectangle before confirmation
 
-Not just debug — useful for players to understand why crowds move certain ways.
+**ANSWERED:** Simple rectangle drag: A to start → move cursor → A to confirm (B to cancel). Preview shown during drag.
+
+### Q32: Facility Deletion Behavior
+If you delete a facility (bathroom/food) while agents are using it:
+- [ ] A) Agents are ejected to nearby tile
+- [ ] B) Agents finish using it, then it disappears
+- [ ] C) Agents are ejected and go to next facility
+- [ ] D) Deletion is blocked while in use
+
+### Q33: Can You Delete the Stage?
+- [ ] A) Yes, freely deletable
+- [ ] B) No, stage is permanent like last gate
+- [ ] C) Can delete if no artist is performing
+- [ ] D) Can delete but current artist's crowd becomes angry
+
+### Q34: Building During Different Phases
+Can the player build during each phase?
+| Phase      | Building Allowed? |
+|------------|-------------------|
+| Day        | [ ] Yes [ ] No    |
+| Night      | [ ] Yes [ ] No    |
+| Exodus     | [ ] Yes [ ] No    |
+| Dead Hours | [ ] Yes [ ] No    |
+
+Can you build while paused? [ ] Yes [ ] No
 
 ---
 
-## Starting State
+## Edge Cases & Polish
 
-### Q74. What does the festival look like at game start?
-**ANSWER: C) Basic template** — perimeter fence + one gate + one stage pre-placed. Player builds paths and facilities from there.
+### Q35: Game Over Transition
+When the 10th death occurs:
+- [ ] A) Immediate freeze, Game Over screen appears
+- [x] B) Brief pause (2-3 sec) showing the death, then transition
+- [ ] C) Fade to black, then Game Over screen
+- [ ] D) Game continues for a few seconds (chaos) then ends
 
-### Q75. Is there a tutorial for the first game?
-**ANSWER: D) No help at all for MVP** — learn by doing. Tutorial post-MVP.
+### Q36: Exodus Phase - Agents Can't Exit
+If agents get stuck during exodus and can't exit:
+- [ ] A) They teleport outside when Dead Hours begin
+- [x] B) They remain inside (carryover as stated) — MVP
+- [ ] C) They continue trying to exit through Dead Hours
+- [ ] D) They count as "unhappy" but despawn
+
+Do stuck agents count toward next day's attendee count?
+
+### Q37: Empty Festival State
+During Dead Hours (3am-10am):
+- [ ] A) Player has full control, screen is dimmed
+- [ ] B) Time fast-forwards automatically
+- [ ] C) Players can only build, no other actions
+- [x] D) Standard gameplay, just no agents
+
+### Q38: Multiple Agents Dying Simultaneously
+If 5+ agents die in the same frame from a crush:
+- [ ] A) Each death triggers its own particle effect
+- [x] B) Merge into one bigger explosion
+- [ ] C) Stagger the death animations over a few frames
+- [ ] D) Show count popup ("x5 deaths!")
+
+### Q39: Performance Target Validation
+With 100k agents at 60 FPS, what's the acceptable frame budget?
+- Logic update per frame: **~8 ms** max
+- Render per frame: **~8 ms** max
+
+Should agents be updated in batches across frames? [x] Yes [ ] No
+If yes, how many agents per batch? **TBD — tune during development**
+
+**ANSWERED:** 50/50 split (~8ms each) for 16ms total frame budget. Batching is fine as long as the user can't perceive any stutter or pop-in. Will tune later.
 
 ---
 
-## Summary
+## Misc/Additional Details
 
-**All 75 questions answered!** This document is now a complete spec for the intern to implement the MVP. Key decisions:
+### Q40: Sound Priority (Post-MVP Prep)
+Even though sound is post-MVP, what style should we design toward?
+- [ ] A) Realistic festival sounds (crowd noise, music muffled in distance)
+- [ ] B) Retro chip-tune style (matching pixel art)
+- [x] C) Minimalist ambient (like Mini Metro)
+- [ ] D) No preference, decide later
 
-- 32×32px tiles, 50×50 map, 40 agents/tile at crush
-- 8×8px agents, 2-frame animation, no directional sprites
-- Pheromone trail pathfinding (BGP-style)
-- Google Calendar-style timeline
-- Pre-built fence + gate + stage at start
-- No audio, minimal juice for MVP — focus on core loop
+### Q41: Colorblind Accessibility
+Should the density overlay have alternative color schemes for colorblindness?
+- [ ] A) Yes, include deuteranopia/protanopia-friendly palette
+- [x] B) No, not for MVP
+- [ ] C) Use symbols/patterns in addition to colors
+
+**ANSWERED:** Not for MVP, but post-MVP the overlay can have patterns added for accessibility.
+
+### Q42: Screen Resolution Scaling
+At resolutions higher than 720p:
+- [ ] A) Pixel-perfect scaling (2x, 3x, 4x integer only)
+- [ ] B) Smooth scaling to fill screen
+- [x] C) Fixed game window, black bars for excess space (letterboxing)
+- [ ] D) More tiles visible at higher resolutions
+
+**ANSWERED:** Letterboxing (like kart-afterhours) for MVP.
+
+### Q43: Facility Placement Validation Messages
+When placement is invalid, should there be text feedback?
+- [x] A) Just red highlight, no text
+- [ ] B) Small tooltip: "Tile occupied" / "Cannot place here"
+- [ ] C) Bottom bar message area
+- [ ] D) Error sound only
+
+### Q44: Agent Entry Animation
+When agents spawn and enter through gates:
+- [ ] A) Pop into existence at gate
+- [x] B) Fade in near gate
+- [ ] C) Walk in from off-screen edge
+- [x] D) Appear in a "bus stop" area outside fence, then walk to gate
+
+**ANSWERED:** Either B or D works — intern can pick. D is more realistic, B is simpler.
+
+### Q45: Winning/High Score
+Since there's no victory, is there a high score/leaderboard system?
+- [ ] A) Local high score only (best run stats)
+- [x] B) No tracking, each run is fresh — MVP
+- [ ] C) Stats saved per run for history view
+- [ ] D) Unlock cosmetics at milestones
+
+**ANSWERED:** No tracking for MVP. Post-MVP: add local high score saving.
+
+---
+
+## Final Open Questions
+
+### Q46: What's the single most important "feel" the game should have?
+(Open answer - write a sentence or two)
+
+**ANSWERED:** Spinning plates until it all comes crashing down. The tension of juggling multiple growing problems, knowing eventually something will slip — and that glorious/tragic moment when it finally does.
+
+### Q47: If the intern has to cut scope, what's the ONE feature that cannot be cut?
+
+**ANSWERED:** The agent system (movement, crowd density, crush mechanic) is the core — cannot be cut. 
+
+**Can be cut if needed:** Minimap, density overlay system. Focus on agents first.
+
+_______
+
+### Q48: What's the ONE feature most likely to cause scope creep that we should be strict about?
+
+**ANSWERED:** Polish. Visual effects, animations, juice, "one more tweak" — these can consume infinite time. Get core gameplay working first, polish last.
+
+_______
+
+### Q49: Are there any visual references (screenshots, videos) the intern should study beyond the game names listed?
+
+**ANSWERED:** Breaking the Tower by Notch — study this one closely for the "creative tower defense" feel and emergent chaos.
+
+_______
+
+### Q50: What's the expected prototype timeline?
+- First playable build: **1 week**
+- MVP feature complete: **4 weeks** (1 month)
+- Polish/iteration: **2 weeks**
+
+**Total: ~7 weeks**
+
+---
+
+*Please answer all questions above. For multiple choice, check the box [x]. For fill-in, write your answer on the blank line.*
 
