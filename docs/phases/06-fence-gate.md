@@ -83,6 +83,32 @@ Agents spawn OUTSIDE the fence, walk to gate to enter.
 - [ ] Agents spawn outside fence and enter through gate
 - [ ] Cannot delete last gate (prevent soft-lock)
 
+## Testing
+
+### E2E Test Script: `test_fence_gate.e2e`
+
+```
+# Test: Fence and gate
+reset_game
+wait 10
+
+screenshot fence_perimeter
+
+# Agents should enter through gate
+wait 300
+
+screenshot agents_entered
+get_agent_count
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_fence_gate.e2e"`
+
+### Manual Testing
+
+1. Run game, verify fence visible around perimeter
+2. Watch agents spawn outside and enter through gate
+3. Verify agents don't pass through fence
+
 ## Out of Scope
 - Fence building tool (Phase 08)
 - Multiple gates

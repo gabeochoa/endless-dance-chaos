@@ -70,6 +70,41 @@ Use Fredoka font:
 - [ ] Text is readable (correct font size)
 - [ ] Layout matches spec (items spaced across bar)
 
+## Testing
+
+### E2E Test Script: `test_top_bar.e2e`
+
+```
+# Test: Top bar UI
+reset_game
+wait 10
+
+screenshot top_bar_initial
+
+# Set specific time
+set_time 14 34
+wait 5
+screenshot top_bar_time
+
+# Spawn some agents
+spawn_agents 0 0 50 stage
+wait 30
+screenshot top_bar_attendees
+
+# Trigger some deaths
+spawn_agents 0 0 40 stage
+wait 300
+screenshot top_bar_deaths
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_top_bar.e2e"`
+
+### Manual Testing
+
+1. Verify time updates in real-time
+2. Watch attendees count change as agents spawn
+3. Trigger deaths and verify counter updates
+
 ## Out of Scope
 - Death flash effect
 - Phase indicator (Day/Night)

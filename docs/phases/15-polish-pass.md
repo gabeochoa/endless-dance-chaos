@@ -107,6 +107,46 @@ struct Particle : BaseComponent {
 - [ ] Game over has brief pause before screen appears
 - [ ] (Stretch) Day/night colors shift
 
+## Testing
+
+### E2E Test Script: `test_polish.e2e`
+
+```
+# Test: Polish effects
+reset_game
+wait 5
+
+# Set time to performance
+set_time 10 0
+wait 30
+screenshot stage_glow
+
+# Force death for particle test
+spawn_agents 0 0 45 stage
+wait 300
+screenshot death_particles
+
+# Rotate camera for compass
+key E
+wait 10
+screenshot compass_rotated
+
+# Trigger game over transition
+trigger_game_over
+wait 60
+screenshot game_over_transition
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_polish.e2e"`
+
+### Manual Testing
+
+1. Watch agent die, verify particle burst
+2. Cause mass death, verify bigger burst
+3. Watch stage during performance, verify glow
+4. Rotate camera, verify compass updates
+5. Trigger game over, verify pause before screen
+
 ## Out of Scope
 - Sound effects
 - Screen shake

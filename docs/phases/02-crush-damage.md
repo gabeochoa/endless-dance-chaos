@@ -64,6 +64,37 @@ When agent dies:
 - [ ] Dead agents disappear from world
 - [ ] Console shows death events
 
+## Testing
+
+### E2E Test Script: `test_crush_damage.e2e`
+
+```
+# Test: Crush damage at critical density
+reset_game
+wait 5
+
+# Spawn at critical density (>90% = 36+ agents)
+spawn_agents 0 0 40 stage
+wait 5
+
+screenshot crush_before_deaths
+
+# Wait for deaths (1 HP, 0.2/sec damage = 5 seconds to die)
+wait 300
+
+screenshot crush_after_deaths
+get_death_count
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_crush_damage.e2e"`
+
+### Manual Testing
+
+1. Use E2E to spawn 40+ agents in one tile
+2. Watch for ~5 seconds
+3. Verify agents start dying
+4. Check console for death count log
+
 ## Out of Scope
 - Game over screen (Phase 03)
 - Death particle effect (Phase 15)

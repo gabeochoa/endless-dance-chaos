@@ -90,6 +90,42 @@ float minimap_h = view_height * minimap_scale;
 - [ ] Click on minimap jumps camera
 - [ ] Viewport rectangle updates as camera moves
 
+## Testing
+
+### E2E Test Script: `test_minimap.e2e`
+
+```
+# Test: Minimap
+reset_game
+wait 10
+
+screenshot minimap_initial
+
+# Place some facilities
+place_facility bathroom 5 5
+place_facility food 5 -5
+wait 10
+
+screenshot minimap_with_facilities
+
+# Move camera and verify viewport moves
+key W
+key W
+key W
+wait 10
+
+screenshot minimap_camera_moved
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_minimap.e2e"`
+
+### Manual Testing
+
+1. Verify minimap shows paths and fence
+2. Verify buildings appear as colored squares
+3. Move camera, verify viewport rectangle updates
+4. Click on minimap, verify camera jumps
+
 ## Out of Scope
 - Agent density display
 - Zooming minimap

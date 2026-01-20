@@ -21,6 +21,24 @@ Each phase is a small, commit-worthy deliverable that moves us toward MVP.
 - Collision system
 - Color utilities
 - Window manager
+- **MCP server for E2E testing** (key_press, screenshot, custom commands)
+
+---
+
+## Testing Approach
+
+Every phase includes E2E testing via afterhours `e2e_testing` plugin. Run with `--test-mode --test-script="path.e2e"`.
+
+**Core Testing Commands** (implement in Phase 00):
+- `spawn_agent X Y TYPE` — Create test agent
+- `spawn_agents X Y N TYPE` — Create multiple agents
+- `clear_agents` — Remove all agents
+- `clear_map` — Reset to empty state
+- `reset_game` — Full game reset
+- `set_time HOUR MIN` — Set game clock
+- `screenshot NAME` — Capture screenshot
+
+See [Phase 00: Testing Framework](00-testing-framework.md) for details.
 
 ---
 
@@ -28,6 +46,7 @@ Each phase is a small, commit-worthy deliverable that moves us toward MVP.
 
 | Phase | Name | Deliverable | Est. Time |
 |-------|------|-------------|-----------|
+| 00 | Testing Framework | MCP game commands, test script setup | 3-4 hrs |
 | 01 | Density System | Track agents per tile, display count | 2-3 hrs |
 | 02 | Crush Damage | Damage in critical zones, death counter | 2-3 hrs |
 | 03 | Game Over | 10 deaths = game over screen | 2 hrs |

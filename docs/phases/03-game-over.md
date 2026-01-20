@@ -59,6 +59,38 @@ When `status == GameOver`:
 - [ ] SPACE restarts the game
 - [ ] New game starts fresh (0 deaths, 0 agents)
 
+## Testing
+
+### E2E Test Script: `test_game_over.e2e`
+
+```
+# Test: Game over screen
+reset_game
+wait 5
+
+# Force game over
+trigger_game_over
+wait 10
+
+screenshot game_over_screen
+
+# Press SPACE to restart
+key SPACE
+wait 10
+
+screenshot after_restart
+get_agent_count
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_game_over.e2e"`
+
+### Manual Testing
+
+1. Force game over with E2E command
+2. Verify game over screen appears
+3. Press SPACE
+4. Verify game restarts (deaths reset to 0)
+
 ## Out of Scope
 - Fancy transition (brief pause before showing screen)
 - Main menu

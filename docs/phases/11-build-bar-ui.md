@@ -74,6 +74,40 @@ Later: Create or find simple flat icons.
 - [ ] Icons are readable and distinct
 - [ ] Bar is positioned at bottom of screen
 
+## Testing
+
+### E2E Test Script: `test_build_bar.e2e`
+
+```
+# Test: Build bar UI
+reset_game
+wait 10
+
+screenshot build_bar_default
+
+# Cycle through tools
+key RBRACKET
+wait 5
+screenshot build_bar_fence
+
+key RBRACKET
+wait 5
+screenshot build_bar_gate
+
+key RBRACKET
+wait 5
+screenshot build_bar_stage
+```
+
+Run: `./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_build_bar.e2e"`
+
+### Manual Testing
+
+1. Verify all 7 tool icons visible
+2. Cycle with [ and ] keys
+3. Verify current tool highlighted with border
+4. Verify selected icon is scaled up
+
 ## Out of Scope
 - Tool tooltips
 - Tool cost display
