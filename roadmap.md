@@ -32,37 +32,78 @@ A **Mini Metro-style minimalist management game** about running a music festival
 
 ---
 
+## Technical Specs
+
+### Grid System
+- **Tile size**: 32×32 pixels (at 1x zoom, 720p)
+- **Map size**: 50×50 tiles (1600×1600 pixels) — fixed for MVP
+- **Real-world scale**: 1 tile = 2m × 2m = 4 m²
+- **Target**: 120 FPS, minimum 720p resolution
+- **Performance**: Must maintain 60 FPS at 100k agents (aggressive LOD required)
+
+### Density System
+- **Max capacity**: 40 agents per tile (based on 5× fire code density)
+- **Thresholds**:
+  - Normal: 0-20 agents (<50%)
+  - Warning: 20-30 agents (50-75%)
+  - Dangerous: 30-36 agents (75-90%)
+  - Critical: 36-40+ agents (>90% — crush damage begins)
+
+---
+
 ## Visual Style: RollerCoaster Tycoon 2 Style
 
 ### Isometric View
 - **Camera**: RCT-style isometric with 4 rotations (90° increments)
-- **Zoom**: 3 levels (close, medium, far)
-- **Rotation**: L/R triggers cycle through the 4 angles
+- **Zoom**: 3 levels
+  - Close: ~25 tiles visible (see agent detail)
+  - Medium: ~40 tiles visible (natural 720p view)
+  - Far: ~60 tiles visible (entire map + margin)
+- **Camera speed**: Scales with zoom level (~10 tiles/sec at medium)
+- **Camera bounds**: Small padding past map edge allowed
 
 ### Color Palette
-- **Day (10am-6pm)**: Miami pastel - soft pinks, teals, yellows
-- **Evening/Night (6pm-3am)**: EDC neon - electric blues, purples, magentas
-- **Transition**: Gradual palette shift as time passes
 
-### Attendee Visuals (LOD System)
-Because we're targeting 100k attendees:
+**Day (10am-6pm) — Miami Pastel:**
+| Element | Hex |
+|---------|-----|
+| Ground | #F5E6D3 (warm sand) |
+| Grass | #98D4A8 (soft mint) |
+| Path | #E8DDD4 (light concrete) |
+| Accents | #7ECFC0 (teal), #F4A4A4 (coral) |
+| Stage | #FFD93D (sunny yellow) |
+| UI | #FFF8F0 (warm off-white) |
 
+**Night (6pm-3am) — EDC Neon:**
+| Element | Hex |
+|---------|-----|
+| Ground | #1A1A2E (deep navy) |
+| Grass | #2D4A3E (dark forest) |
+| Path | #2A2A3A (dark slate) |
+| Accents | #00F5FF (cyan), #FF00AA (magenta) |
+| Stage | #FFE600 (bright yellow lights) |
+| UI | #16162A (dark purple) |
+
+**Transition**: Gradual fade over 1 hour game time
+
+### Agent Visuals
+- **Sprite size**: 8×8 pixels (tiny dots that pile up into crowds)
+- **Animation**: 2 frames (simple toggle)
+- **Directions**: None — same sprite always (MVP)
+- **Colors**: Varied per agent for crowd diversity
+- **Death effect**: Simple particle burst matching agent color
+
+### LOD System (100k agents)
 | Zoom Level | Visual |
 |------------|--------|
-| Close | Small sprites with basic animation (2-4 frames walking) |
+| Close | 8×8 sprites with 2-frame animation |
 | Medium | Simplified sprites, batch rendering |
-| Far | Abstract density blobs, heat-map style coloring |
-
-### Path & Building Style
-- **Paths**: RCT-style connected tiles, clear texture
-- **Facilities**: Isometric buildings with signage
-- **Fence**: Simple dark line barrier
+| Far | Heat map gradient overlay (green→yellow→red) |
 
 ### Danger Visualization
-- **Default**: Only critical (red) zones visible on main view
-- **Density Overlay (hotkey)**: Full heat-map showing green→yellow→red
-- **Minimap**: Always shows density hotspots
-- **Crush Event**: Pulsing red, particles, agent "pops like a balloon"
+- **Overlay**: Gradient heat map (per-tile data, smoothly interpolated)
+- **Death visual**: Agent pops → particle burst in agent's color
+- **Screen shake**: None for MVP
 
 ---
 
@@ -82,21 +123,23 @@ The clock always ticks. No hard day boundaries - just phases:
 
 ### Time Phases
 
-| Phase | Time | What Happens |
-|-------|------|--------------|
-| **Day** | 10am - 6pm | Artists perform, moderate crowds |
-| **Night** | 6pm - Midnight | Headliners, largest crowds, peak danger |
-| **Exodus** | Midnight - 3am | ALL attendees must exit. Exits become bottlenecks. Deaths still count! |
-| **Dead Hours** | 3am - 10am | Empty festival. Build/reorganize in peace. |
+| Phase | Game Time | Real Time | What Happens |
+|-------|-----------|-----------|--------------|
+| **Day** | 10am - 6pm | 3 min | Artists perform, moderate crowds |
+| **Night** | 6pm - Midnight | 3 min | Headliners, largest crowds, peak danger |
+| **Exodus** | Midnight - 3am | 3 min | ALL attendees must exit. Deaths still count! |
+| **Dead Hours** | 3am - 10am | 3 min | Empty festival. Build/reorganize in peace. |
+| **Total cycle** | 24 hours | **12 min** | |
+
+**Time display**: 24-hour format (14:34)
 
 ### Time Controls
 - **Spacebar**: Full pause - freezes time but allows building/camera movement
 - **Escape**: Pause menu
 - **Speed**: 1x only for MVP (2x/4x later)
 
-### Day Length
-- **MVP**: ~10-15 real minutes per full cycle
-- **Later**: Tunable based on playtesting
+### Exodus Rules
+- Agents who can't exit in time **stay for next day** (carryover punishment)
 
 ---
 
@@ -114,18 +157,22 @@ See Lineup → Prepare Layout → Artist Performs → Crowd Surges → Survive �
 
 **MVP: One artist at a time, one stage.**
 
-1. Artists are pre-generated for the day based on current max attendance
-2. As festival grows (more total attendees), bigger artists appear
-3. Small artists → Small crowds, Big artists → Big crowds
+1. **Artist names**: Procedurally generated (prefix + suffix tables: "DJ Nova", "The Midnight Collective")
+2. **Performance duration**: Variable by tier — small artists ~30 min, headliners ~1 hour game time
+3. As festival grows, bigger artists appear → bigger crowds → more danger
 4. Timeline shows what's coming so player can prepare
+5. **Stage effect**: Lights up / particle effect when artist starts performing
 
 ### Spawning & Flow
-- **Agents spawn at map edge** but must enter through player-placed **Gates** in the **Fence**
+- **Map starts with**: Perimeter fence + 1 gate + 1 stage pre-placed
+- **Agents spawn** on grass outside fence, enter through gates
+- **Arrival pattern**: Continuous stream, ramps up ~15 min before each performance
 - On spawn, agent has:
   - Target artist they want to see
-  - Optional secondary needs (food, bathroom, merch)
-- After seeing their artist, agents are happy to leave
-- If stress gets too high, agents leave early (unhappy)
+  - Optional secondary needs (food, bathroom)
+  - Patience timer (60-120 sec — leave unhappy if stuck too long)
+- **Stage watching**: Random duration per agent (30-120 sec), then leave or get needs
+- **Cannot reach goal**: Wander randomly, then eventually exit unhappy
 
 ---
 
@@ -133,76 +180,96 @@ See Lineup → Prepare Layout → Artist Performs → Crowd Surges → Survive �
 
 ### 1. The Crush Mechanic (Primary Danger)
 
-| Density Level | Visual | Effect |
-|--------------|--------|--------|
-| Normal (< 50%) | Green | Safe |
-| Warning (50-75%) | Yellow | Caution |
-| Dangerous (75-90%) | Orange pulse | Movement slows |
-| Critical (> 90%) | Red pulse, shake | Crush damage begins |
+| Density Level | Agents/Tile | Visual | Effect |
+|--------------|-------------|--------|--------|
+| Normal | 0-20 (<50%) | Green | Safe |
+| Warning | 20-30 (50-75%) | Yellow | Caution |
+| Dangerous | 30-36 (75-90%) | Orange | Movement slows |
+| Critical | 36-40+ (>90%) | Red gradient | Crush damage begins |
 
 **Crush Damage**:
-- Agents in critical density take continuous damage
-- Health depletes → Agent dies → Counter increments
+- Agent health: **1 HP**
+- Damage rate: **0.2/sec** (flat, no scaling)
+- Time to death: **~5 seconds** in critical zone
 - **10 deaths = Game Over**
 
-**Death Visual**: Agent "pops like a balloon" (particle burst)
+**Death Visual**: Agent pops → particle burst in agent's color (quick, punchy)
 
 ### 2. Agent Movement (Boids-Inspired)
 
-Agents move via local forces, not global pathfinding:
+**Base speed**: 0.5 tiles/sec (1 m/s real-world) — slow festival shuffle
+**Separation radius**: 0.25 tiles (8px) — tight packing allowed
 
 | Force | Description |
 |-------|-------------|
 | **Goal Pull** | Move toward current target (stage, exit, facility) |
-| **Signpost Following** | Read path signposts for direction hints |
-| **Separation** | Push away from nearby agents |
+| **Pheromone Following** | Follow trails left by other agents |
+| **Separation** | Push away when within 0.25 tiles |
 | **Path Preference** | Prefer paths over grass |
 
 **Movement Speeds**:
-- **Paths**: Full speed
-- **Grass**: Slower (if no fence blocking)
+- **Paths**: Full speed (0.5 tiles/sec)
+- **Grass**: Slower (agents can still walk, just reduced speed)
 - **Fence**: Blocks movement completely
 
-### 3. Signpost Pathfinding
+### 3. Pheromone Trail Pathfinding (BGP-style)
 
-Paths have embedded signposts (BFS-calculated) pointing toward facilities:
-- Agents check current tile's signpost
-- Signpost says "bathroom is NORTH"
-- Agent gets steering force toward that direction
-- Signposts recalculate when paths change
+Agents don't have global knowledge. Emergent pathfinding:
+
+1. Agents **leaving** a stage/facility mark tiles with direction hints
+2. More agents leaving = stronger pheromone trail
+3. New agents follow strongest trails toward destinations
+4. Trails decay over time if not reinforced
+5. Recalculated async over several frames (avoid frame drops)
+
+**Creates emergent behavior**:
+- Popular routes get reinforced naturally
+- Bottlenecks form organically
+- Early-game pathfinding is messy, improves as crowd grows
+
+**No coverage fallback**: Agents beeline directly toward goal (may get stuck)
+
+**"Festival Pathing" overlay** (debug/player tool):
+- Toggle to show arrows on each tile
+- Filter by facility type: Stage, Bathroom, Food, Exit
+- Helps player understand crowd flow
 
 ### 4. Facilities
 
-| Facility | Effect | Strategy Use |
-|----------|--------|--------------|
-| **Stage** | Attracts agents for performances | Primary destination |
-| **Bathroom** | Slow service, absorbs agents | Delay crowds |
-| **Food** | Medium service, absorbs agents | Spread crowd |
-| **Gate** | Entry/exit point in fence | Control flow in/out |
-| **Fence** | Blocks all movement | Define festival boundary |
+| Facility | Size | Real-world | Effect |
+|----------|------|------------|--------|
+| **Stage** | 4×4 tiles | 8m × 8m | Attracts agents, lights up during performance |
+| **Bathroom** | 2×2 tiles | 4m × 4m | 1 sec service, absorbs agents |
+| **Food** | 2×2 tiles | 4m × 4m | 1 sec service, absorbs agents |
+| **Gate** | 2×1 tiles | 4m × 2m | Entry/exit point in fence |
+| **Fence** | 1×1 tile | 2m segment | Blocks all movement |
+| **Path** | 1 tile wide | 2m | Fast movement, can merge into plazas |
 
-**Absorption Mechanic**:
-- Agent enters facility queue (removed from world)
-- After service time, agent exits
-- Queue capacity limits how many can wait
+**Stage "watching" zone**: Agents within ~8-10 tiles count as watching (stop moving)
 
-**Queue Management** (Later):
-- Queue lanes as facility upgrade, or
-- Player-drawn queue barriers, or
-- Hybrid queue-path type
+**Queue capacity**: Same as tile density (40 agents) — agents crowd around facility
+
+**Agent behavior at full queue**:
+- Urgent need (bathroom): Try another facility of same type
+- Non-urgent: Give up and wander
+
+**Queue Management** (Post-MVP):
+- Queue lane upgrade: faster service but lower capacity
 
 ### 5. Festival Progression
 
 Festival grows based on **max attendees ever in park**:
 
-| Milestone | Unlock |
-|-----------|--------|
-| 100 attendees | +1 facility slot |
-| 250 attendees | +1 facility slot |
-| 500 attendees | +1 stage slot (later) |
-| etc. | etc. |
+**Simple formula: +1 of each facility type per 100 attendees**
 
-More slots = bigger festivals = bigger artists = more danger.
+| Attendees | Stages | Bathrooms | Food | Gates |
+|-----------|--------|-----------|------|-------|
+| Start | 1 | 1 | 1 | 1 |
+| 100 | 2 | 2 | 2 | 2 |
+| 200 | 3 | 3 | 3 | 3 |
+| etc. | +1 | +1 | +1 | +1 |
+
+More capacity = bigger festivals = bigger artists = more danger.
 
 ---
 
@@ -219,13 +286,16 @@ More slots = bigger festivals = bigger artists = more danger.
 
 ### Building Rules
 - **Paths and Fences**: Free, unlimited
-- **Facilities**: Limited by unlocked slots
-- **Timing**: Build any time (paused or live)
+- **Facilities**: Limited by progression slots (+1 per 100 attendees)
+- **Timing**: Build any time (paused or live) — react in real-time
 - **Cost**: None for MVP
-- **Movement**: Can relocate stages and facilities freely
+- **Placement**: Blocked on occupied tiles (red highlight, must demolish first)
+- **Movement**: Facilities can be picked up and moved freely
+- **Path drawing**: Click start corner → move cursor → click end → fills rectangle
 
 ### Demolition
 - Instant removal
+- Cannot delete last gate (prevents soft-lock)
 - No undo (can just rebuild - it's free)
 
 ---
@@ -256,14 +326,22 @@ More slots = bigger festivals = bigger artists = more danger.
 ```
 
 ### Top Bar
-- Current time and day
-- Death counter (prominent: "Deaths: 3/10")
+- Current time (24-hour format: 14:34)
+- Death counter (Deaths: 3/10)
 - Attendees currently in park
-- Resources (if any)
 
-### Right Sidebar (Collapsible)
-- **Timeline**: Scrolling list of upcoming artists with crowd sizes
-- **Minimap**: Shows density overlay at all times
+### Right Sidebar (150px width)
+- **Timeline**: Google Calendar day view style
+  - "NOW" marker fixed at ~20% from top
+  - Timeline scrolls upward as time passes
+  - Events are blocks sized by duration (taller = longer set)
+  - Per artist: name, duration, expected crowd size (number)
+  - Civ-style scroll: auto-follows current, manual peek ahead
+- **Minimap** (150×150px, bottom of sidebar)
+  - Shows map layout only (paths, buildings, fence, gates)
+  - NO agent density (use TAB overlay for that)
+  - Shows camera viewport rectangle
+  - Click to jump camera
 
 ### Build Bar (Bottom)
 - Tool icons
@@ -328,9 +406,17 @@ Triggered at 10 deaths.
 | 7 | Game Over screen + stats | Pending |
 | 8 | Post-game stats display | Pending |
 
+### Starting State
+Game begins with:
+- Pre-built **perimeter fence** around 50×50 play area
+- **One gate** (can't delete last gate)
+- **One stage** pre-placed
+- Player builds paths and additional facilities from there
+- **No tutorial** — learn by doing
+
 ### OUT OF MVP SCOPE
-- Sound effects / Music
-- Tutorial
+- Sound effects / Music (post-MVP: festival atmosphere, tension audio)
+- Tutorial (post-MVP: optional tutorial level)
 - Save / Load
 - Speed controls (2x, 4x)
 - Multiple stages
@@ -339,74 +425,84 @@ Triggered at 10 deaths.
 - Staff/security units
 - Heatmap replay
 - Complex management menus
+- Screen shake / juice effects (except stage lights up)
 
 ---
 
 ## Implementation Checklist
 
 ### Phase 1: Core Crush Mechanic
-- [ ] Track agent density per tile
-- [ ] Define density thresholds (warning, dangerous, critical)
-- [ ] Add CrushHealth component to agents
-- [ ] CrushDamageSystem: damage agents in critical zones
-- [ ] Death counter in GameState
-- [ ] Game over at 10 deaths
-- [ ] Danger zone visuals (red overlay on critical tiles)
-- [ ] Death visual: agent pops like balloon
-- [ ] Density overlay toggle (hotkey)
-- [ ] Minimap shows density at all times
+- [ ] Track agent density per tile (max 40 agents = 100%)
+- [ ] Density thresholds: 50%/75%/90% for warning/dangerous/critical
+- [ ] Agent health: 1 HP, 0.2/sec damage in critical zone (~5 sec to death)
+- [ ] Death counter in GameState (10 = game over)
+- [ ] Danger zone visuals: smooth gradient heat map overlay (per-tile, interpolated)
+- [ ] Death visual: particle burst in agent's color
+- [ ] TAB toggle for density overlay
 
 ### Phase 2: Time & Schedule System
-- [ ] Game clock (time of day, not just elapsed)
-- [ ] Define time phases (Day, Night, Exodus, Dead Hours)
-- [ ] Artist data structure (name, crowd_size, start_time, duration)
-- [ ] Pre-generate daily lineup based on festival size
-- [ ] Spawn rate scales with current artist popularity
-- [ ] Exodus phase: all agents pathfind to exits
-- [ ] Dead hours: no spawns, rebuild time
+- [ ] Game clock in 24-hour format (14:34)
+- [ ] 4 phases: Day/Night/Exodus/Dead Hours (3 min each, 12 min total)
+- [ ] Artist data: procedural name generation, crowd_size, duration (30-60 min by tier)
+- [ ] Spawn rate ramps up ~15 min before each performance
+- [ ] Exodus: agents who can't exit stay for next day
+- [ ] Stage lights up when artist starts performing
 
 ### Phase 3: Entry/Exit Control
-- [ ] Fence building tool (blocks movement)
-- [ ] Gate building tool (place in fence)
-- [ ] Agents spawn at map edge, must enter through gates
-- [ ] Gate capacity affects entry speed (bottleneck)
-- [ ] Exit flow during exodus phase
+- [ ] Pre-built perimeter fence at game start
+- [ ] Pre-built gate (can't delete last gate)
+- [ ] Fence tool: 1×1 tile, blocks movement
+- [ ] Gate tool: 2×1 tile opening
+- [ ] Agents spawn on grass outside fence, enter through gates
 
-### Phase 4: Timeline UI
-- [ ] Right sidebar with collapsible panel
-- [ ] Current time + day display (top bar)
-- [ ] Scrolling artist list with crowd sizes
-- [ ] "NOW PLAYING" indicator
-- [ ] Visual scaling (bigger crowd = taller entry)
-- [ ] Exodus and Dead Hours in timeline
+### Phase 4: Timeline UI (Google Calendar style)
+- [ ] 150px sidebar width (matches minimap)
+- [ ] Vertical timeline with "NOW" at 20% from top
+- [ ] Events as blocks sized by duration
+- [ ] Per artist: name, duration, crowd size number
+- [ ] Civ-style scroll: auto-follow + manual peek
 
-### Phase 5: Movement Polish
-- [ ] Movement speed difference: paths fast, grass slow
-- [ ] If no fence, agents can walk on grass
-- [ ] Physical slowdown in high-density areas
-- [ ] Separation force tuning
+### Phase 5: Movement & Pathfinding
+- [ ] Agent speed: 0.5 tiles/sec on paths, slower on grass
+- [ ] Separation radius: 0.25 tiles
+- [ ] Pheromone trail system (agents leaving mark tiles with direction)
+- [ ] Trail decay over time
+- [ ] Async recalculation over several frames
+- [ ] "Festival Pathing" overlay with facility filter
 
-### Phase 6: Game Over & Stats
-- [ ] Game over screen design
+### Phase 6: Minimap & Polish
+- [ ] 150×150px minimap at bottom of sidebar
+- [ ] Shows: paths, buildings, fence, gates, camera viewport
+- [ ] NO density on minimap (use TAB overlay)
+- [ ] Click minimap to jump camera
+
+### Phase 7: Game Over & Stats
+- [ ] Game over at 10 deaths
 - [ ] Stats: days survived, max attendees, total served
-- [ ] Death locations summary
 - [ ] "Try Again" button
 
 ---
 
 ## Tuning Parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `warning_density` | 50% | When yellow warning appears |
-| `dangerous_density` | 75% | When movement slows |
-| `critical_density` | 90% | When crush damage begins |
-| `crush_damage_rate` | 0.2/sec | How fast agents die in crush |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `TILE_SIZE` | 32px | Pixels per tile |
+| `MAP_SIZE` | 50×50 | Tiles |
+| `MAX_AGENTS_PER_TILE` | 40 | 100% density |
+| `warning_density` | 50% (20 agents) | Yellow warning |
+| `dangerous_density` | 75% (30 agents) | Movement slows |
+| `critical_density` | 90% (36 agents) | Crush damage begins |
+| `AGENT_HP` | 1 | Dies in ~5 sec |
+| `crush_damage_rate` | 0.2/sec | Flat damage in critical zone |
 | `MAX_DEATHS` | 10 | Game over threshold |
-| `path_speed` | 1.0 | Full movement speed |
-| `grass_speed` | 0.5 | Slower off-path movement |
-| `gate_throughput` | 10/sec | How fast agents enter through gate |
-| `day_length_minutes` | 15 | Real-time minutes per game day |
+| `agent_speed` | 0.5 tiles/sec | Base walking speed (1 m/s) |
+| `separation_radius` | 0.25 tiles | How close before push apart |
+| `service_time` | 1 sec | Bathroom/Food service (MVP) |
+| `phase_length` | 3 min | Real-time per phase |
+| `day_cycle` | 12 min | Full 24-hour cycle |
+| `patience_timer` | 60-120 sec | Before agent leaves unhappy |
+| `watch_duration` | 30-120 sec | Random time at stage |
 
 ---
 
@@ -447,4 +543,6 @@ Only add after core loop is fun:
 
 ---
 
-*Last updated: Based on 65-question design spec from questions.md*
+*Last updated: Integrated all 75 answered questions from questions.md — full MVP spec complete.*
+
+**See also**: `questions.md` for detailed rationale behind each decision.
