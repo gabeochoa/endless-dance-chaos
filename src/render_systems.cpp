@@ -5,6 +5,7 @@
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "entity_makers.h"
 #include "game.h"
 #include "systems.h"
 
@@ -66,6 +67,28 @@ struct RenderGridSystem : System<> {
                                   {tile_size, tile_size}, color);
             }
         }
+    }
+};
+
+// Render agents as small person-shaped primitives in 3D space
+struct RenderAgentsSystem : System<Agent, Transform> {
+    static constexpr raylib::Color AGENT_COLOR = {212, 165, 116,
+                                                  255};  // warm tan
+
+    void for_each_with(Entity&, Agent&, Transform& tf, float) override {
+        // Agent position in world space (x = world x, y = world z)
+        float wx = tf.position.x;
+        float wz = tf.position.y;
+
+        // Draw a small capsule-like shape: sphere head + cube body
+        float body_h = 0.3f;
+        float head_r = 0.1f;
+
+        // Body (small cube standing on the ground)
+        raylib::DrawCube({wx, body_h * 0.5f, wz}, 0.2f, body_h, 0.2f,
+                         AGENT_COLOR);
+        // Head (sphere on top of body)
+        raylib::DrawSphere({wx, body_h + head_r, wz}, head_r, AGENT_COLOR);
     }
 };
 
@@ -197,6 +220,7 @@ struct EndRenderSystem : System<> {
 void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGridSystem>());
+    sm.register_render_system(std::make_unique<RenderAgentsSystem>());
     sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());

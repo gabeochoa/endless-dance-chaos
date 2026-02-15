@@ -1,0 +1,19 @@
+# Test agents prefer paths over grass (move faster)
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Draw a partial path heading toward the stage
+draw_path_rect 25 24 29 28
+wait_frames 2
+
+# Spawn 3 agents on the path
+spawn_agents 25 25 3 stage
+wait_frames 2
+
+# Wait a bit - agents on path should move faster
+wait 8
+screenshot 03_agents_on_path
+
+# Verify agents exist
+assert_agent_count >= 3

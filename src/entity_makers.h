@@ -11,8 +11,9 @@
 // Sophie - central entity holding all singletons
 afterhours::Entity& make_sophie();
 
-// Agents (minimal - spawned at grid position)
-afterhours::Entity& make_agent(int grid_x, int grid_z, FacilityType want);
+// Agents - spawned at grid position with optional target
+afterhours::Entity& make_agent(int grid_x, int grid_z, FacilityType want,
+                               int target_x = -1, int target_z = -1);
 
 // Check if escape should quit
 bool should_escape_quit();

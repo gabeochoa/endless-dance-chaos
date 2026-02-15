@@ -61,12 +61,21 @@ struct Grid : afterhours::BaseComponent {
 // Facility types (for agents to want)
 enum class FacilityType { Bathroom, Food, Stage };
 
-// Minimal agent component - will be fleshed out in later phases
+// Agent component - walks toward target using greedy neighbor pathfinding
 struct Agent : afterhours::BaseComponent {
-    FacilityType want = FacilityType::Bathroom;
+    FacilityType want = FacilityType::Stage;
+    int target_grid_x = -1;
+    int target_grid_z = -1;
+    float speed = SPEED_PATH;  // current speed, adjusted by terrain
+
+    // Need timers (Phase 04)
+    float bathroom_timer = 0.f;
+    float food_timer = 0.f;
 
     Agent() = default;
     Agent(FacilityType w) : want(w) {}
+    Agent(FacilityType w, int tx, int tz)
+        : want(w), target_grid_x(tx), target_grid_z(tz) {}
 };
 
 // Game state tracking - singleton component
@@ -86,6 +95,13 @@ enum class BuildTool { Path, Bathroom, Food, Stage };
 struct BuilderState : afterhours::BaseComponent {
     bool active = true;
     BuildTool tool = BuildTool::Path;
+};
+
+// Spawn control singleton
+struct SpawnState : afterhours::BaseComponent {
+    float interval = DEFAULT_SPAWN_INTERVAL;  // seconds between spawns
+    float timer = 0.f;
+    bool enabled = true;
 };
 
 // Path drawing state - rectangle drag on grid

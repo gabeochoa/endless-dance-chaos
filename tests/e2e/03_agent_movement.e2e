@@ -1,0 +1,19 @@
+# Test agent spawning and movement toward stage
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Draw a short path from near-stage to stage
+draw_path_rect 25 24 33 28
+wait_frames 2
+
+# Spawn 5 agents close to the stage so they arrive quickly
+spawn_agents 25 25 5 stage
+wait_frames 2
+
+# Wait for agents to walk ~7 tiles at 0.5 t/s = ~14 seconds
+wait 16
+
+# At least one agent should be near the stage
+assert_agent_near 32 27 4
+screenshot 03_agents_near_stage

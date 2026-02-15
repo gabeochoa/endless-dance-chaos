@@ -50,7 +50,7 @@ inline FacilityType parse_facility_type(const std::string& s) {
     return FacilityType::Bathroom;
 }
 
-// spawn_agent X Z TYPE
+// spawn_agent X Z TYPE [TARGET_X TARGET_Z]
 struct HandleSpawnAgentCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
                        float) override {
@@ -62,7 +62,11 @@ struct HandleSpawnAgentCommand : System<testing::PendingE2ECommand> {
         int x = cmd.arg_as<int>(0);
         int z = cmd.arg_as<int>(1);
         FacilityType type = parse_facility_type(cmd.arg(2));
-        make_agent(x, z, type);
+        int tx =
+            cmd.has_args(5) ? cmd.arg_as<int>(3) : (STAGE_X + STAGE_SIZE / 2);
+        int tz =
+            cmd.has_args(5) ? cmd.arg_as<int>(4) : (STAGE_Z + STAGE_SIZE / 2);
+        make_agent(x, z, type, tx, tz);
         EntityHelper::merge_entity_arrays();
         cmd.consume();
     }
@@ -81,8 +85,10 @@ struct HandleSpawnAgentsCommand : System<testing::PendingE2ECommand> {
         int z = cmd.arg_as<int>(1);
         int count = cmd.arg_as<int>(2);
         FacilityType type = parse_facility_type(cmd.arg(3));
+        int tx = STAGE_X + STAGE_SIZE / 2;
+        int tz = STAGE_Z + STAGE_SIZE / 2;
         for (int i = 0; i < count; i++) {
-            make_agent(x, z, type);
+            make_agent(x, z, type, tx, tz);
         }
         EntityHelper::merge_entity_arrays();
         cmd.consume();
@@ -155,6 +161,25 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             state->status = GameStatus::Running;
             state->game_time = 0.f;
             state->show_data_layer = false;
+        }
+
+        // Reset spawn state
+        auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+        if (ss) {
+            ss->interval = DEFAULT_SPAWN_INTERVAL;
+            ss->timer = 0.f;
+            ss->enabled = true;
+        }
+
+        // Re-place the stage
+        if (grid) {
+            for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
+                for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
+                    if (grid->in_bounds(x, z)) {
+                        grid->at(x, z).type = TileType::Stage;
+                    }
+                }
+            }
         }
 
         cmd.consume();
@@ -405,6 +430,92 @@ struct HandleClickGridCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// assert_agent_near X Z RADIUS - assert at least one agent within RADIUS tiles
+struct HandleAssertAgentNearCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agent_near")) return;
+        if (!cmd.has_args(3)) {
+            cmd.fail("assert_agent_near requires X Z RADIUS arguments");
+            return;
+        }
+        int gx = cmd.arg_as<int>(0);
+        int gz = cmd.arg_as<int>(1);
+        float radius = cmd.arg_as<float>(2);
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("assert_agent_near: no grid");
+            return;
+        }
+
+        ::vec2 target_world = grid->grid_to_world(gx, gz);
+        float radius_world = radius * TILESIZE;
+
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .gen();
+        for (Entity& agent : agents) {
+            auto& tf = agent.get<Transform>();
+            float dx = tf.position.x - target_world.x;
+            float dz = tf.position.y - target_world.y;
+            float dist = std::sqrt(dx * dx + dz * dz);
+            if (dist <= radius_world) {
+                cmd.consume();
+                return;
+            }
+        }
+
+        // Count for error message
+        int count = (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+        cmd.fail(
+            fmt::format("assert_agent_near ({},{}) r={}: no agent found nearby "
+                        "({} total agents)",
+                        gx, gz, radius, count));
+    }
+};
+
+// set_spawn_rate INTERVAL - set seconds between agent spawns
+struct HandleSetSpawnRateCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_spawn_rate")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("set_spawn_rate requires INTERVAL argument");
+            return;
+        }
+        float interval = cmd.arg_as<float>(0);
+        auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+        if (!ss) {
+            cmd.fail("set_spawn_rate: no SpawnState");
+            return;
+        }
+        ss->interval = interval;
+        cmd.consume();
+    }
+};
+
+// set_spawn_enabled 0|1 - enable/disable auto-spawning
+struct HandleSetSpawnEnabledCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_spawn_enabled")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("set_spawn_enabled requires 0 or 1 argument");
+            return;
+        }
+        int val = cmd.arg_as<int>(0);
+        auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+        if (!ss) {
+            cmd.fail("set_spawn_enabled: no SpawnState");
+            return;
+        }
+        ss->enabled = (val != 0);
+        cmd.consume();
+    }
+};
+
 // draw_path_rect X1 Z1 X2 Z2
 struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -463,6 +574,9 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandleDrawPathRectCommand>());
     sm.register_update_system(std::make_unique<HandleMoveToGridCommand>());
     sm.register_update_system(std::make_unique<HandleClickGridCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertAgentNearCommand>());
+    sm.register_update_system(std::make_unique<HandleSetSpawnRateCommand>());
+    sm.register_update_system(std::make_unique<HandleSetSpawnEnabledCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);
