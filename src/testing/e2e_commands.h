@@ -175,6 +175,9 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             state->show_data_layer = false;
             state->death_count = 0;
             state->speed_multiplier = 1.0f;
+            state->total_agents_served = 0;
+            state->time_survived = 0.f;
+            state->max_attendees = 0;
         }
 
         // Reset spawn state
@@ -690,6 +693,53 @@ struct HandleAssertBlockedCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// trigger_game_over - force game over state
+struct HandleTriggerGameOverCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("trigger_game_over")) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("trigger_game_over: no GameState");
+            return;
+        }
+        gs->death_count = gs->max_deaths;
+        gs->status = GameStatus::GameOver;
+        log_info("[E2E] Game over triggered");
+        cmd.consume();
+    }
+};
+
+// assert_game_status STATUS - assert running/gameover
+struct HandleAssertGameStatusCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_game_status")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("assert_game_status requires STATUS argument");
+            return;
+        }
+        std::string expected = cmd.arg(0);
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("assert_game_status: no GameState");
+            return;
+        }
+
+        bool want_gameover =
+            (expected == "gameover" || expected == "game_over");
+        bool is_gameover = gs->is_game_over();
+
+        if (want_gameover != is_gameover) {
+            cmd.fail(
+                fmt::format("assert_game_status failed: expected {}, got {}",
+                            expected, is_gameover ? "gameover" : "running"));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
 // toggle_overlay - toggle density overlay on/off
 struct HandleToggleOverlayCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -903,6 +953,9 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandlePlaceGateCommand>());
     sm.register_update_system(std::make_unique<HandleAssertGateCountCommand>());
     sm.register_update_system(std::make_unique<HandleAssertBlockedCommand>());
+    sm.register_update_system(std::make_unique<HandleTriggerGameOverCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertGameStatusCommand>());
     sm.register_update_system(std::make_unique<HandleToggleOverlayCommand>());
     sm.register_update_system(std::make_unique<HandleAssertOverlayCommand>());
     sm.register_update_system(std::make_unique<HandleSetAgentSpeedCommand>());

@@ -157,6 +157,9 @@ struct GameState : afterhours::BaseComponent {
     int death_count = 0;
     int max_deaths = MAX_DEATHS;
     float speed_multiplier = 1.0f;  // E2E testing: scale all agent speeds
+    int total_agents_served = 0;
+    float time_survived = 0.f;  // total seconds played
+    int max_attendees = 0;      // peak simultaneous agents
 
     bool is_game_over() const { return status == GameStatus::GameOver; }
 };

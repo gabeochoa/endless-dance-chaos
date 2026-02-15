@@ -4,6 +4,7 @@
 
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
+#include "afterhours/src/plugins/e2e_testing/visible_text.h"
 #include "components.h"
 #include "entity_makers.h"
 #include "game.h"
@@ -263,6 +264,15 @@ struct RenderUISystem : System<> {
         draw_text(text, x, y, size, color);
     }
 
+    // Draw text centered horizontally at given y
+    static void draw_text_centered(const std::string& text, float y, float size,
+                                   raylib::Color color) {
+        auto measure =
+            raylib::MeasureTextEx(get_font(), text.c_str(), size, 1.0f);
+        float x = (DEFAULT_SCREEN_WIDTH - measure.x) / 2.f;
+        draw_text(text, x, y, size, color);
+    }
+
     void once(float) const override {
         // Title
         draw_text_bg("Endless Dance Chaos", 10, 10, 26, raylib::WHITE);
@@ -328,6 +338,55 @@ struct RenderUISystem : System<> {
                                  raylib::Color{200, 200, 200, 255});
                 }
             }
+        }
+
+        // Game over screen
+        if (gs && gs->is_game_over()) {
+            // Dark overlay
+            raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH,
+                                  DEFAULT_SCREEN_HEIGHT,
+                                  raylib::Color{0, 0, 0, 200});
+
+            // Panel background
+            float pw = 460, ph = 260;
+            float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
+            float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
+            raylib::DrawRectangle((int) px, (int) py, (int) pw, (int) ph,
+                                  raylib::Color{20, 20, 30, 240});
+            raylib::DrawRectangleLines((int) px, (int) py, (int) pw, (int) ph,
+                                       raylib::Color{255, 80, 80, 255});
+
+            // Title
+            std::string title = "FESTIVAL SHUT DOWN";
+            draw_text_centered(title, py + 24, 32,
+                               raylib::Color{255, 80, 80, 255});
+
+            // Stats
+            int minutes = static_cast<int>(gs->time_survived) / 60;
+            int seconds = static_cast<int>(gs->time_survived) % 60;
+            std::string stats1 =
+                fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
+            std::string stats2 =
+                fmt::format("Agents Served: {}", gs->total_agents_served);
+            std::string stats3 =
+                fmt::format("Time Survived: {:02d}:{:02d}", minutes, seconds);
+            std::string stats4 =
+                fmt::format("Peak Attendees: {}", gs->max_attendees);
+
+            float sy = py + 80;
+            draw_text_centered(stats1, sy, 20, raylib::WHITE);
+            draw_text_centered(stats2, sy + 30, 20, raylib::WHITE);
+            draw_text_centered(stats3, sy + 60, 20, raylib::WHITE);
+            draw_text_centered(stats4, sy + 90, 20, raylib::WHITE);
+
+            // Restart prompt
+            draw_text_centered("Press SPACE to restart", py + ph - 50, 18,
+                               raylib::Color{180, 180, 180, 255});
+
+            // Register text for E2E expect_text assertions
+            auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+            vtr.register_text(title);
+            vtr.register_text("Press SPACE to restart");
         }
     }
 };

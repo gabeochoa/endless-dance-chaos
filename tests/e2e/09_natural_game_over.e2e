@@ -1,0 +1,12 @@
+# Test game over from actual crush deaths
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Spawn massive crush - 45 agents on one tile
+spawn_agents 25 25 45 stage
+wait 7
+
+# Should have 10+ deaths by now -> game over
+assert_game_status gameover
+screenshot 09_natural_game_over

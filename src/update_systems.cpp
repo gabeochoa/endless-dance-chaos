@@ -9,6 +9,12 @@
 #include "entity_makers.h"
 #include "systems.h"
 
+// Helper: check if game is over (skip game logic)
+static bool game_is_over() {
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    return gs && gs->is_game_over();
+}
+
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
         cam.cam.handle_input(dt);
@@ -18,6 +24,7 @@ struct CameraInputSystem : System<ProvidesCamera> {
 // Handle path drawing (rectangle drag) and demolish mode
 struct PathBuildSystem : System<> {
     void once(float) override {
+        if (game_is_over()) return;
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!pds || !grid) return;
@@ -124,6 +131,7 @@ static float density_speed_modifier(float density_ratio) {
 struct AgentMovementSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
+        if (game_is_over()) return;
         // Don't move if being serviced or watching stage
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
@@ -182,6 +190,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
 // Spawn agents at the spawn point on a timer
 struct SpawnAgentSystem : System<> {
     void once(float dt) override {
+        if (game_is_over()) return;
         auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
         if (!ss || !ss->enabled) return;
 
@@ -229,6 +238,7 @@ static bool facility_is_full(int gx, int gz, const Grid& grid) {
 struct NeedTickSystem : System<Agent, AgentNeeds> {
     void for_each_with(Entity& e, Agent&, AgentNeeds& needs,
                        float dt) override {
+        if (game_is_over()) return;
         // Don't tick timers while being serviced or watching
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
@@ -250,6 +260,7 @@ struct NeedTickSystem : System<Agent, AgentNeeds> {
 struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float) override {
+        if (game_is_over()) return;
         // Don't change goal while being serviced or watching
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
@@ -295,6 +306,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
 struct StageWatchingSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
+        if (game_is_over()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -334,6 +346,7 @@ struct StageWatchingSystem : System<Agent, Transform> {
 struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float dt) override {
+        if (game_is_over()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -343,6 +356,8 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
             bs.time_remaining -= dt;
             if (bs.time_remaining <= 0.f) {
                 // Service complete - clear need, reset timer
+                auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+                if (gs) gs->total_agents_served++;
                 auto& rng = RandomEngine::get();
                 if (bs.facility_type == FacilityType::Bathroom) {
                     needs.needs_bathroom = false;
@@ -408,6 +423,7 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
 // Update per-tile agent density each frame
 struct UpdateTileDensitySystem : System<> {
     void once(float) override {
+        if (game_is_over()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -436,6 +452,7 @@ struct UpdateTileDensitySystem : System<> {
 // Apply crush damage to agents on critically dense tiles
 struct CrushDamageSystem : System<> {
     void once(float dt) override {
+        if (game_is_over()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -584,6 +601,86 @@ struct UpdateParticlesSystem : System<Particle, Transform> {
     }
 };
 
+// Track time_survived and max_attendees; check for game over
+struct TrackStatsSystem : System<> {
+    void once(float dt) override {
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs || gs->is_game_over()) return;
+
+        gs->time_survived += dt;
+
+        int count = static_cast<int>(
+            EntityQuery().whereHasComponent<Agent>().gen_count());
+        if (count > gs->max_attendees) {
+            gs->max_attendees = count;
+        }
+    }
+};
+
+// Check if death count has reached max -> game over
+struct CheckGameOverSystem : System<> {
+    void once(float) override {
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs || gs->is_game_over()) return;
+
+        if (gs->death_count >= gs->max_deaths) {
+            gs->status = GameStatus::GameOver;
+            log_info("GAME OVER: {} deaths reached", gs->death_count);
+        }
+    }
+};
+
+// SPACE restarts the game when in game over state
+struct RestartGameSystem : System<> {
+    void once(float) override {
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs || !gs->is_game_over()) return;
+
+        if (action_pressed(InputAction::Restart)) {
+            log_info("Restarting game...");
+
+            // Clear all agents
+            auto agents = EntityQuery().whereHasComponent<Agent>().gen();
+            for (Entity& agent : agents) {
+                agent.cleanup = true;
+            }
+            // Clear all particles
+            auto particles = EntityQuery().whereHasComponent<Particle>().gen();
+            for (Entity& p : particles) {
+                p.cleanup = true;
+            }
+            EntityHelper::cleanup();
+
+            // Reset grid
+            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+            if (grid) {
+                for (auto& tile : grid->tiles) {
+                    tile.type = TileType::Grass;
+                    tile.agent_count = 0;
+                }
+                grid->init_perimeter();
+            }
+
+            // Reset game state
+            gs->status = GameStatus::Running;
+            gs->game_time = 0.f;
+            gs->death_count = 0;
+            gs->total_agents_served = 0;
+            gs->time_survived = 0.f;
+            gs->max_attendees = 0;
+            gs->show_data_layer = false;
+
+            // Reset spawn state
+            auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+            if (ss) {
+                ss->interval = DEFAULT_SPAWN_INTERVAL;
+                ss->timer = 0.f;
+                ss->enabled = true;
+            }
+        }
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
@@ -597,5 +694,8 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
     sm.register_update_system(std::make_unique<CrushDamageSystem>());
     sm.register_update_system(std::make_unique<AgentDeathSystem>());
+    sm.register_update_system(std::make_unique<TrackStatsSystem>());
+    sm.register_update_system(std::make_unique<CheckGameOverSystem>());
+    sm.register_update_system(std::make_unique<RestartGameSystem>());
     sm.register_update_system(std::make_unique<UpdateParticlesSystem>());
 }

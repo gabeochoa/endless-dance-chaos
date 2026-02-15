@@ -1,0 +1,20 @@
+# Test game over screen and restart
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Force game over
+trigger_game_over
+wait_frames 5
+
+assert_game_status gameover
+expect_text "FESTIVAL SHUT DOWN"
+screenshot 09_game_over_screen
+
+# Restart with SPACE
+key SPACE
+wait_frames 5
+
+assert_game_status running
+assert_death_count eq 0
+screenshot 09_after_restart
