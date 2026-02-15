@@ -1,0 +1,26 @@
+# Test full Demo 1 loop: paths + agents + facilities
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Build paths connecting everything
+draw_path_rect 0 24 33 28
+draw_path_rect 19 19 21 31
+wait_frames 2
+
+# Spawn agents at spawn point heading to stage
+spawn_agents 0 25 20 stage
+wait 10
+
+# Verify agents still alive
+assert_agent_count >= 18
+
+# Force some to need bathroom
+force_need bathroom
+wait 8
+
+# Some should be heading toward bathroom now
+screenshot 05_full_loop
+
+# Verify density tracking works
+get_density 30 25

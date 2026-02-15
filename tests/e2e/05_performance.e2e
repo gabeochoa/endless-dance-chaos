@@ -1,0 +1,16 @@
+# Stress test: 500 agents on a grid with paths
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Build a wide path corridor
+draw_path_rect 0 20 49 30
+wait_frames 2
+
+# Spawn 500 agents
+spawn_agents 0 25 500 stage
+wait 5
+
+# All should exist
+assert_agent_count >= 490
+screenshot 05_500_agents

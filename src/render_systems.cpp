@@ -12,6 +12,23 @@
 // Render texture from main.cpp for MCP screenshots
 extern raylib::RenderTexture2D g_render_texture;
 
+// Global font - loaded once
+static raylib::Font g_font = {0};
+static bool g_font_loaded = false;
+
+static raylib::Font& get_font() {
+    if (!g_font_loaded) {
+        // Load at high resolution for crisp downscaling
+        g_font = raylib::LoadFontEx(
+            "resources/fonts/Fredoka-VariableFont_wdth,wght.ttf", 128, nullptr,
+            0);
+        raylib::SetTextureFilter(g_font.texture,
+                                 raylib::TEXTURE_FILTER_TRILINEAR);
+        g_font_loaded = true;
+    }
+    return g_font;
+}
+
 struct BeginRenderSystem : System<> {
     void once(float) const override {
         // Render to texture for MCP screenshot support
@@ -83,15 +100,8 @@ struct RenderAgentsSystem : System<Agent, Transform> {
         float wx = tf.position.x;
         float wz = tf.position.y;
 
-        // Draw a small capsule-like shape: sphere head + cube body
-        float body_h = 0.3f;
-        float head_r = 0.1f;
-
-        // Body (small cube standing on the ground)
-        raylib::DrawCube({wx, body_h * 0.5f, wz}, 0.2f, body_h, 0.2f,
-                         AGENT_COLOR);
-        // Head (sphere on top of body)
-        raylib::DrawSphere({wx, body_h + head_r, wz}, head_r, AGENT_COLOR);
+        // Simple tall cube as person shape (fast, no mesh generation)
+        raylib::DrawCube({wx, 0.2f, wz}, 0.18f, 0.4f, 0.18f, AGENT_COLOR);
     }
 };
 
@@ -172,33 +182,67 @@ struct HoverTrackingSystem : System<> {
 };
 
 struct RenderUISystem : System<> {
+    static void draw_text(const std::string& text, float x, float y, float size,
+                          raylib::Color color) {
+        raylib::DrawTextEx(get_font(), text.c_str(), {x, y}, size, 1.0f, color);
+    }
+
+    static void draw_text_bg(const std::string& text, float x, float y,
+                             float size, raylib::Color color) {
+        auto measure =
+            raylib::MeasureTextEx(get_font(), text.c_str(), size, 1.0f);
+        raylib::DrawRectangle((int) x - 6, (int) y - 3, (int) measure.x + 12,
+                              (int) measure.y + 6, raylib::Color{0, 0, 0, 240});
+        draw_text(text, x, y, size, color);
+    }
+
     void once(float) const override {
         // Title
-        raylib::DrawText("Endless Dance Chaos", 10, 10, 20, raylib::WHITE);
-        raylib::DrawFPS(DEFAULT_SCREEN_WIDTH - 100, 10);
+        draw_text_bg("Endless Dance Chaos", 10, 10, 26, raylib::WHITE);
+
+        // Agent count
+        int agent_count =
+            (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+        std::string count_text = fmt::format("Agents: {}", agent_count);
+        draw_text_bg(count_text, 10, 100, 22,
+                     raylib::Color{200, 220, 255, 255});
+
+        // FPS (top-right)
+        int fps = raylib::GetFPS();
+        std::string fps_text = fmt::format("FPS: {}", fps);
+        auto fps_measure =
+            raylib::MeasureTextEx(get_font(), fps_text.c_str(), 24, 1.0f);
+        draw_text_bg(fps_text, DEFAULT_SCREEN_WIDTH - fps_measure.x - 14, 10,
+                     24,
+                     fps >= 55 ? raylib::Color{100, 255, 100, 255}
+                               : raylib::Color{255, 80, 80, 255});
 
         // Build mode indicator
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         if (pds) {
             if (pds->demolish_mode) {
-                raylib::DrawText("DEMOLISH MODE [X]", 10, 40, 18,
-                                 raylib::Color{255, 80, 80, 255});
+                draw_text_bg("DEMOLISH MODE [X]", 10, 42, 22,
+                             raylib::Color{255, 80, 80, 255});
             } else if (pds->is_drawing) {
-                raylib::DrawText(
-                    "Drawing path... (click to confirm, "
-                    "right-click to cancel)",
-                    10, 40, 16, raylib::Color{180, 255, 180, 255});
+                draw_text_bg(
+                    "Drawing path... (click to confirm, right-click to cancel)",
+                    10, 42, 20, raylib::Color{180, 255, 180, 255});
             } else {
-                raylib::DrawText("Build Path [click to start] | [X] Demolish",
-                                 10, 40, 16, raylib::Color{200, 200, 200, 200});
+                draw_text_bg("Build Path [click] | [X] Demolish", 10, 42, 20,
+                             raylib::Color{220, 220, 220, 255});
             }
 
-            // Grid position readout
+            // Grid position + tile info readout
             if (pds->hover_valid) {
-                std::string hover_text =
-                    fmt::format("Grid: ({}, {})", pds->hover_x, pds->hover_z);
-                raylib::DrawText(hover_text.c_str(), 10, 60, 14,
-                                 raylib::Color{180, 180, 180, 200});
+                auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+                if (grid && grid->in_bounds(pds->hover_x, pds->hover_z)) {
+                    const auto& tile = grid->at(pds->hover_x, pds->hover_z);
+                    std::string hover_text =
+                        fmt::format("Grid: ({}, {})  Agents: {}", pds->hover_x,
+                                    pds->hover_z, tile.agent_count);
+                    draw_text_bg(hover_text, 10, 70, 20,
+                                 raylib::Color{200, 200, 200, 255});
+                }
             }
         }
     }

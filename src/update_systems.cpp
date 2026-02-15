@@ -382,6 +382,34 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
     }
 };
 
+// Update per-tile agent density each frame
+struct UpdateTileDensitySystem : System<> {
+    void once(float) override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        // Clear all counts
+        for (auto& tile : grid->tiles) {
+            tile.agent_count = 0;
+        }
+
+        // Count agents per tile (skip agents being serviced -- they're
+        // "inside")
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .gen();
+        for (Entity& agent : agents) {
+            if (!agent.is_missing<BeingServiced>()) continue;
+            auto& tf = agent.get<Transform>();
+            auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            if (grid->in_bounds(gx, gz)) {
+                grid->at(gx, gz).agent_count++;
+            }
+        }
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
@@ -391,4 +419,5 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<StageWatchingSystem>());
     sm.register_update_system(std::make_unique<FacilityServiceSystem>());
     sm.register_update_system(std::make_unique<SpawnAgentSystem>());
+    sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
 }
