@@ -1,0 +1,13 @@
+# Test death particle effect at critical density
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Enable overlay to see density
+toggle_overlay
+
+# Spawn critical density for deaths
+spawn_agents 25 25 45 stage
+wait 6
+
+screenshot 08_death_particles

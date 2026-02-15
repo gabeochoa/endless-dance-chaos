@@ -150,6 +150,73 @@ struct RenderBuildPreviewSystem : System<> {
     }
 };
 
+// Density heat map overlay (3D planes above tiles)
+struct RenderDensityOverlaySystem : System<> {
+    static raylib::Color get_density_color(float density_ratio) {
+        if (density_ratio < 0.50f) {
+            // Transparent -> Yellow (0% - 50%)
+            float t = density_ratio / 0.50f;
+            return raylib::Color{255, 255, 0,
+                                 static_cast<unsigned char>(t * 180)};
+        } else if (density_ratio < 0.75f) {
+            // Yellow -> Orange (50% - 75%)
+            float t = (density_ratio - 0.50f) / 0.25f;
+            return raylib::Color{255, static_cast<unsigned char>(255 - t * 90),
+                                 0, 180};
+        } else if (density_ratio < 0.90f) {
+            // Orange -> Red (75% - 90%)
+            float t = (density_ratio - 0.75f) / 0.15f;
+            return raylib::Color{255, static_cast<unsigned char>(165 - t * 165),
+                                 0, 200};
+        } else {
+            // Red -> Black (90% - 100%)
+            float t = std::min((density_ratio - 0.90f) / 0.10f, 1.0f);
+            return raylib::Color{static_cast<unsigned char>(255 - t * 255), 0,
+                                 0, 220};
+        }
+    }
+
+    void once(float) const override {
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs || !gs->show_data_layer) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        float tile_size = TILESIZE * 0.98f;
+        float overlay_y = 0.05f;  // Above tiles and build preview
+
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count <= 0) continue;
+
+                float density =
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
+                raylib::Color color = get_density_color(density);
+
+                raylib::DrawPlane({x * TILESIZE, overlay_y, z * TILESIZE},
+                                  {tile_size, tile_size}, color);
+            }
+        }
+    }
+};
+
+// Render death particles as small 3D cubes
+struct RenderParticlesSystem : System<Particle, Transform> {
+    void for_each_with(Entity&, Particle& p, Transform& tf, float) override {
+        float wx = tf.position.x;
+        float wz = tf.position.y;
+        float s = p.size * 0.02f;  // Scale down for 3D world
+
+        // Fade height: particles rise slightly as they fade
+        float life_t = 1.0f - (p.lifetime / p.max_lifetime);
+        float y = 0.1f + life_t * 0.5f;
+
+        raylib::DrawCube({wx, y, wz}, s, s, s, p.color);
+    }
+};
+
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -218,6 +285,12 @@ struct RenderUISystem : System<> {
                              : raylib::Color{255, 180, 80, 255});
         }
 
+        // Overlay indicator
+        if (gs && gs->show_data_layer) {
+            draw_text_bg("[TAB] Density Overlay ON", 10, 156, 20,
+                         raylib::Color{255, 255, 100, 255});
+        }
+
         // FPS (top-right)
         int fps = raylib::GetFPS();
         std::string fps_text = fmt::format("FPS: {}", fps);
@@ -279,6 +352,8 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGridSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
+    sm.register_render_system(std::make_unique<RenderDensityOverlaySystem>());
+    sm.register_render_system(std::make_unique<RenderParticlesSystem>());
     sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());

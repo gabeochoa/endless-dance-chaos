@@ -130,6 +130,15 @@ struct AgentHealth : afterhours::BaseComponent {
     float hp = 1.0f;
 };
 
+// Visual particle for death bursts
+struct Particle : afterhours::BaseComponent {
+    vec2 velocity;
+    float lifetime = 0.f;
+    float max_lifetime = 0.f;
+    float size = 3.f;
+    raylib::Color color = {255, 80, 80, 255};
+};
+
 // Attached while agent is being serviced inside a facility
 struct BeingServiced : afterhours::BaseComponent {
     int facility_grid_x = 0;

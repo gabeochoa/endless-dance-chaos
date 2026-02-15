@@ -468,35 +468,126 @@ struct CrushDamageSystem : System<> {
     }
 };
 
-// Remove dead agents and track death count
-struct AgentDeathSystem : System<Agent, AgentHealth, Transform> {
-    void for_each_with(Entity& e, Agent&, AgentHealth& health, Transform& tf,
-                       float) override {
-        if (health.hp > 0.f) return;
+// Helper: spawn death particles at a world position
+static void spawn_death_particles(float wx, float wz, int count, float radius) {
+    auto& rng = RandomEngine::get();
+    for (int i = 0; i < count; i++) {
+        Entity& pe = EntityHelper::createEntity();
+        pe.addComponent<Transform>(::vec2{wx, wz});
+        pe.addComponent<Particle>();
+        auto& p = pe.get<Particle>();
 
+        // Random velocity in a burst pattern
+        float angle = rng.get_float(0.f, 6.283f);
+        float speed = rng.get_float(radius * 0.5f, radius);
+        p.velocity = {std::cos(angle) * speed, std::sin(angle) * speed};
+        p.lifetime = rng.get_float(0.3f, 0.5f);
+        p.max_lifetime = p.lifetime;
+        p.size = rng.get_float(2.f, 4.f);
+
+        // Red/white color mix
+        if (rng.get_float(0.f, 1.f) > 0.5f) {
+            p.color = {255, 80, 60, 255};
+        } else {
+            p.color = {255, 220, 200, 255};
+        }
+    }
+}
+
+// Remove dead agents, track death count, spawn death particles
+struct AgentDeathSystem : System<> {
+    void once(float) override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
 
-        int gx = -1, gz = -1;
-        if (grid) {
-            auto [px, pz] = grid->world_to_grid(tf.position.x, tf.position.y);
-            gx = px;
-            gz = pz;
+        // Collect deaths per tile for mass merge
+        struct DeathInfo {
+            float wx = 0, wz = 0;
+            int count = 0;
+        };
+        std::unordered_map<int, DeathInfo> deaths_per_tile;
+
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<AgentHealth>()
+                          .whereHasComponent<Transform>()
+                          .gen();
+        for (Entity& e : agents) {
+            auto& health = e.get<AgentHealth>();
+            if (health.hp > 0.f) continue;
+
+            auto& tf = e.get<Transform>();
+            int gx = -1, gz = -1;
+            if (grid) {
+                auto [px, pz] =
+                    grid->world_to_grid(tf.position.x, tf.position.y);
+                gx = px;
+                gz = pz;
+            }
+
+            if (gs) {
+                gs->death_count++;
+                log_info("Agent died at ({}, {}), deaths: {}/{}", gx, gz,
+                         gs->death_count, gs->max_deaths);
+            }
+
+            // Track for particle merge
+            int tile_key = gz * MAP_SIZE + gx;
+            auto& info = deaths_per_tile[tile_key];
+            info.wx = tf.position.x;
+            info.wz = tf.position.y;
+            info.count++;
+
+            e.cleanup = true;
         }
 
-        if (gs) {
-            gs->death_count++;
-            log_info("Agent died at ({}, {}), deaths: {}/{}", gx, gz,
-                     gs->death_count, gs->max_deaths);
+        // Spawn particles per tile (merged for mass deaths)
+        for (auto& [key, info] : deaths_per_tile) {
+            if (info.count >= 5) {
+                // Mass death: bigger burst
+                spawn_death_particles(info.wx, info.wz, 12, 1.5f);
+            } else {
+                // Normal: small burst per death
+                spawn_death_particles(info.wx, info.wz, 6 * info.count, 0.8f);
+            }
         }
+    }
+};
 
-        e.cleanup = true;
+// Toggle data layer overlay with TAB
+struct ToggleDataLayerSystem : System<> {
+    void once(float) override {
+        if (action_pressed(InputAction::ToggleDataLayer)) {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            if (gs) {
+                gs->show_data_layer = !gs->show_data_layer;
+                log_info("Data layer: {}", gs->show_data_layer ? "ON" : "OFF");
+            }
+        }
+    }
+};
+
+// Move particles and fade alpha; remove when lifetime expires
+struct UpdateParticlesSystem : System<Particle, Transform> {
+    void for_each_with(Entity& e, Particle& p, Transform& tf,
+                       float dt) override {
+        p.lifetime -= dt;
+        if (p.lifetime <= 0.f) {
+            e.cleanup = true;
+            return;
+        }
+        tf.position.x += p.velocity.x * dt;
+        tf.position.y += p.velocity.y * dt;
+        // Fade alpha linearly
+        float t = p.lifetime / p.max_lifetime;
+        p.color.a = static_cast<unsigned char>(t * 255.f);
     }
 };
 
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
+    sm.register_update_system(std::make_unique<ToggleDataLayerSystem>());
     sm.register_update_system(std::make_unique<NeedTickSystem>());
     sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
@@ -506,4 +597,5 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
     sm.register_update_system(std::make_unique<CrushDamageSystem>());
     sm.register_update_system(std::make_unique<AgentDeathSystem>());
+    sm.register_update_system(std::make_unique<UpdateParticlesSystem>());
 }

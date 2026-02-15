@@ -690,6 +690,48 @@ struct HandleAssertBlockedCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// toggle_overlay - toggle density overlay on/off
+struct HandleToggleOverlayCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("toggle_overlay")) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("toggle_overlay: no GameState");
+            return;
+        }
+        gs->show_data_layer = !gs->show_data_layer;
+        log_info("[E2E] Overlay toggled: {}",
+                 gs->show_data_layer ? "ON" : "OFF");
+        cmd.consume();
+    }
+};
+
+// assert_overlay on|off - assert overlay state
+struct HandleAssertOverlayCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_overlay")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("assert_overlay requires on/off argument");
+            return;
+        }
+        std::string expected = cmd.arg(0);
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("assert_overlay: no GameState");
+            return;
+        }
+        bool want_on = (expected == "on" || expected == "1");
+        if (gs->show_data_layer != want_on) {
+            cmd.fail(fmt::format("assert_overlay failed: expected {}, got {}",
+                                 expected, gs->show_data_layer ? "on" : "off"));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
 // set_agent_speed MULTIPLIER - scale all agent movement speeds
 struct HandleSetAgentSpeedCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -861,6 +903,8 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandlePlaceGateCommand>());
     sm.register_update_system(std::make_unique<HandleAssertGateCountCommand>());
     sm.register_update_system(std::make_unique<HandleAssertBlockedCommand>());
+    sm.register_update_system(std::make_unique<HandleToggleOverlayCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertOverlayCommand>());
     sm.register_update_system(std::make_unique<HandleSetAgentSpeedCommand>());
     sm.register_update_system(std::make_unique<HandleGetDeathCountCommand>());
     sm.register_update_system(

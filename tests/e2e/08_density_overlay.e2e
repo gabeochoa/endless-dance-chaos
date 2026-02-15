@@ -1,0 +1,26 @@
+# Test density overlay toggle and gradient
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Overlay starts off
+assert_overlay off
+
+# Toggle overlay on
+toggle_overlay
+assert_overlay on
+screenshot 08_overlay_empty
+
+# Spawn agents at different densities across tiles
+spawn_agents 20 25 20 stage
+spawn_agents 25 25 30 stage
+spawn_agents 30 25 38 stage
+wait_frames 5
+
+screenshot 08_overlay_gradient
+
+# Toggle off
+toggle_overlay
+assert_overlay off
+wait_frames 2
+screenshot 08_overlay_off
