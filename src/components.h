@@ -56,6 +56,41 @@ struct Grid : afterhours::BaseComponent {
     ::vec2 grid_to_world(int x, int z) const {
         return {x * TILESIZE, z * TILESIZE};
     }
+
+    // Check if position is in the playable area (inside fence)
+    bool in_playable(int x, int z) const {
+        return x >= PLAY_MIN && x <= PLAY_MAX && z >= PLAY_MIN && z <= PLAY_MAX;
+    }
+
+    // Initialize perimeter fence, gate, and pre-placed facilities
+    void init_perimeter() {
+        // Perimeter fence: outer ring
+        for (int i = 0; i < MAP_SIZE; i++) {
+            at(i, 0).type = TileType::Fence;             // top row
+            at(i, MAP_SIZE - 1).type = TileType::Fence;  // bottom row
+            at(0, i).type = TileType::Fence;             // left col
+            at(MAP_SIZE - 1, i).type = TileType::Fence;  // right col
+        }
+
+        // Gate (2x1 opening in left fence)
+        at(GATE_X, GATE_Z1).type = TileType::Gate;
+        at(GATE_X, GATE_Z2).type = TileType::Gate;
+
+        // Stage (4x4)
+        for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
+            for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
+                if (in_bounds(x, z)) at(x, z).type = TileType::Stage;
+
+        // Bathroom (2x2)
+        for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++)
+            for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++)
+                if (in_bounds(x, z)) at(x, z).type = TileType::Bathroom;
+
+        // Food (2x2)
+        for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++)
+            for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++)
+                if (in_bounds(x, z)) at(x, z).type = TileType::Food;
+    }
 };
 
 // Facility types (for agents to want)

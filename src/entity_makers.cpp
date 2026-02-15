@@ -34,35 +34,9 @@ Entity& make_sophie() {
     sophie.addComponent<SpawnState>();
     EntityHelper::registerSingleton<SpawnState>(sophie);
 
-    // Place pre-built facilities on the grid
+    // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
-
-    // Stage (4x4)
-    for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
-        for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
-            if (grid_ref.in_bounds(x, z)) {
-                grid_ref.at(x, z).type = TileType::Stage;
-            }
-        }
-    }
-
-    // Bathroom (2x2)
-    for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++) {
-        for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++) {
-            if (grid_ref.in_bounds(x, z)) {
-                grid_ref.at(x, z).type = TileType::Bathroom;
-            }
-        }
-    }
-
-    // Food (2x2)
-    for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++) {
-        for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++) {
-            if (grid_ref.in_bounds(x, z)) {
-                grid_ref.at(x, z).type = TileType::Food;
-            }
-        }
-    }
+    grid_ref.init_perimeter();
 
     // Input system
     afterhours::input::add_singleton_components(sophie, get_mapping());

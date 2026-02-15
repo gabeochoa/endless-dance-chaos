@@ -1,5 +1,5 @@
-# Test: Grid exists and defaults to grass
-# Verifies the 50x50 grid initializes properly
+# Test: Grid exists with fence perimeter
+# Verifies the 52x52 grid with 50x50 playable area
 
 # Wait for game to initialize
 wait_frames 2
@@ -7,7 +7,17 @@ wait_frames 2
 # Take screenshot of default grid
 screenshot 01_grid_default
 
-# Assert corners are grass
-assert_tile_type 0 0 grass
+# Assert perimeter is fence
+assert_tile_type 0 0 fence
+assert_tile_type 51 51 fence
+assert_tile_type 0 10 fence
+assert_tile_type 51 10 fence
+
+# Assert playable area is grass
+assert_tile_type 1 1 grass
 assert_tile_type 25 25 grass
-assert_tile_type 49 49 grass
+assert_tile_type 50 50 grass
+
+# Assert gate exists
+assert_tile_type 0 26 gate
+assert_tile_type 0 27 gate

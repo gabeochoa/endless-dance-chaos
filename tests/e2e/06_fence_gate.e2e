@@ -1,0 +1,29 @@
+# Test fence perimeter and gate entry
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Verify fence exists on perimeter
+assert_tile_type 0 0 fence
+assert_tile_type 51 51 fence
+assert_blocked 0 0
+assert_blocked 51 0
+assert_blocked 0 51
+
+# Verify gate exists
+assert_tile_type 0 26 gate
+assert_tile_type 0 27 gate
+assert_gate_count >= 2
+
+screenshot 06_fence_perimeter
+
+# Build path from gate to stage
+draw_path_rect 1 24 33 28
+wait_frames 2
+
+# Spawn agents at gate - they should enter and walk to stage
+spawn_agents 0 26 5 stage
+wait 16
+
+assert_agent_near 30 25 10
+screenshot 06_agents_entered

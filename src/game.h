@@ -13,12 +13,19 @@ constexpr int DEFAULT_SCREEN_HEIGHT = 720;
 
 // Game constants
 constexpr float TILESIZE = 1.0f;
-constexpr int MAP_SIZE = 50;
+constexpr int MAP_SIZE = 52;          // 52x52 total (including fence ring)
+constexpr int PLAY_MIN = 1;           // playable area starts at (1,1)
+constexpr int PLAY_MAX = 50;          // playable area ends at (50,50)
 constexpr int TILE_RENDER_SIZE = 32;  // pixels at 1x zoom
 
-// Spawn point (left edge, center)
+// Gate position (2x1 opening in left fence)
+constexpr int GATE_X = 0;
+constexpr int GATE_Z1 = 26;
+constexpr int GATE_Z2 = 27;
+
+// Spawn point (at the gate)
 constexpr int SPAWN_X = 0;
-constexpr int SPAWN_Z = 25;
+constexpr int SPAWN_Z = 26;
 
 // Pre-placed stage position and size
 constexpr int STAGE_X = 30;

@@ -95,7 +95,7 @@ static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
         if (type == TileType::Fence) continue;
 
         int dist = std::abs(nx - goal_x) + std::abs(nz - goal_z);
-        bool is_path = (type == TileType::Path);
+        bool is_path = (type == TileType::Path || type == TileType::Gate);
 
         // Pick if closer, or same distance but on path and current best isn't
         if (dist < best_dist ||
@@ -135,7 +135,9 @@ struct AgentMovementSystem : System<Agent, Transform> {
         if (grid->in_bounds(cur_gx, cur_gz)) {
             cur_type = grid->at(cur_gx, cur_gz).type;
         }
-        agent.speed = (cur_type == TileType::Path) ? SPEED_PATH : SPEED_GRASS;
+        agent.speed = (cur_type == TileType::Path || cur_type == TileType::Gate)
+                          ? SPEED_PATH
+                          : SPEED_GRASS;
 
         // Pick next tile via greedy neighbor
         auto [next_x, next_z] = pick_next_tile(

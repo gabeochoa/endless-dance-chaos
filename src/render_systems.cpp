@@ -43,8 +43,8 @@ struct BeginRenderSystem : System<> {
 struct RenderGridSystem : System<> {
     static constexpr raylib::Color GRASS_COLOR = {152, 212, 168, 255};
     static constexpr raylib::Color PATH_COLOR = {232, 221, 212, 255};
-    static constexpr raylib::Color FENCE_COLOR = {139, 119, 101, 255};
-    static constexpr raylib::Color GATE_COLOR = {180, 160, 140, 255};
+    static constexpr raylib::Color FENCE_COLOR = {85, 85, 85, 255};   // #555555
+    static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};  // #4488AA
     static constexpr raylib::Color STAGE_COLOR = {200, 130, 200, 255};
     static constexpr raylib::Color BATHROOM_COLOR = {130, 170, 220, 255};
     static constexpr raylib::Color FOOD_COLOR = {230, 200, 100, 255};

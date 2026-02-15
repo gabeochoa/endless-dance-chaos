@@ -146,13 +146,14 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
         }
         EntityHelper::cleanup();
 
-        // Reset grid
+        // Reset grid: clear everything and re-init perimeter + facilities
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (grid) {
             for (auto& tile : grid->tiles) {
                 tile.type = TileType::Grass;
                 tile.agent_count = 0;
             }
+            grid->init_perimeter();
         }
 
         // Reset game state
@@ -169,25 +170,6 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             ss->interval = DEFAULT_SPAWN_INTERVAL;
             ss->timer = 0.f;
             ss->enabled = true;
-        }
-
-        // Re-place all facilities
-        if (grid) {
-            // Stage (4x4)
-            for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
-                for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
-                    if (grid->in_bounds(x, z))
-                        grid->at(x, z).type = TileType::Stage;
-            // Bathroom (2x2)
-            for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++)
-                for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++)
-                    if (grid->in_bounds(x, z))
-                        grid->at(x, z).type = TileType::Bathroom;
-            // Food (2x2)
-            for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++)
-                for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++)
-                    if (grid->in_bounds(x, z))
-                        grid->at(x, z).type = TileType::Food;
         }
 
         cmd.consume();
@@ -616,6 +598,85 @@ struct HandleAssertAgentWatchingCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// place_gate X Z - place a 2x1 gate (vertical) at position
+struct HandlePlaceGateCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("place_gate")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("place_gate requires X Z arguments");
+            return;
+        }
+        int x = cmd.arg_as<int>(0);
+        int z = cmd.arg_as<int>(1);
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("place_gate: no grid");
+            return;
+        }
+        if (grid->in_bounds(x, z)) grid->at(x, z).type = TileType::Gate;
+        if (grid->in_bounds(x, z + 1)) grid->at(x, z + 1).type = TileType::Gate;
+        cmd.consume();
+    }
+};
+
+// assert_gate_count OP VALUE
+struct HandleAssertGateCountCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_gate_count")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("assert_gate_count requires OP VALUE arguments");
+            return;
+        }
+        std::string op = cmd.arg(0);
+        int expected = cmd.arg_as<int>(1);
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("assert_gate_count: no grid");
+            return;
+        }
+
+        int count = 0;
+        for (const auto& tile : grid->tiles) {
+            if (tile.type == TileType::Gate) count++;
+        }
+        if (!compare_op(count, op, expected)) {
+            cmd.fail(
+                fmt::format("assert_gate_count failed: {} {} {} (actual: {})",
+                            count, op, expected, count));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
+// assert_blocked X Z - assert tile is fence (not walkable)
+struct HandleAssertBlockedCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_blocked")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("assert_blocked requires X Z arguments");
+            return;
+        }
+        int x = cmd.arg_as<int>(0);
+        int z = cmd.arg_as<int>(1);
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid || !grid->in_bounds(x, z)) {
+            cmd.fail("assert_blocked: out of bounds");
+            return;
+        }
+        if (grid->at(x, z).type != TileType::Fence) {
+            cmd.fail(fmt::format(
+                "assert_blocked ({},{}) failed: tile is not fence (type={})", x,
+                z, static_cast<int>(grid->at(x, z).type)));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
 // draw_path_rect X1 Z1 X2 Z2
 struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -677,6 +738,9 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandleAssertAgentNearCommand>());
     sm.register_update_system(std::make_unique<HandleSetSpawnRateCommand>());
     sm.register_update_system(std::make_unique<HandleSetSpawnEnabledCommand>());
+    sm.register_update_system(std::make_unique<HandlePlaceGateCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertGateCountCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertBlockedCommand>());
     sm.register_update_system(std::make_unique<HandleForceNeedCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertAgentsAtFacilityCommand>());
