@@ -69,10 +69,79 @@ struct RenderGridSystem : System<> {
     }
 };
 
+// Render path-drawing preview overlays on the grid
+struct RenderBuildPreviewSystem : System<> {
+    // Semi-transparent green for valid new path tiles
+    static constexpr raylib::Color PREVIEW_VALID = {100, 220, 130, 100};
+    // Semi-transparent gray for tiles already path
+    static constexpr raylib::Color PREVIEW_EXISTING = {180, 180, 180, 80};
+    // Hover cursor (white outline plane)
+    static constexpr raylib::Color HOVER_NORMAL = {255, 255, 255, 120};
+    // Red hover in demolish mode
+    static constexpr raylib::Color HOVER_DEMOLISH = {255, 60, 60, 140};
+
+    void once(float) const override {
+        auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!pds || !grid || !pds->hover_valid) return;
+
+        float tile_size = TILESIZE * 0.98f;
+        float preview_y = 0.03f;  // Slightly above tiles
+
+        // Draw rectangle preview while drawing
+        if (pds->is_drawing) {
+            int min_x, min_z, max_x, max_z;
+            pds->get_rect(min_x, min_z, max_x, max_z);
+
+            for (int z = min_z; z <= max_z; z++) {
+                for (int x = min_x; x <= max_x; x++) {
+                    if (!grid->in_bounds(x, z)) continue;
+                    bool already_path = grid->at(x, z).type == TileType::Path;
+                    raylib::Color color =
+                        already_path ? PREVIEW_EXISTING : PREVIEW_VALID;
+                    raylib::DrawPlane({x * TILESIZE, preview_y, z * TILESIZE},
+                                      {tile_size, tile_size}, color);
+                }
+            }
+        }
+
+        // Draw hover cursor
+        raylib::Color cursor_color =
+            pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL;
+        raylib::DrawPlane(
+            {pds->hover_x * TILESIZE, preview_y, pds->hover_z * TILESIZE},
+            {tile_size, tile_size}, cursor_color);
+    }
+};
+
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (cam) raylib::EndMode3D();
+    }
+};
+
+// Update hover grid position from mouse (runs in render phase after EndMode3D
+// because GetWorldToScreen needs internal raylib state from the 3D pass)
+struct HoverTrackingSystem : System<> {
+    void once(float) const override {
+        auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!pds || !cam || !grid) return;
+
+        // Use afterhours input API so E2E injected positions are respected
+        auto mouse = input::get_mouse_position();
+        auto result = cam->cam.screen_to_grid(mouse.x, mouse.y);
+
+        if (result.has_value()) {
+            auto [gx, gz] = result.value();
+            pds->hover_x = gx;
+            pds->hover_z = gz;
+            pds->hover_valid = grid->in_bounds(gx, gz);
+        } else {
+            pds->hover_valid = false;
+        }
     }
 };
 
@@ -81,6 +150,31 @@ struct RenderUISystem : System<> {
         // Title
         raylib::DrawText("Endless Dance Chaos", 10, 10, 20, raylib::WHITE);
         raylib::DrawFPS(DEFAULT_SCREEN_WIDTH - 100, 10);
+
+        // Build mode indicator
+        auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+        if (pds) {
+            if (pds->demolish_mode) {
+                raylib::DrawText("DEMOLISH MODE [X]", 10, 40, 18,
+                                 raylib::Color{255, 80, 80, 255});
+            } else if (pds->is_drawing) {
+                raylib::DrawText(
+                    "Drawing path... (click to confirm, "
+                    "right-click to cancel)",
+                    10, 40, 16, raylib::Color{180, 255, 180, 255});
+            } else {
+                raylib::DrawText("Build Path [click to start] | [X] Demolish",
+                                 10, 40, 16, raylib::Color{200, 200, 200, 200});
+            }
+
+            // Grid position readout
+            if (pds->hover_valid) {
+                std::string hover_text =
+                    fmt::format("Grid: ({}, {})", pds->hover_x, pds->hover_z);
+                raylib::DrawText(hover_text.c_str(), 10, 60, 14,
+                                 raylib::Color{180, 180, 180, 200});
+            }
+        }
     }
 };
 
@@ -103,7 +197,9 @@ struct EndRenderSystem : System<> {
 void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGridSystem>());
+    sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
+    sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }

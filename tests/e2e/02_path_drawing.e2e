@@ -1,0 +1,36 @@
+# Test path drawing via E2E commands
+reset_game
+wait_frames 2
+
+# Draw a path rectangle via direct command
+draw_path_rect 10 10 15 15
+wait_frames 2
+assert_tile_type 12 12 path
+assert_tile_type 10 10 path
+assert_tile_type 9 9 grass
+screenshot 02_path_drawn
+
+# Remove a tile
+set_tile 12 12 grass
+wait_frames 2
+assert_tile_type 12 12 grass
+screenshot 02_path_removed
+
+# Clear for mouse click test
+reset_game
+wait_frames 2
+
+# Test mouse clicking: draw a rectangle from (20,20) to (22,22)
+click_grid 20 20
+wait_frames 3
+click_grid 22 22
+wait_frames 3
+
+# Verify the rectangle was filled with path
+assert_tile_type 20 20 path
+assert_tile_type 21 21 path
+assert_tile_type 22 22 path
+# Outside the rectangle should still be grass
+assert_tile_type 19 19 grass
+assert_tile_type 23 23 grass
+screenshot 02_mouse_path_drawn

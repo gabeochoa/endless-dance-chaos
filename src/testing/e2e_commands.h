@@ -325,6 +325,122 @@ struct HandleAssertTileTypeCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// Helper: convert grid coordinates to screen coordinates
+inline std::optional<raylib::Vector2> grid_to_screen(int gx, int gz) {
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) return std::nullopt;
+    raylib::Vector3 world_pos = {gx * TILESIZE, 0.0f, gz * TILESIZE};
+    raylib::Vector2 screen_pos =
+        raylib::GetWorldToScreen(world_pos, cam->cam.camera);
+    return screen_pos;
+}
+
+// move_to_grid X Z - move mouse cursor to screen position of grid cell
+struct HandleMoveToGridCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("move_to_grid")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("move_to_grid requires X Z arguments");
+            return;
+        }
+        int gx = cmd.arg_as<int>(0);
+        int gz = cmd.arg_as<int>(1);
+
+        auto screen = grid_to_screen(gx, gz);
+        if (!screen) {
+            cmd.fail("move_to_grid: no camera available");
+            return;
+        }
+        afterhours::testing::test_input::set_mouse_position(screen->x,
+                                                            screen->y);
+        cmd.consume();
+    }
+};
+
+// click_grid X Z - simulate a left-click at a grid cell via input injection.
+// Converts grid coords to screen position, injects the mouse position and
+// a press event via afterhours test_input. Pre-sets hover so PathBuildSystem
+// can act on the next frame without waiting for the render-phase
+// HoverTrackingSystem.
+struct HandleClickGridCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("click_grid")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("click_grid requires X Z arguments");
+            return;
+        }
+        int gx = cmd.arg_as<int>(0);
+        int gz = cmd.arg_as<int>(1);
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid || !grid->in_bounds(gx, gz)) {
+            cmd.fail("click_grid: position out of bounds");
+            return;
+        }
+
+        auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+        if (!pds) {
+            cmd.fail("click_grid: no PathDrawState");
+            return;
+        }
+
+        // Convert grid to screen coords and inject via afterhours test_input
+        auto screen = grid_to_screen(gx, gz);
+        if (screen) {
+            testing::test_input::simulate_click(screen->x, screen->y);
+        } else {
+            // Fallback: just inject press without position
+            testing::test_input::simulate_mouse_press();
+        }
+
+        // Pre-set hover so PathBuildSystem has valid grid coords next frame
+        pds->hover_x = gx;
+        pds->hover_z = gz;
+        pds->hover_valid = true;
+
+        log_info("[E2E] click_grid ({}, {}) injected mouse press", gx, gz);
+        cmd.consume();
+    }
+};
+
+// draw_path_rect X1 Z1 X2 Z2
+struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("draw_path_rect")) return;
+        if (!cmd.has_args(4)) {
+            cmd.fail("draw_path_rect requires X1 Z1 X2 Z2 arguments");
+            return;
+        }
+        int x1 = cmd.arg_as<int>(0);
+        int z1 = cmd.arg_as<int>(1);
+        int x2 = cmd.arg_as<int>(2);
+        int z2 = cmd.arg_as<int>(3);
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("draw_path_rect: no grid found");
+            return;
+        }
+
+        int min_x = std::min(x1, x2);
+        int min_z = std::min(z1, z2);
+        int max_x = std::max(x1, x2);
+        int max_z = std::max(z1, z2);
+
+        for (int z = min_z; z <= max_z; z++) {
+            for (int x = min_x; x <= max_x; x++) {
+                if (grid->in_bounds(x, z)) {
+                    grid->at(x, z).type = TileType::Path;
+                }
+            }
+        }
+        cmd.consume();
+    }
+};
+
 // Register all custom E2E command handler systems
 void register_e2e_systems(SystemManager& sm) {
     // Register built-in handlers first
@@ -344,6 +460,9 @@ void register_e2e_systems(SystemManager& sm) {
         std::make_unique<HandleAssertAgentCountCommand>());
     sm.register_update_system(std::make_unique<HandleAssertDensityCommand>());
     sm.register_update_system(std::make_unique<HandleAssertTileTypeCommand>());
+    sm.register_update_system(std::make_unique<HandleDrawPathRectCommand>());
+    sm.register_update_system(std::make_unique<HandleMoveToGridCommand>());
+    sm.register_update_system(std::make_unique<HandleClickGridCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);

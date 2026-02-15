@@ -27,6 +27,9 @@ Entity& make_sophie() {
     sophie.addComponent<BuilderState>();
     EntityHelper::registerSingleton<BuilderState>(sophie);
 
+    sophie.addComponent<PathDrawState>();
+    EntityHelper::registerSingleton<PathDrawState>(sophie);
+
     // Input system
     afterhours::input::add_singleton_components(sophie, get_mapping());
 
@@ -49,8 +52,8 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want) {
 }
 
 bool should_escape_quit() {
-    auto* builder = EntityHelper::get_singleton_cmp<BuilderState>();
-    if (builder && builder->has_pending()) {
+    auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+    if (pds && (pds->is_drawing || pds->demolish_mode)) {
         return false;
     }
     return true;

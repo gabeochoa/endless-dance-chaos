@@ -2,6 +2,7 @@
 #include <argh.h>
 
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
+#include "afterhours/src/plugins/e2e_testing/test_input.h"
 #include "entity_makers.h"
 #include "game.h"
 #include "mcp_integration.h"
@@ -45,7 +46,17 @@ void game(const std::string& test_script) {
         log_info("[E2E] Loaded test script: {}", test_script);
     }
 
+    // Enable test_input layer when running E2E tests
+    if (g_test_mode) {
+        afterhours::testing::test_input::detail::test_mode = true;
+    }
+
     while (running && !raylib::WindowShouldClose()) {
+        // Reset per-frame test input state (manages just_pressed lifetime)
+        if (g_test_mode) {
+            afterhours::testing::test_input::reset_frame();
+        }
+
         // Check Escape BEFORE systems run (while pending tiles still exist)
         bool escape_should_quit =
             raylib::IsKeyPressed(raylib::KEY_ESCAPE) && should_escape_quit();

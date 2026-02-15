@@ -2,17 +2,17 @@
 # Verifies WASD pan, Q/E rotation, scroll zoom
 
 # Wait for game to initialize
-wait 5
+wait_frames 2
 
 # Take default camera screenshot
 screenshot 01_cam_default
 
 # Rotate camera clockwise
 key E
-wait 5
+wait_frames 2
 screenshot 01_cam_rotated
 
 # Rotate camera back
 key Q
-wait 5
+wait_frames 2
 screenshot 01_cam_back

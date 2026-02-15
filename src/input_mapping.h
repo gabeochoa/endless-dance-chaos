@@ -19,6 +19,7 @@ enum class InputAction {
     // Actions
     PlaceOrConfirm,
     Cancel,
+    ToggleDemolish,
     // Data layer
     ToggleDataLayer,
     FilterBathroom,
@@ -117,6 +118,9 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::Cancel)] = {
         raylib::KEY_ESCAPE,
+    };
+    mapping[to_int(InputAction::ToggleDemolish)] = {
+        raylib::KEY_X,
     };
 
     // Data layer

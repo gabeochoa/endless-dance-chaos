@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "game.h"
 #include "input_mapping.h"
 #include "log.h"
 #include "rl.h"
@@ -125,4 +126,36 @@ struct IsometricCamera {
     }
 
     raylib::Camera3D* get_ptr() { return &camera; }
+
+    // Convert screen position to grid coordinates.
+    // Projects 3 reference grid points to screen via GetWorldToScreen,
+    // then inverts the 2x2 affine transform. Avoids GetMouseRay/unproject
+    // issues with orthographic cameras and Retina scaling.
+    std::optional<std::pair<int, int>> screen_to_grid(float screen_x,
+                                                      float screen_y) const {
+        // Project 3 grid reference points to screen space
+        raylib::Vector2 s00 = raylib::GetWorldToScreen({0, 0, 0}, camera);
+        raylib::Vector2 s10 =
+            raylib::GetWorldToScreen({TILESIZE, 0, 0}, camera);
+        raylib::Vector2 s01 =
+            raylib::GetWorldToScreen({0, 0, TILESIZE}, camera);
+
+        // Affine: screen = A * grid_pos + s00
+        float a = s10.x - s00.x;  // screen_x change per grid_x step
+        float b = s01.x - s00.x;  // screen_x change per grid_z step
+        float d = s10.y - s00.y;  // screen_y change per grid_x step
+        float e = s01.y - s00.y;  // screen_y change per grid_z step
+
+        // Invert the 2x2 affine transform
+        float det = a * e - b * d;
+        if (std::abs(det) < 0.0001f) return std::nullopt;
+
+        float sx = screen_x - s00.x;
+        float sy = screen_y - s00.y;
+
+        float gx = (e * sx - b * sy) / det;
+        float gz = (a * sy - d * sx) / det;
+
+        return std::make_pair((int) std::round(gx), (int) std::round(gz));
+    }
 };

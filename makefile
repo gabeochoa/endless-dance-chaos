@@ -9,7 +9,7 @@ else
 	MCP_FLAGS =
 endif
 
-FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS)
+FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
 NOFLAGS = -Wno-deprecated-volatile -Wno-missing-field-initializers \
 		  -Wno-c99-extensions -Wno-unused-function -Wno-sign-conversion \
 		  -Wno-implicit-int-float-conversion

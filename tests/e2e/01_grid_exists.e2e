@@ -2,7 +2,7 @@
 # Verifies the 50x50 grid initializes properly
 
 # Wait for game to initialize
-wait 5
+wait_frames 2
 
 # Take screenshot of default grid
 screenshot 01_grid_default

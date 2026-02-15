@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(test:*)",
+      "Bash(git -C wordproc remote:*)",
+      "Bash(git -C cartographer remote:*)",
+      "Bash(GIT_CONFIG_NOSYSTEM=1 HOME=/tmp git -c user.name=\"dev\" -c user.email=\"dev@dev\" status)",
+      "Bash(make:*)",
+      "Bash(curl:*)",
+      "Bash(./output/dance.exe:*)",
+      "Bash(echo:*)",
+      "Bash(nm:*)",
+      "Bash(git stash:*)"
+    ]
+  }
+}

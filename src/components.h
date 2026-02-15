@@ -84,34 +84,30 @@ struct GameState : afterhours::BaseComponent {
 enum class BuildTool { Path, Bathroom, Food, Stage };
 
 struct BuilderState : afterhours::BaseComponent {
-    struct PendingTile {
-        int grid_x = 0;
-        int grid_z = 0;
-        bool is_removal = false;
-
-        PendingTile() = default;
-        PendingTile(int gx, int gz, bool remove)
-            : grid_x(gx), grid_z(gz), is_removal(remove) {}
-    };
-
     bool active = true;
-    int hover_grid_x = 0;
-    int hover_grid_z = 0;
-    bool hover_valid = false;
-    bool path_exists_at_hover = false;
-
     BuildTool tool = BuildTool::Path;
+};
 
-    std::vector<PendingTile> pending_tiles;
+// Path drawing state - rectangle drag on grid
+struct PathDrawState : afterhours::BaseComponent {
+    // Current hover position (updated every frame)
+    int hover_x = 0;
+    int hover_z = 0;
+    bool hover_valid = false;
 
-    bool has_pending() const { return !pending_tiles.empty(); }
+    // Rectangle drawing
+    bool is_drawing = false;
+    int start_x = 0;
+    int start_z = 0;
 
-    void clear_pending() { pending_tiles.clear(); }
+    // Demolish mode
+    bool demolish_mode = false;
 
-    bool is_pending_at(int gx, int gz) const {
-        for (const auto& p : pending_tiles) {
-            if (p.grid_x == gx && p.grid_z == gz) return true;
-        }
-        return false;
+    // Get rectangle bounds (min/max) for drawing preview
+    void get_rect(int& min_x, int& min_z, int& max_x, int& max_z) const {
+        min_x = std::min(start_x, hover_x);
+        min_z = std::min(start_z, hover_z);
+        max_x = std::max(start_x, hover_x);
+        max_z = std::max(start_z, hover_z);
     }
 };
