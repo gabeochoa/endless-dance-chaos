@@ -50,6 +50,7 @@ clean:
 	rm -rf $(OBJ_DIR)
 	mkdir -p $(OBJ_DIR)/src/engine
 	mkdir -p $(OBJ_DIR)/src/log
+	mkdir -p $(OBJ_DIR)/src/testing
 
 run: $(OUTPUT_EXE)
 	./$(OUTPUT_EXE)
