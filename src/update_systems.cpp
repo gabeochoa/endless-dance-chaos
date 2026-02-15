@@ -127,6 +127,28 @@ static float density_speed_modifier(float density_ratio) {
     return 1.0f - (t * 0.9f);  // 1.0 -> 0.1
 }
 
+// When density is dangerous, pick the least-crowded walkable neighbor
+static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
+    int best_x = cx, best_z = cz;
+    int best_count = grid.at(cx, cz).agent_count;
+
+    constexpr int dirs[][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    for (auto [dx, dz] : dirs) {
+        int nx = cx + dx;
+        int nz = cz + dz;
+        if (!grid.in_bounds(nx, nz)) continue;
+        TileType type = grid.at(nx, nz).type;
+        if (type == TileType::Fence || type == TileType::Stage) continue;
+        int count = grid.at(nx, nz).agent_count;
+        if (count < best_count) {
+            best_count = count;
+            best_x = nx;
+            best_z = nz;
+        }
+    }
+    return {best_x, best_z};
+}
+
 // Move agents toward their target using greedy pathfinding
 struct AgentMovementSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
@@ -168,9 +190,32 @@ struct AgentMovementSystem : System<Agent, Transform> {
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (gs) agent.speed *= gs->speed_multiplier;
 
-        // Pick next tile via greedy neighbor
-        auto [next_x, next_z] = pick_next_tile(
-            cur_gx, cur_gz, agent.target_grid_x, agent.target_grid_z, *grid);
+        // If density is dangerous, flee to a less crowded neighbor
+        // Otherwise pathfind toward goal as normal
+        int next_x, next_z;
+        if (grid->in_bounds(cur_gx, cur_gz)) {
+            float density = grid->at(cur_gx, cur_gz).agent_count /
+                            static_cast<float>(MAX_AGENTS_PER_TILE);
+            if (density >= DENSITY_DANGEROUS) {
+                auto [fx, fz] = pick_flee_tile(cur_gx, cur_gz, *grid);
+                next_x = fx;
+                next_z = fz;
+                // Boost speed when fleeing to actually escape
+                agent.speed = SPEED_PATH;
+                if (gs) agent.speed *= gs->speed_multiplier;
+            } else {
+                auto [px, pz] =
+                    pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
+                                   agent.target_grid_z, *grid);
+                next_x = px;
+                next_z = pz;
+            }
+        } else {
+            auto [px, pz] = pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
+                                           agent.target_grid_z, *grid);
+            next_x = px;
+            next_z = pz;
+        }
 
         // Move toward center of next tile
         ::vec2 target_world = grid->grid_to_world(next_x, next_z);
