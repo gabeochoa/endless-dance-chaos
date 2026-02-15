@@ -1,0 +1,20 @@
+# Test crush damage at critical density
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Spawn 40 agents on one tile (critical density)
+spawn_agents 25 25 40 stage
+wait_frames 2
+
+# Before deaths
+assert_death_count eq 0
+screenshot 07_before_deaths
+
+# Wait ~6 seconds for deaths (1 HP / 0.2 per sec = 5 sec)
+wait 6
+
+# Deaths should have occurred
+assert_death_count gt 0
+screenshot 07_after_deaths
+get_death_count

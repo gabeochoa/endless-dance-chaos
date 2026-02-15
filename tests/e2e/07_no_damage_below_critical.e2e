@@ -1,0 +1,12 @@
+# Test no damage below critical density
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Spawn below critical (30 agents = 75% = dangerous but not critical)
+spawn_agents 25 25 30 stage
+wait 6
+
+# No deaths should occur
+assert_death_count eq 0
+screenshot 07_no_damage

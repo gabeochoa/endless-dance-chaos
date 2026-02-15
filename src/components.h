@@ -125,6 +125,11 @@ struct WatchingStage : afterhours::BaseComponent {
     float watch_duration = 0.f;  // random 30-120 sec
 };
 
+// Agent health - takes crush damage at critical density
+struct AgentHealth : afterhours::BaseComponent {
+    float hp = 1.0f;
+};
+
 // Attached while agent is being serviced inside a facility
 struct BeingServiced : afterhours::BaseComponent {
     int facility_grid_x = 0;
@@ -140,6 +145,9 @@ struct GameState : afterhours::BaseComponent {
     GameStatus status = GameStatus::Running;
     float game_time = 0.f;
     bool show_data_layer = false;
+    int death_count = 0;
+    int max_deaths = MAX_DEATHS;
+    float speed_multiplier = 1.0f;  // E2E testing: scale all agent speeds
 
     bool is_game_over() const { return status == GameStatus::GameOver; }
 };

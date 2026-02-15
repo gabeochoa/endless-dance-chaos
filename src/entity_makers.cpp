@@ -56,6 +56,7 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
                             : ::vec2{grid_x * TILESIZE, grid_z * TILESIZE};
     e.addComponent<Transform>(world_pos);
     e.addComponent<Agent>(want, target_x, target_z);
+    e.addComponent<AgentHealth>();
 
     // Random need thresholds
     auto& rng = RandomEngine::get();

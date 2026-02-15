@@ -53,6 +53,14 @@ constexpr int FACILITY_MAX_AGENTS = 20;  // density cap before "full"
 // Stage watching
 constexpr float STAGE_WATCH_RADIUS = 8.0f;  // tiles from stage center
 
+// Density & crush damage
+constexpr int MAX_AGENTS_PER_TILE = 40;
+constexpr float DENSITY_WARNING = 0.50f;    // 20 agents — yellow
+constexpr float DENSITY_DANGEROUS = 0.75f;  // 30 agents — movement slows
+constexpr float DENSITY_CRITICAL = 0.90f;   // 36 agents — crush damage
+constexpr float CRUSH_DAMAGE_RATE = 0.2f;   // HP/sec in critical zone
+constexpr int MAX_DEATHS = 10;
+
 // Version
 constexpr std::string_view VERSION = "0.0.1";
 

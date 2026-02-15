@@ -207,6 +207,17 @@ struct RenderUISystem : System<> {
         draw_text_bg(count_text, 10, 100, 22,
                      raylib::Color{200, 220, 255, 255});
 
+        // Death count
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (gs && gs->death_count > 0) {
+            std::string death_text =
+                fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
+            draw_text_bg(death_text, 10, 128, 22,
+                         gs->death_count >= gs->max_deaths
+                             ? raylib::Color{255, 50, 50, 255}
+                             : raylib::Color{255, 180, 80, 255});
+        }
+
         // FPS (top-right)
         int fps = raylib::GetFPS();
         std::string fps_text = fmt::format("FPS: {}", fps);

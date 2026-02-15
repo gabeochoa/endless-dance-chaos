@@ -15,7 +15,7 @@
 
 using namespace afterhours;
 
-// Helper: compare with operator string
+// Helper: compare with operator string (int)
 inline bool compare_op(int actual, const std::string& op, int expected) {
     if (op == "eq" || op == "==") return actual == expected;
     if (op == "gt" || op == ">") return actual > expected;
@@ -23,6 +23,17 @@ inline bool compare_op(int actual, const std::string& op, int expected) {
     if (op == "gte" || op == ">=") return actual >= expected;
     if (op == "lte" || op == "<=") return actual <= expected;
     if (op == "ne" || op == "!=") return actual != expected;
+    return false;
+}
+
+// Helper: compare with operator string (float)
+inline bool compare_op_f(float actual, const std::string& op, float expected) {
+    if (op == "eq" || op == "==") return std::abs(actual - expected) < 0.001f;
+    if (op == "gt" || op == ">") return actual > expected;
+    if (op == "lt" || op == "<") return actual < expected;
+    if (op == "gte" || op == ">=") return actual >= expected;
+    if (op == "lte" || op == "<=") return actual <= expected;
+    if (op == "ne" || op == "!=") return std::abs(actual - expected) >= 0.001f;
     return false;
 }
 
@@ -162,6 +173,8 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             state->status = GameStatus::Running;
             state->game_time = 0.f;
             state->show_data_layer = false;
+            state->death_count = 0;
+            state->speed_multiplier = 1.0f;
         }
 
         // Reset spawn state
@@ -677,6 +690,113 @@ struct HandleAssertBlockedCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// set_agent_speed MULTIPLIER - scale all agent movement speeds
+struct HandleSetAgentSpeedCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_agent_speed")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("set_agent_speed requires MULTIPLIER argument");
+            return;
+        }
+        float mult = cmd.arg_as<float>(0);
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("set_agent_speed: no GameState");
+            return;
+        }
+        gs->speed_multiplier = mult;
+        log_info("[E2E] Agent speed multiplier set to {}", mult);
+        cmd.consume();
+    }
+};
+
+// get_death_count - log current death count
+struct HandleGetDeathCountCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("get_death_count")) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        int count = gs ? gs->death_count : 0;
+        log_info("[E2E] Death count: {}/{}", count, gs ? gs->max_deaths : 0);
+        cmd.consume();
+    }
+};
+
+// assert_death_count OP VALUE
+struct HandleAssertDeathCountCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_death_count")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("assert_death_count requires OP VALUE arguments");
+            return;
+        }
+        std::string op = cmd.arg(0);
+        int expected = cmd.arg_as<int>(1);
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        int actual = gs ? gs->death_count : 0;
+
+        if (!compare_op(actual, op, expected)) {
+            cmd.fail(
+                fmt::format("assert_death_count failed: {} {} {} (actual: {})",
+                            actual, op, expected, actual));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
+// assert_agent_hp X Z OP VALUE - assert HP of agents at tile
+struct HandleAssertAgentHpCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agent_hp")) return;
+        if (!cmd.has_args(4)) {
+            cmd.fail("assert_agent_hp requires X Z OP VALUE arguments");
+            return;
+        }
+        int tx = cmd.arg_as<int>(0);
+        int tz = cmd.arg_as<int>(1);
+        std::string op = cmd.arg(2);
+        float expected = cmd.arg_as<float>(3);
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("assert_agent_hp: no grid");
+            return;
+        }
+
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .whereHasComponent<AgentHealth>()
+                          .gen();
+        bool found_any = false;
+        for (Entity& agent : agents) {
+            auto& tf = agent.get<Transform>();
+            auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            if (gx == tx && gz == tz) {
+                found_any = true;
+                float actual = agent.get<AgentHealth>().hp;
+                if (!compare_op_f(actual, op, expected)) {
+                    cmd.fail(fmt::format(
+                        "assert_agent_hp at ({},{}) failed: {} {} {} "
+                        "(actual: {:.3f})",
+                        tx, tz, actual, op, expected, actual));
+                    return;
+                }
+            }
+        }
+        if (!found_any) {
+            cmd.fail(
+                fmt::format("assert_agent_hp: no agents at ({},{})", tx, tz));
+            return;
+        }
+        cmd.consume();
+    }
+};
+
 // draw_path_rect X1 Z1 X2 Z2
 struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -741,6 +861,11 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandlePlaceGateCommand>());
     sm.register_update_system(std::make_unique<HandleAssertGateCountCommand>());
     sm.register_update_system(std::make_unique<HandleAssertBlockedCommand>());
+    sm.register_update_system(std::make_unique<HandleSetAgentSpeedCommand>());
+    sm.register_update_system(std::make_unique<HandleGetDeathCountCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertDeathCountCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertAgentHpCommand>());
     sm.register_update_system(std::make_unique<HandleForceNeedCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertAgentsAtFacilityCommand>());

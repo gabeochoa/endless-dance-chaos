@@ -110,6 +110,16 @@ static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
     return {best_x, best_z};
 }
 
+// Density-based speed modifier: slows agents in dangerous zones (75-90%)
+static float density_speed_modifier(float density_ratio) {
+    if (density_ratio < DENSITY_DANGEROUS) return 1.0f;
+    if (density_ratio >= DENSITY_CRITICAL) return 0.1f;  // near-stop
+    // Linear interpolation between dangerous and critical
+    float t = (density_ratio - DENSITY_DANGEROUS) /
+              (DENSITY_CRITICAL - DENSITY_DANGEROUS);
+    return 1.0f - (t * 0.9f);  // 1.0 -> 0.1
+}
+
 // Move agents toward their target using greedy pathfinding
 struct AgentMovementSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
@@ -138,6 +148,17 @@ struct AgentMovementSystem : System<Agent, Transform> {
         agent.speed = (cur_type == TileType::Path || cur_type == TileType::Gate)
                           ? SPEED_PATH
                           : SPEED_GRASS;
+
+        // Apply density-based slowdown
+        if (grid->in_bounds(cur_gx, cur_gz)) {
+            float density = grid->at(cur_gx, cur_gz).agent_count /
+                            static_cast<float>(MAX_AGENTS_PER_TILE);
+            agent.speed *= density_speed_modifier(density);
+        }
+
+        // Apply global speed multiplier (for E2E testing)
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (gs) agent.speed *= gs->speed_multiplier;
 
         // Pick next tile via greedy neighbor
         auto [next_x, next_z] = pick_next_tile(
@@ -412,6 +433,67 @@ struct UpdateTileDensitySystem : System<> {
     }
 };
 
+// Apply crush damage to agents on critically dense tiles
+struct CrushDamageSystem : System<> {
+    void once(float dt) override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        // Iterate tiles, find critically dense ones
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                const Tile& tile = grid->at(x, z);
+                float density =
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
+                if (density < DENSITY_CRITICAL) continue;
+
+                // Find all agents on this tile and apply damage
+                auto agents = EntityQuery()
+                                  .whereHasComponent<Agent>()
+                                  .whereHasComponent<Transform>()
+                                  .whereHasComponent<AgentHealth>()
+                                  .gen();
+                for (Entity& agent_ent : agents) {
+                    if (!agent_ent.is_missing<BeingServiced>()) continue;
+                    auto& tf = agent_ent.get<Transform>();
+                    auto [gx, gz] =
+                        grid->world_to_grid(tf.position.x, tf.position.y);
+                    if (gx == x && gz == z) {
+                        agent_ent.get<AgentHealth>().hp -=
+                            CRUSH_DAMAGE_RATE * dt;
+                    }
+                }
+            }
+        }
+    }
+};
+
+// Remove dead agents and track death count
+struct AgentDeathSystem : System<Agent, AgentHealth, Transform> {
+    void for_each_with(Entity& e, Agent&, AgentHealth& health, Transform& tf,
+                       float) override {
+        if (health.hp > 0.f) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+
+        int gx = -1, gz = -1;
+        if (grid) {
+            auto [px, pz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            gx = px;
+            gz = pz;
+        }
+
+        if (gs) {
+            gs->death_count++;
+            log_info("Agent died at ({}, {}), deaths: {}/{}", gx, gz,
+                     gs->death_count, gs->max_deaths);
+        }
+
+        e.cleanup = true;
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
@@ -422,4 +504,6 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<FacilityServiceSystem>());
     sm.register_update_system(std::make_unique<SpawnAgentSystem>());
     sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
+    sm.register_update_system(std::make_unique<CrushDamageSystem>());
+    sm.register_update_system(std::make_unique<AgentDeathSystem>());
 }

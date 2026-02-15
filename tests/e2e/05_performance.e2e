@@ -4,13 +4,30 @@ set_spawn_enabled 0
 wait_frames 2
 
 # Build a wide path corridor
-draw_path_rect 0 20 49 30
+draw_path_rect 1 20 49 30
 wait_frames 2
 
-# Spawn 500 agents
-spawn_agents 0 25 500 stage
+# Spawn 500 agents spread across tiles to avoid crush damage
+# (max 30 per tile = below critical density)
+spawn_agents 5 25 30 stage
+spawn_agents 10 25 30 stage
+spawn_agents 15 25 30 stage
+spawn_agents 20 25 30 stage
+spawn_agents 25 25 30 stage
+spawn_agents 30 25 30 stage
+spawn_agents 35 25 30 stage
+spawn_agents 40 25 30 stage
+spawn_agents 45 25 30 stage
+spawn_agents 5 22 30 stage
+spawn_agents 10 22 30 stage
+spawn_agents 15 22 30 stage
+spawn_agents 20 22 30 stage
+spawn_agents 25 22 30 stage
+spawn_agents 30 22 30 stage
+spawn_agents 35 22 30 stage
+spawn_agents 40 22 20 stage
 wait 5
 
-# All should exist
+# All should exist (no crush damage since each tile < 36 agents)
 assert_agent_count >= 490
 screenshot 05_500_agents
