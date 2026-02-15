@@ -571,16 +571,33 @@ struct AgentDeathSystem : System<> {
     }
 };
 
-// Toggle data layer overlay with TAB
+// Toggle data layer overlay with TAB, debug panel with backtick.
+// Uses manual edge detection (action_down + previous state) to ignore
+// OS key-repeat events and E2E double-injection.
 struct ToggleDataLayerSystem : System<> {
+    bool was_data_layer_down = false;
+    bool was_debug_down = false;
+
     void once(float) override {
-        if (action_pressed(InputAction::ToggleDataLayer)) {
+        bool data_down = action_down(InputAction::ToggleDataLayer);
+        if (data_down && !was_data_layer_down) {
             auto* gs = EntityHelper::get_singleton_cmp<GameState>();
             if (gs) {
                 gs->show_data_layer = !gs->show_data_layer;
                 log_info("Data layer: {}", gs->show_data_layer ? "ON" : "OFF");
             }
         }
+        was_data_layer_down = data_down;
+
+        bool debug_down = action_down(InputAction::ToggleUIDebug);
+        if (debug_down && !was_debug_down) {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            if (gs) {
+                gs->show_debug = !gs->show_debug;
+                log_info("Debug panel: {}", gs->show_debug ? "ON" : "OFF");
+            }
+        }
+        was_debug_down = debug_down;
     }
 };
 

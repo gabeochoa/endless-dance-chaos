@@ -693,6 +693,22 @@ struct HandleAssertBlockedCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// toggle_debug - toggle debug panel
+struct HandleToggleDebugCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("toggle_debug")) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.fail("toggle_debug: no GameState");
+            return;
+        }
+        gs->show_debug = !gs->show_debug;
+        log_info("[E2E] Debug panel: {}", gs->show_debug ? "ON" : "OFF");
+        cmd.consume();
+    }
+};
+
 // trigger_game_over - force game over state
 struct HandleTriggerGameOverCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -953,6 +969,7 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandlePlaceGateCommand>());
     sm.register_update_system(std::make_unique<HandleAssertGateCountCommand>());
     sm.register_update_system(std::make_unique<HandleAssertBlockedCommand>());
+    sm.register_update_system(std::make_unique<HandleToggleDebugCommand>());
     sm.register_update_system(std::make_unique<HandleTriggerGameOverCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertGameStatusCommand>());

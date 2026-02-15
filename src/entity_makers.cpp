@@ -2,6 +2,7 @@
 
 #include "afterhours/src/core/entity_query.h"
 #include "afterhours/src/plugins/input_system.h"
+#include "afterhours/src/plugins/window_manager.h"
 #include "engine/random_engine.h"
 #include "game.h"
 #include "input_mapping.h"
@@ -37,6 +38,12 @@ Entity& make_sophie() {
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
+
+    // Window resolution (needed by input system's get_mouse_position)
+    using PCR = afterhours::window_manager::ProvidesCurrentResolution;
+    sophie.addComponent<PCR>(afterhours::window_manager::Resolution{
+        DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT});
+    EntityHelper::registerSingleton<PCR>(sophie);
 
     // Input system
     afterhours::input::add_singleton_components(sophie, get_mapping());
