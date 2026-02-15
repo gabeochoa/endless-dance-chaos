@@ -68,14 +68,34 @@ struct Agent : afterhours::BaseComponent {
     int target_grid_z = -1;
     float speed = SPEED_PATH;  // current speed, adjusted by terrain
 
-    // Need timers (Phase 04)
-    float bathroom_timer = 0.f;
-    float food_timer = 0.f;
-
     Agent() = default;
     Agent(FacilityType w) : want(w) {}
     Agent(FacilityType w, int tx, int tz)
         : want(w), target_grid_x(tx), target_grid_z(tz) {}
+};
+
+// Agent need timers - triggers bathroom/food seeking behavior
+struct AgentNeeds : afterhours::BaseComponent {
+    float bathroom_timer = 0.f;
+    float bathroom_threshold = 0.f;  // random 30-90 sec
+    float food_timer = 0.f;
+    float food_threshold = 0.f;  // random 45-120 sec
+    bool needs_bathroom = false;
+    bool needs_food = false;
+};
+
+// Attached while agent is watching the stage (standing in front zone)
+struct WatchingStage : afterhours::BaseComponent {
+    float watch_timer = 0.f;
+    float watch_duration = 0.f;  // random 30-120 sec
+};
+
+// Attached while agent is being serviced inside a facility
+struct BeingServiced : afterhours::BaseComponent {
+    int facility_grid_x = 0;
+    int facility_grid_z = 0;
+    FacilityType facility_type = FacilityType::Bathroom;
+    float time_remaining = SERVICE_TIME;
 };
 
 // Game state tracking - singleton component

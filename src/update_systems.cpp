@@ -3,7 +3,9 @@
 #include "log.h"
 
 #include "afterhours/src/core/entity_helper.h"
+#include "afterhours/src/core/entity_query.h"
 #include "components.h"
+#include "engine/random_engine.h"
 #include "entity_makers.h"
 #include "systems.h"
 
@@ -110,8 +112,11 @@ static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
 
 // Move agents toward their target using greedy pathfinding
 struct AgentMovementSystem : System<Agent, Transform> {
-    void for_each_with(Entity&, Agent& agent, Transform& tf,
+    void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
+        // Don't move if being serviced or watching stage
+        if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<WatchingStage>()) return;
         if (agent.target_grid_x < 0 || agent.target_grid_z < 0) return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
@@ -170,9 +175,220 @@ struct SpawnAgentSystem : System<> {
     }
 };
 
+// Find the center of the nearest facility of a given type
+static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
+                                                 TileType type,
+                                                 const Grid& grid) {
+    int best_x = -1, best_z = -1;
+    int best_dist = std::numeric_limits<int>::max();
+
+    for (int z = 0; z < MAP_SIZE; z++) {
+        for (int x = 0; x < MAP_SIZE; x++) {
+            if (grid.at(x, z).type != type) continue;
+            int dist = std::abs(x - from_x) + std::abs(z - from_z);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_x = x;
+                best_z = z;
+            }
+        }
+    }
+    return {best_x, best_z};
+}
+
+// Check if a facility tile is "full" (too many agents)
+static bool facility_is_full(int gx, int gz, const Grid& grid) {
+    if (!grid.in_bounds(gx, gz)) return true;
+    return grid.at(gx, gz).agent_count >= FACILITY_MAX_AGENTS;
+}
+
+// Tick need timers and set need flags
+struct NeedTickSystem : System<Agent, AgentNeeds> {
+    void for_each_with(Entity& e, Agent&, AgentNeeds& needs,
+                       float dt) override {
+        // Don't tick timers while being serviced or watching
+        if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<WatchingStage>()) return;
+
+        needs.bathroom_timer += dt;
+        needs.food_timer += dt;
+
+        if (!needs.needs_bathroom &&
+            needs.bathroom_timer >= needs.bathroom_threshold) {
+            needs.needs_bathroom = true;
+        }
+        if (!needs.needs_food && needs.food_timer >= needs.food_threshold) {
+            needs.needs_food = true;
+        }
+    }
+};
+
+// Select agent's goal based on need priority: bathroom > food > stage
+struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
+    void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
+                       Transform& tf, float) override {
+        // Don't change goal while being serviced or watching
+        if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<WatchingStage>()) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        auto [cur_gx, cur_gz] =
+            grid->world_to_grid(tf.position.x, tf.position.y);
+
+        if (needs.needs_bathroom) {
+            if (agent.want != FacilityType::Bathroom) {
+                auto [bx, bz] = find_nearest_facility(
+                    cur_gx, cur_gz, TileType::Bathroom, *grid);
+                if (bx >= 0) {
+                    agent.want = FacilityType::Bathroom;
+                    agent.target_grid_x = bx;
+                    agent.target_grid_z = bz;
+                }
+            }
+        } else if (needs.needs_food) {
+            if (agent.want != FacilityType::Food) {
+                auto [fx, fz] = find_nearest_facility(cur_gx, cur_gz,
+                                                      TileType::Food, *grid);
+                if (fx >= 0) {
+                    agent.want = FacilityType::Food;
+                    agent.target_grid_x = fx;
+                    agent.target_grid_z = fz;
+                }
+            }
+        } else {
+            // Default: go to stage
+            if (agent.want != FacilityType::Stage) {
+                agent.want = FacilityType::Stage;
+                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
+                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
+            }
+        }
+    }
+};
+
+// When agent reaches the stage area, start watching
+struct StageWatchingSystem : System<Agent, Transform> {
+    void for_each_with(Entity& e, Agent& agent, Transform& tf,
+                       float dt) override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        // Already watching? Tick timer.
+        if (!e.is_missing<WatchingStage>()) {
+            auto& ws = e.get<WatchingStage>();
+            ws.watch_timer += dt;
+            if (ws.watch_timer >= ws.watch_duration) {
+                e.removeComponent<WatchingStage>();
+                // Done watching, needs will drive next goal
+            }
+            return;
+        }
+
+        // Being serviced? Skip.
+        if (!e.is_missing<BeingServiced>()) return;
+
+        // Only start watching if heading to stage
+        if (agent.want != FacilityType::Stage) return;
+
+        // Check if within watch radius of stage center
+        float stage_cx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
+        float stage_cz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
+        float dx = tf.position.x - stage_cx;
+        float dz = tf.position.y - stage_cz;
+        float dist = std::sqrt(dx * dx + dz * dz);
+
+        if (dist <= STAGE_WATCH_RADIUS * TILESIZE) {
+            auto& rng = RandomEngine::get();
+            e.addComponent<WatchingStage>();
+            e.get<WatchingStage>().watch_duration = rng.get_float(30.f, 120.f);
+        }
+    }
+};
+
+// Handle agents arriving at facilities: absorb, service, release
+struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
+    void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
+                       Transform& tf, float dt) override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        // Already being serviced? Tick the timer.
+        if (!e.is_missing<BeingServiced>()) {
+            auto& bs = e.get<BeingServiced>();
+            bs.time_remaining -= dt;
+            if (bs.time_remaining <= 0.f) {
+                // Service complete - clear need, reset timer
+                auto& rng = RandomEngine::get();
+                if (bs.facility_type == FacilityType::Bathroom) {
+                    needs.needs_bathroom = false;
+                    needs.bathroom_timer = 0.f;
+                    needs.bathroom_threshold = rng.get_float(30.f, 90.f);
+                } else if (bs.facility_type == FacilityType::Food) {
+                    needs.needs_food = false;
+                    needs.food_timer = 0.f;
+                    needs.food_threshold = rng.get_float(45.f, 120.f);
+                }
+
+                // Reappear adjacent to facility
+                // (just offset by 1 tile in -x direction)
+                tf.position.x = bs.facility_grid_x * TILESIZE - TILESIZE;
+                tf.position.y = bs.facility_grid_z * TILESIZE;
+
+                e.removeComponent<BeingServiced>();
+
+                // Reset goal to stage
+                agent.want = FacilityType::Stage;
+                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
+                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
+            }
+            return;
+        }
+
+        // Not serviced yet -- check if we're on a facility tile
+        if (agent.want == FacilityType::Stage) return;  // not seeking facility
+
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz)) return;
+
+        TileType cur_type = grid->at(gx, gz).type;
+
+        // Check if we've arrived at the correct facility type
+        bool at_target = false;
+        if (agent.want == FacilityType::Bathroom &&
+            cur_type == TileType::Bathroom) {
+            at_target = true;
+        } else if (agent.want == FacilityType::Food &&
+                   cur_type == TileType::Food) {
+            at_target = true;
+        }
+
+        if (at_target) {
+            // Check capacity
+            if (facility_is_full(gx, gz, *grid)) {
+                // Facility full -- for now, just keep waiting
+                return;
+            }
+
+            // Start service
+            e.addComponent<BeingServiced>();
+            auto& bs = e.get<BeingServiced>();
+            bs.facility_grid_x = gx;
+            bs.facility_grid_z = gz;
+            bs.facility_type = agent.want;
+            bs.time_remaining = SERVICE_TIME;
+        }
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
+    sm.register_update_system(std::make_unique<NeedTickSystem>());
+    sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
+    sm.register_update_system(std::make_unique<StageWatchingSystem>());
+    sm.register_update_system(std::make_unique<FacilityServiceSystem>());
     sm.register_update_system(std::make_unique<SpawnAgentSystem>());
 }

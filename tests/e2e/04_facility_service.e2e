@@ -1,0 +1,22 @@
+# Test facility service: agent arrives, gets absorbed, reappears
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Build a path to the bathroom
+draw_path_rect 18 20 21 20
+wait_frames 2
+
+# Spawn agent near bathroom with bathroom need
+spawn_agent 18 20 bathroom
+wait_frames 2
+
+# Force the need so it starts heading there
+force_need bathroom
+wait 8
+
+# Agent should have been serviced by now
+screenshot 04_after_service
+
+# Verify agent still exists (reappeared after service)
+assert_agent_count >= 1

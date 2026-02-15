@@ -75,7 +75,10 @@ struct RenderAgentsSystem : System<Agent, Transform> {
     static constexpr raylib::Color AGENT_COLOR = {212, 165, 116,
                                                   255};  // warm tan
 
-    void for_each_with(Entity&, Agent&, Transform& tf, float) override {
+    void for_each_with(Entity& e, Agent&, Transform& tf, float) override {
+        // Hide agents being serviced inside a facility
+        if (!e.is_missing<BeingServiced>()) return;
+
         // Agent position in world space (x = world x, y = world z)
         float wx = tf.position.x;
         float wz = tf.position.y;

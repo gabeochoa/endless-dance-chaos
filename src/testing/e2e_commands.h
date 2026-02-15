@@ -171,15 +171,23 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             ss->enabled = true;
         }
 
-        // Re-place the stage
+        // Re-place all facilities
         if (grid) {
-            for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
-                for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
-                    if (grid->in_bounds(x, z)) {
+            // Stage (4x4)
+            for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
+                for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
+                    if (grid->in_bounds(x, z))
                         grid->at(x, z).type = TileType::Stage;
-                    }
-                }
-            }
+            // Bathroom (2x2)
+            for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++)
+                for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++)
+                    if (grid->in_bounds(x, z))
+                        grid->at(x, z).type = TileType::Bathroom;
+            // Food (2x2)
+            for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++)
+                for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++)
+                    if (grid->in_bounds(x, z))
+                        grid->at(x, z).type = TileType::Food;
         }
 
         cmd.consume();
@@ -516,6 +524,98 @@ struct HandleSetSpawnEnabledCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// force_need TYPE - force ALL agents to need bathroom or food immediately
+struct HandleForceNeedCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("force_need")) return;
+        if (!cmd.has_args(1)) {
+            cmd.fail("force_need requires TYPE (bathroom|food) argument");
+            return;
+        }
+        std::string type_str = cmd.arg(0);
+        std::transform(type_str.begin(), type_str.end(), type_str.begin(),
+                       ::tolower);
+
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<AgentNeeds>()
+                          .gen();
+        for (Entity& agent : agents) {
+            auto& needs = agent.get<AgentNeeds>();
+            if (type_str == "bathroom") {
+                needs.needs_bathroom = true;
+            } else if (type_str == "food") {
+                needs.needs_food = true;
+            }
+        }
+        cmd.consume();
+    }
+};
+
+// assert_agents_at_facility TYPE OP COUNT
+struct HandleAssertAgentsAtFacilityCommand
+    : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agents_at_facility")) return;
+        if (!cmd.has_args(3)) {
+            cmd.fail(
+                "assert_agents_at_facility requires TYPE OP COUNT arguments");
+            return;
+        }
+        std::string type_str = cmd.arg(0);
+        std::string op = cmd.arg(1);
+        int expected = cmd.arg_as<int>(2);
+
+        FacilityType ftype = parse_facility_type(type_str);
+
+        int count = 0;
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<BeingServiced>()
+                          .gen();
+        for (Entity& agent : agents) {
+            if (agent.get<BeingServiced>().facility_type == ftype) {
+                count++;
+            }
+        }
+
+        if (!compare_op(count, op, expected)) {
+            cmd.fail(fmt::format(
+                "assert_agents_at_facility {} failed: {} {} {} (actual: {})",
+                type_str, count, op, expected, count));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
+// assert_agent_watching OP COUNT
+struct HandleAssertAgentWatchingCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agent_watching")) return;
+        if (!cmd.has_args(2)) {
+            cmd.fail("assert_agent_watching requires OP COUNT arguments");
+            return;
+        }
+        std::string op = cmd.arg(0);
+        int expected = cmd.arg_as<int>(1);
+
+        int count =
+            (int) EntityQuery().whereHasComponent<WatchingStage>().gen_count();
+
+        if (!compare_op(count, op, expected)) {
+            cmd.fail(fmt::format(
+                "assert_agent_watching failed: {} {} {} (actual: {})", count,
+                op, expected, count));
+        } else {
+            cmd.consume();
+        }
+    }
+};
+
 // draw_path_rect X1 Z1 X2 Z2
 struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
@@ -577,6 +677,11 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandleAssertAgentNearCommand>());
     sm.register_update_system(std::make_unique<HandleSetSpawnRateCommand>());
     sm.register_update_system(std::make_unique<HandleSetSpawnEnabledCommand>());
+    sm.register_update_system(std::make_unique<HandleForceNeedCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertAgentsAtFacilityCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertAgentWatchingCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);

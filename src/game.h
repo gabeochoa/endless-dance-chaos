@@ -32,6 +32,20 @@ constexpr float SPEED_GRASS = 0.25f;
 // Spawn rate
 constexpr float DEFAULT_SPAWN_INTERVAL = 2.0f;  // seconds between spawns
 
+// Pre-placed facilities
+constexpr int BATHROOM_X = 20;
+constexpr int BATHROOM_Z = 20;
+constexpr int FOOD_X = 20;
+constexpr int FOOD_Z = 30;
+constexpr int FACILITY_SIZE = 2;  // 2x2 footprint
+
+// Facility service
+constexpr float SERVICE_TIME = 1.0f;     // seconds inside facility
+constexpr int FACILITY_MAX_AGENTS = 20;  // density cap before "full"
+
+// Stage watching
+constexpr float STAGE_WATCH_RADIUS = 8.0f;  // tiles from stage center
+
 // Version
 constexpr std::string_view VERSION = "0.0.1";
 

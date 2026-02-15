@@ -2,6 +2,7 @@
 
 #include "afterhours/src/core/entity_query.h"
 #include "afterhours/src/plugins/input_system.h"
+#include "engine/random_engine.h"
 #include "game.h"
 #include "input_mapping.h"
 
@@ -33,12 +34,32 @@ Entity& make_sophie() {
     sophie.addComponent<SpawnState>();
     EntityHelper::registerSingleton<SpawnState>(sophie);
 
-    // Place pre-built stage (4x4 at STAGE_X, STAGE_Z)
+    // Place pre-built facilities on the grid
     auto& grid_ref = sophie.get<Grid>();
+
+    // Stage (4x4)
     for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
         for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
             if (grid_ref.in_bounds(x, z)) {
                 grid_ref.at(x, z).type = TileType::Stage;
+            }
+        }
+    }
+
+    // Bathroom (2x2)
+    for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++) {
+        for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++) {
+            if (grid_ref.in_bounds(x, z)) {
+                grid_ref.at(x, z).type = TileType::Bathroom;
+            }
+        }
+    }
+
+    // Food (2x2)
+    for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++) {
+        for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++) {
+            if (grid_ref.in_bounds(x, z)) {
+                grid_ref.at(x, z).type = TileType::Food;
             }
         }
     }
@@ -61,6 +82,13 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
                             : ::vec2{grid_x * TILESIZE, grid_z * TILESIZE};
     e.addComponent<Transform>(world_pos);
     e.addComponent<Agent>(want, target_x, target_z);
+
+    // Random need thresholds
+    auto& rng = RandomEngine::get();
+    e.addComponent<AgentNeeds>();
+    auto& needs = e.get<AgentNeeds>();
+    needs.bathroom_threshold = rng.get_float(30.f, 90.f);
+    needs.food_threshold = rng.get_float(45.f, 120.f);
 
     return e;
 }
