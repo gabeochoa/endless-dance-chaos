@@ -1,0 +1,24 @@
+# Test that continuous spawning doesn't cause mass death due to pileup
+reset_game
+set_spawn_enabled 0
+set_agent_speed 3
+wait_frames 2
+
+# Spawn 80 agents on a single tile — way over capacity
+# They must spread to survive
+spawn_agents 25 25 80 stage
+wait_frames 2
+
+assert_agent_count >= 80
+screenshot 10_survival_before
+
+# Give them time to spread
+wait 10
+
+# Most agents should survive — if flee works, deaths stay very low
+assert_death_count lt 10
+assert_agent_count >= 70
+screenshot 10_survival_after
+
+# Density on the original tile should be well below critical
+assert_density 25 25 lt 30

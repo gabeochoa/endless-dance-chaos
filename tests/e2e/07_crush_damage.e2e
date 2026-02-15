@@ -1,6 +1,13 @@
-# Test crush damage at critical density
+# Test crush damage at critical density (agents caged so they can't flee)
 reset_game
 set_spawn_enabled 0
+wait_frames 2
+
+# Build a fence cage around (25,25) so agents can't flee
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
 wait_frames 2
 
 # Spawn 40 agents on one tile (critical density)

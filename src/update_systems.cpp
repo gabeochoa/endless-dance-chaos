@@ -127,10 +127,16 @@ static float density_speed_modifier(float density_ratio) {
     return 1.0f - (t * 0.9f);  // 1.0 -> 0.1
 }
 
-// When density is dangerous, pick the least-crowded walkable neighbor
+// When density is dangerous, randomly pick a less-crowded walkable neighbor.
+// Uses weighted random so agents scatter in different directions.
 static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
-    int best_x = cx, best_z = cz;
-    int best_count = grid.at(cx, cz).agent_count;
+    int cur_count = grid.at(cx, cz).agent_count;
+
+    struct Candidate {
+        int x, z, count;
+    };
+    std::array<Candidate, 4> candidates;
+    int n = 0;
 
     constexpr int dirs[][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
     for (auto [dx, dz] : dirs) {
@@ -140,13 +146,31 @@ static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
         TileType type = grid.at(nx, nz).type;
         if (type == TileType::Fence || type == TileType::Stage) continue;
         int count = grid.at(nx, nz).agent_count;
-        if (count < best_count) {
-            best_count = count;
-            best_x = nx;
-            best_z = nz;
+        if (count < cur_count) {
+            candidates[n++] = {nx, nz, count};
         }
     }
-    return {best_x, best_z};
+
+    if (n == 0) return {cx, cz};
+    if (n == 1) return {candidates[0].x, candidates[0].z};
+
+    // Weight by how much emptier the neighbor is (higher weight = emptier)
+    std::array<float, 4> weights;
+    float total = 0.f;
+    for (int i = 0; i < n; i++) {
+        weights[i] = static_cast<float>(cur_count - candidates[i].count);
+        total += weights[i];
+    }
+
+    float roll = RandomEngine::get().get_float(0.f, total);
+    float accum = 0.f;
+    for (int i = 0; i < n; i++) {
+        accum += weights[i];
+        if (roll <= accum) {
+            return {candidates[i].x, candidates[i].z};
+        }
+    }
+    return {candidates[n - 1].x, candidates[n - 1].z};
 }
 
 // Move agents toward their target using greedy pathfinding
@@ -154,63 +178,77 @@ struct AgentMovementSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
         if (game_is_over()) return;
-        // Don't move if being serviced or watching stage
         if (!e.is_missing<BeingServiced>()) return;
-        if (!e.is_missing<WatchingStage>()) return;
-        if (agent.target_grid_x < 0 || agent.target_grid_z < 0) return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
 
-        // Get current grid position
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
 
-        // Already at target?
-        if (cur_gx == agent.target_grid_x && cur_gz == agent.target_grid_z)
-            return;
-
-        // Adjust speed based on current terrain
-        TileType cur_type = TileType::Grass;
-        if (grid->in_bounds(cur_gx, cur_gz)) {
-            cur_type = grid->at(cur_gx, cur_gz).type;
-        }
-        agent.speed = (cur_type == TileType::Path || cur_type == TileType::Gate)
-                          ? SPEED_PATH
-                          : SPEED_GRASS;
-
-        // Apply density-based slowdown
-        if (grid->in_bounds(cur_gx, cur_gz)) {
-            float density = grid->at(cur_gx, cur_gz).agent_count /
-                            static_cast<float>(MAX_AGENTS_PER_TILE);
-            agent.speed *= density_speed_modifier(density);
-        }
-
-        // Apply global speed multiplier (for E2E testing)
-        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (gs) agent.speed *= gs->speed_multiplier;
-
-        // If density is dangerous, flee to a less crowded neighbor
-        // Otherwise pathfind toward goal as normal
-        int next_x, next_z;
+        // Check if this tile is dangerously crowded — flee overrides everything
+        bool fleeing = false;
+        int next_x = cur_gx, next_z = cur_gz;
         if (grid->in_bounds(cur_gx, cur_gz)) {
             float density = grid->at(cur_gx, cur_gz).agent_count /
                             static_cast<float>(MAX_AGENTS_PER_TILE);
             if (density >= DENSITY_DANGEROUS) {
-                auto [fx, fz] = pick_flee_tile(cur_gx, cur_gz, *grid);
-                next_x = fx;
-                next_z = fz;
-                // Boost speed when fleeing to actually escape
-                agent.speed = SPEED_PATH;
-                if (gs) agent.speed *= gs->speed_multiplier;
+                // Already committed to a flee direction and not there yet?
+                if (agent.flee_target_x >= 0 &&
+                    (cur_gx != agent.flee_target_x ||
+                     cur_gz != agent.flee_target_z)) {
+                    next_x = agent.flee_target_x;
+                    next_z = agent.flee_target_z;
+                    fleeing = true;
+                } else {
+                    // Pick a new flee direction
+                    auto [fx, fz] = pick_flee_tile(cur_gx, cur_gz, *grid);
+                    if (fx != cur_gx || fz != cur_gz) {
+                        next_x = fx;
+                        next_z = fz;
+                        agent.flee_target_x = fx;
+                        agent.flee_target_z = fz;
+                        fleeing = true;
+                    }
+                }
+                if (fleeing) {
+                    if (!e.is_missing<WatchingStage>()) {
+                        e.removeComponent<WatchingStage>();
+                    }
+                    agent.speed = SPEED_PATH;
+                    if (gs) agent.speed *= gs->speed_multiplier;
+                }
             } else {
-                auto [px, pz] =
-                    pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
-                                   agent.target_grid_z, *grid);
-                next_x = px;
-                next_z = pz;
+                // Safe — clear any flee commitment
+                agent.flee_target_x = -1;
+                agent.flee_target_z = -1;
             }
-        } else {
+        }
+
+        if (!fleeing) {
+            // Normal movement — skip if watching stage
+            if (!e.is_missing<WatchingStage>()) return;
+            if (agent.target_grid_x < 0 || agent.target_grid_z < 0) return;
+            if (cur_gx == agent.target_grid_x && cur_gz == agent.target_grid_z)
+                return;
+
+            TileType cur_type = TileType::Grass;
+            if (grid->in_bounds(cur_gx, cur_gz)) {
+                cur_type = grid->at(cur_gx, cur_gz).type;
+            }
+            agent.speed =
+                (cur_type == TileType::Path || cur_type == TileType::Gate)
+                    ? SPEED_PATH
+                    : SPEED_GRASS;
+
+            if (grid->in_bounds(cur_gx, cur_gz)) {
+                float density = grid->at(cur_gx, cur_gz).agent_count /
+                                static_cast<float>(MAX_AGENTS_PER_TILE);
+                agent.speed *= density_speed_modifier(density);
+            }
+            if (gs) agent.speed *= gs->speed_multiplier;
+
             auto [px, pz] = pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
                                            agent.target_grid_z, *grid);
             next_x = px;
@@ -220,7 +258,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
         // Move toward center of next tile
         ::vec2 target_world = grid->grid_to_world(next_x, next_z);
         float dx = target_world.x - tf.position.x;
-        float dz = target_world.y - tf.position.y;  // vec2.y = world z
+        float dz = target_world.y - tf.position.y;
         float dist = std::sqrt(dx * dx + dz * dz);
 
         if (dist > 0.01f) {
@@ -749,11 +787,11 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<ToggleDataLayerSystem>());
     sm.register_update_system(std::make_unique<NeedTickSystem>());
     sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
+    sm.register_update_system(std::make_unique<SpawnAgentSystem>());
+    sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
     sm.register_update_system(std::make_unique<StageWatchingSystem>());
     sm.register_update_system(std::make_unique<FacilityServiceSystem>());
-    sm.register_update_system(std::make_unique<SpawnAgentSystem>());
-    sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
     sm.register_update_system(std::make_unique<CrushDamageSystem>());
     sm.register_update_system(std::make_unique<AgentDeathSystem>());
     sm.register_update_system(std::make_unique<TrackStatsSystem>());

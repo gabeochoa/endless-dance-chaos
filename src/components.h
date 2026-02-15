@@ -103,6 +103,10 @@ struct Agent : afterhours::BaseComponent {
     int target_grid_z = -1;
     float speed = SPEED_PATH;  // current speed, adjusted by terrain
 
+    // Flee state: committed direction when escaping dangerous density
+    int flee_target_x = -1;
+    int flee_target_z = -1;
+
     Agent() = default;
     Agent(FacilityType w) : want(w) {}
     Agent(FacilityType w, int tx, int tz)

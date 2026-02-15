@@ -1,0 +1,27 @@
+# Test that agents flee from dangerous density and survive
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Spawn 40 agents on one tile — above critical density (90%)
+# Without flee behavior, they'd all take crush damage and die
+# With flee behavior, they should spread to neighbors and survive
+spawn_agents 25 25 40 stage
+wait_frames 2
+
+# Confirm they all spawned
+assert_agent_count >= 40
+assert_death_count eq 0
+screenshot 10_before_flee
+
+# Wait for agents to flee and spread out
+wait 8
+
+# Key assertion: agents should have spread out, so few or no deaths
+# (old behavior without flee: most would die in ~5 seconds)
+assert_death_count lt 5
+screenshot 10_after_flee
+
+# The original tile should have thinned out
+assert_density 25 25 lt 36
