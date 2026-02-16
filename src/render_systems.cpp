@@ -76,47 +76,41 @@ static float get_day_night_t() {
     return 1.0f;  // Dead hours: night palette
 }
 
+// Shared day-palette colors for tiles, used by grid rendering and minimap.
+// Indexed by TileType enum value.
+static constexpr raylib::Color TILE_DAY_COLORS[] = {
+    {152, 212, 168, 255},  // Grass
+    {232, 221, 212, 255},  // Path
+    {85, 85, 85, 255},     // Fence
+    {68, 136, 170, 255},   // Gate
+    {255, 217, 61, 255},   // Stage
+    {255, 235, 150, 255},  // StageFloor
+    {126, 207, 192, 255},  // Bathroom
+    {244, 164, 164, 255},  // Food
+    {255, 100, 100, 255},  // MedTent
+};
+static constexpr raylib::Color TILE_NIGHT_COLORS[] = {
+    {45, 74, 62, 255},    // Grass
+    {42, 42, 58, 255},    // Path
+    {40, 40, 50, 255},    // Fence
+    {68, 136, 170, 255},  // Gate (unchanged at night)
+    {255, 230, 0, 255},   // Stage
+    {60, 60, 40, 255},    // StageFloor
+    {60, 100, 90, 255},   // Bathroom
+    {120, 80, 80, 255},   // Food
+    {120, 50, 50, 255},   // MedTent
+};
+
+static raylib::Color tile_day_color(TileType type) {
+    return TILE_DAY_COLORS[static_cast<int>(type)];
+}
+
+static raylib::Color tile_color(TileType type, float night_t) {
+    int idx = static_cast<int>(type);
+    return lerp_color(TILE_DAY_COLORS[idx], TILE_NIGHT_COLORS[idx], night_t);
+}
+
 struct RenderGridSystem : System<> {
-    // Day palette
-    static constexpr raylib::Color DAY_GRASS = {152, 212, 168, 255};
-    static constexpr raylib::Color DAY_PATH = {232, 221, 212, 255};
-    static constexpr raylib::Color DAY_STAGE = {255, 217, 61, 255};
-    // Night palette
-    static constexpr raylib::Color NIGHT_GRASS = {45, 74, 62, 255};
-    static constexpr raylib::Color NIGHT_PATH = {42, 42, 58, 255};
-    static constexpr raylib::Color NIGHT_STAGE = {255, 230, 0, 255};
-    // Unchanged
-    static constexpr raylib::Color FENCE_COLOR = {85, 85, 85, 255};
-    static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};
-    static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192, 255};
-    static constexpr raylib::Color FOOD_COLOR = {244, 164, 164, 255};
-    static constexpr raylib::Color MEDTENT_COLOR = {255, 100, 100, 255};
-
-    static raylib::Color tile_color(TileType type, float night_t) {
-        switch (type) {
-            case TileType::Grass:
-                return lerp_color(DAY_GRASS, NIGHT_GRASS, night_t);
-            case TileType::Path:
-                return lerp_color(DAY_PATH, NIGHT_PATH, night_t);
-            case TileType::Fence:
-                return lerp_color(FENCE_COLOR, {40, 40, 50, 255}, night_t);
-            case TileType::Gate:
-                return GATE_COLOR;
-            case TileType::Stage:
-                return lerp_color(DAY_STAGE, NIGHT_STAGE, night_t);
-            case TileType::StageFloor:
-                return lerp_color({255, 235, 150, 255}, {60, 60, 40, 255},
-                                  night_t);
-            case TileType::Bathroom:
-                return lerp_color(BATHROOM_COLOR, {60, 100, 90, 255}, night_t);
-            case TileType::Food:
-                return lerp_color(FOOD_COLOR, {120, 80, 80, 255}, night_t);
-            case TileType::MedTent:
-                return lerp_color(MEDTENT_COLOR, {120, 50, 50, 255}, night_t);
-        }
-        return DAY_GRASS;
-    }
-
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -127,7 +121,7 @@ struct RenderGridSystem : System<> {
         for (int z = 0; z < MAP_SIZE; z++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 const Tile& tile = grid->at(x, z);
-                raylib::Color color = tile_color(tile.type, night_t);
+                raylib::Color color = ::tile_color(tile.type, night_t);
 
                 raylib::DrawPlane({x * TILESIZE, 0.01f, z * TILESIZE},
                                   {tile_size, tile_size}, color);
@@ -782,29 +776,7 @@ static bool g_minimap_initialized = false;
 static constexpr int MINIMAP_SIZE = 150;
 static constexpr float MINIMAP_SCALE = 150.0f / 52.0f;
 
-static raylib::Color minimap_tile_color(TileType type) {
-    switch (type) {
-        case TileType::Grass:
-            return {152, 212, 168, 255};
-        case TileType::Path:
-            return {232, 221, 212, 255};
-        case TileType::Fence:
-            return {85, 85, 85, 255};
-        case TileType::Gate:
-            return {68, 136, 170, 255};
-        case TileType::Stage:
-            return {255, 217, 61, 255};
-        case TileType::StageFloor:
-            return {200, 230, 180, 255};
-        case TileType::Bathroom:
-            return {126, 207, 192, 255};
-        case TileType::Food:
-            return {244, 164, 164, 255};
-        case TileType::MedTent:
-            return {255, 100, 100, 255};
-    }
-    return {152, 212, 168, 255};
-}
+// Minimap uses day-palette colors (shared via tile_day_color)
 
 // Timeline sidebar showing artist schedule
 struct RenderTimelineSidebarSystem : System<> {
@@ -911,7 +883,7 @@ struct RenderMinimapSystem : System<> {
             for (int x = 0; x < MAP_SIZE; x++) {
                 const auto& tile = grid->at(x, z);
                 if (tile.type == TileType::Grass) continue;
-                raylib::Color c = minimap_tile_color(tile.type);
+                raylib::Color c = tile_day_color(tile.type);
                 float px = x * MINIMAP_SCALE;
                 float py = z * MINIMAP_SCALE;
                 float ps =
@@ -959,22 +931,6 @@ struct RenderMinimapSystem : System<> {
     }
 };
 
-// Helpers shared between systems
-static void ui_draw_text(const std::string& text, float x, float y, float size,
-                         raylib::Color color) {
-    raylib::DrawTextEx(get_font(), text.c_str(), {x, y}, size, FONT_SPACING,
-                       color);
-}
-static raylib::Vector2 ui_measure_text(const std::string& text, float size) {
-    return raylib::MeasureTextEx(get_font(), text.c_str(), size, FONT_SPACING);
-}
-static void ui_draw_text_centered(const std::string& text, float y, float size,
-                                  raylib::Color color) {
-    auto m = ui_measure_text(text, size);
-    float x = (DEFAULT_SCREEN_WIDTH - m.x) / 2.f;
-    ui_draw_text(text, x, y, size, color);
-}
-
 // Game over overlay - rendered after sidebar so it covers everything
 struct RenderGameOverSystem : System<> {
     void once(float) const override {
@@ -995,8 +951,8 @@ struct RenderGameOverSystem : System<> {
                                    raylib::Color{255, 80, 80, 255});
 
         std::string title = "FESTIVAL SHUT DOWN";
-        ui_draw_text_centered(title, py + 20, 34,
-                              raylib::Color{255, 80, 80, 255});
+        RenderUISystem::draw_text_centered(title, py + 20, 34,
+                                           raylib::Color{255, 80, 80, 255});
 
         int minutes = static_cast<int>(gs->time_survived) / 60;
         int seconds = static_cast<int>(gs->time_survived) % 60;
@@ -1010,10 +966,10 @@ struct RenderGameOverSystem : System<> {
             fmt::format("Peak Attendees: {}", gs->max_attendees);
 
         float sy = py + 66;
-        ui_draw_text_centered(stats1, sy, 20, raylib::WHITE);
-        ui_draw_text_centered(stats2, sy + 28, 20, raylib::WHITE);
-        ui_draw_text_centered(stats3, sy + 56, 20, raylib::WHITE);
-        ui_draw_text_centered(stats4, sy + 84, 20, raylib::WHITE);
+        RenderUISystem::draw_text_centered(stats1, sy, 20, raylib::WHITE);
+        RenderUISystem::draw_text_centered(stats2, sy + 28, 20, raylib::WHITE);
+        RenderUISystem::draw_text_centered(stats3, sy + 56, 20, raylib::WHITE);
+        RenderUISystem::draw_text_centered(stats4, sy + 84, 20, raylib::WHITE);
 
         save::MetaProgress meta;
         save::load_meta(meta);
@@ -1021,21 +977,22 @@ struct RenderGameOverSystem : System<> {
         raylib::DrawLine((int) (px + 20), (int) my, (int) (px + pw - 20),
                          (int) my, raylib::Color{100, 100, 120, 200});
         my += 8;
-        ui_draw_text_centered("--- All-Time Records ---", my, 16,
-                              raylib::Color{180, 200, 255, 255});
+        RenderUISystem::draw_text_centered("--- All-Time Records ---", my, 16,
+                                           raylib::Color{180, 200, 255, 255});
         my += 24;
-        ui_draw_text_centered(
+        RenderUISystem::draw_text_centered(
             fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
                         meta.best_agents_served),
             my, 16, raylib::Color{160, 180, 220, 255});
         my += 22;
-        ui_draw_text_centered(
+        RenderUISystem::draw_text_centered(
             fmt::format("Peak Attendees: {}  |  Runs: {}",
                         meta.best_max_attendees, meta.total_runs),
             my, 16, raylib::Color{160, 180, 220, 255});
 
-        ui_draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
-                              raylib::Color{180, 180, 180, 255});
+        RenderUISystem::draw_text_centered("Press SPACE to restart",
+                                           py + ph - 40, 20,
+                                           raylib::Color{180, 180, 180, 255});
 
         vtr.register_text(title);
         vtr.register_text("Press SPACE to restart");

@@ -227,9 +227,7 @@ static bool can_place_at(const Grid& grid, int x, int z, int w, int h) {
     for (int dz = 0; dz < h; dz++) {
         for (int dx = 0; dx < w; dx++) {
             int tx = x + dx, tz = z + dz;
-            if (!grid.in_bounds(tx, tz)) return false;
-            if (tx < PLAY_MIN || tx > PLAY_MAX) return false;
-            if (tz < PLAY_MIN || tz > PLAY_MAX) return false;
+            if (!grid.in_playable(tx, tz)) return false;
             TileType t = grid.at(tx, tz).type;
             if (t != TileType::Grass && t != TileType::Path &&
                 t != TileType::StageFloor)
@@ -260,13 +258,13 @@ struct PathBuildSystem : System<> {
         // Tool cycling with [ ]
         if (action_pressed(InputAction::PrevTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 6) % 7;  // wrap backwards through 7 tools
+            t = (t + 7) % 8;  // wrap backwards through 8 tools
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
         if (action_pressed(InputAction::NextTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 1) % 7;
+            t = (t + 1) % 8;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
@@ -393,11 +391,23 @@ struct PathBuildSystem : System<> {
 // Forward declaration for pheromone channel mapping
 static int facility_to_channel(FacilityType type);
 
-// Check if a tile blocks pathfinding (fences + buildings)
+// Lookup table: true if tile blocks agent movement (fences + buildings).
+// Indexed by TileType enum: Grass=0,Path=1,Fence=2,Gate=3,Stage=4,
+//   StageFloor=5,Bathroom=6,Food=7,MedTent=8
+static constexpr bool TILE_BLOCKS[] = {
+    false,  // Grass
+    false,  // Path
+    true,   // Fence
+    false,  // Gate
+    true,   // Stage
+    false,  // StageFloor
+    true,   // Bathroom
+    true,   // Food
+    true,   // MedTent
+};
+
 static bool tile_blocks_movement(TileType type) {
-    return type == TileType::Fence || type == TileType::Stage ||
-           type == TileType::Bathroom || type == TileType::Food ||
-           type == TileType::MedTent;
+    return TILE_BLOCKS[static_cast<int>(type)];
 }
 
 // Greedy neighbor pathfinding with pheromone weighting.
@@ -1018,21 +1028,10 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
     }
 };
 
-// Map FacilityType to pheromone channel index
+// Map FacilityType to pheromone channel index.
+// FacilityType enum order matches Tile::PHERO_* constants exactly.
 static int facility_to_channel(FacilityType type) {
-    switch (type) {
-        case FacilityType::Bathroom:
-            return Tile::PHERO_BATHROOM;
-        case FacilityType::Food:
-            return Tile::PHERO_FOOD;
-        case FacilityType::Stage:
-            return Tile::PHERO_STAGE;
-        case FacilityType::Exit:
-            return Tile::PHERO_EXIT;
-        case FacilityType::MedTent:
-            return Tile::PHERO_MEDTENT;
-    }
-    return Tile::PHERO_STAGE;
+    return static_cast<int>(type);
 }
 
 // During Exodus, flood exit pheromone from gates using BFS
