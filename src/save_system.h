@@ -15,6 +15,7 @@ static constexpr const char* SAVE_DIR = "saves";
 static constexpr const char* SAVE_FILE = "saves/game.sav";
 static constexpr const char* META_FILE = "saves/meta.dat";
 static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
+static constexpr uint32_t SAVE_VERSION = 1;  // Increment on schema changes
 
 // Meta-progression: persists across sessions
 struct MetaProgress {
@@ -52,6 +53,7 @@ inline bool save_game() {
     if (!f) return false;
 
     f.write(reinterpret_cast<const char*>(&SAVE_MAGIC), sizeof(SAVE_MAGIC));
+    f.write(reinterpret_cast<const char*>(&SAVE_VERSION), sizeof(SAVE_VERSION));
 
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
@@ -144,6 +146,10 @@ inline bool load_game() {
     f.read(reinterpret_cast<char*>(&magic), sizeof(magic));
     if (magic != SAVE_MAGIC) return false;
 
+    uint32_t version = 0;
+    f.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (version != SAVE_VERSION) return false;  // Reject incompatible saves
+
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
     if (!grid) return false;
@@ -225,6 +231,7 @@ inline bool load_game() {
     }
 
     afterhours::EntityHelper::merge_entity_arrays();
+    grid->mark_tiles_dirty();
     return f.good();
 }
 

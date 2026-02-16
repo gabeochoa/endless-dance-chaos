@@ -424,88 +424,18 @@ struct HoverTrackingSystem : System<> {
     }
 };
 
-// Render facility labels as 2D text projected from 3D positions
+// Render facility labels as 2D text projected from 3D positions.
+// Uses pre-cached label positions from Grid instead of per-frame grid scan.
 struct RenderFacilityLabelsSystem : System<> {
-    struct FacilityLabel {
-        const char* text;
-        float world_x, world_z;
-        raylib::Color color;
-    };
-
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (!grid || !cam) return;
 
-        // Collect unique facility positions and labels
-        std::vector<FacilityLabel> labels;
+        grid->ensure_caches();
 
-        // Stage
-        float scx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
-        float scz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
-        labels.push_back({"STAGE", scx, scz, {255, 217, 61, 255}});
-
-        // Scan grid for facility clusters (take top-left of each)
-        bool bathroom_found[MAP_SIZE * MAP_SIZE] = {};
-        bool food_found[MAP_SIZE * MAP_SIZE] = {};
-        bool med_found[MAP_SIZE * MAP_SIZE] = {};
-
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                TileType t = grid->at(x, z).type;
-                int idx = z * MAP_SIZE + x;
-                if (t == TileType::Bathroom && !bathroom_found[idx]) {
-                    labels.push_back({"WC",
-                                      (x + 1.0f) * TILESIZE,
-                                      (z + 1.0f) * TILESIZE,
-                                      {126, 207, 192, 255}});
-                    for (int dz = 0; dz < 2; dz++)
-                        for (int dx = 0; dx < 2; dx++)
-                            if (grid->in_bounds(x + dx, z + dz))
-                                bathroom_found[(z + dz) * MAP_SIZE + x + dx] =
-                                    true;
-                } else if (t == TileType::Food && !food_found[idx]) {
-                    labels.push_back({"FOOD",
-                                      (x + 1.0f) * TILESIZE,
-                                      (z + 1.0f) * TILESIZE,
-                                      {244, 164, 164, 255}});
-                    for (int dz = 0; dz < 2; dz++)
-                        for (int dx = 0; dx < 2; dx++)
-                            if (grid->in_bounds(x + dx, z + dz))
-                                food_found[(z + dz) * MAP_SIZE + x + dx] = true;
-                } else if (t == TileType::MedTent && !med_found[idx]) {
-                    labels.push_back({"MED",
-                                      (x + 1.0f) * TILESIZE,
-                                      (z + 1.0f) * TILESIZE,
-                                      {255, 100, 100, 255}});
-                    for (int dz = 0; dz < 2; dz++)
-                        for (int dx = 0; dx < 2; dx++)
-                            if (grid->in_bounds(x + dx, z + dz))
-                                med_found[(z + dz) * MAP_SIZE + x + dx] = true;
-                }
-            }
-        }
-
-        // Gate labels: find first gate tile, place label centered on the 1x2
-        // gate
-        {
-            bool gate_found = false;
-            for (int z = 0; z < MAP_SIZE && !gate_found; z++) {
-                for (int x = 0; x < MAP_SIZE && !gate_found; x++) {
-                    if (grid->at(x, z).type == TileType::Gate) {
-                        // Center label on the gate pair (1x2)
-                        labels.push_back({"GATE",
-                                          x * TILESIZE,
-                                          (z + 0.5f) * TILESIZE,
-                                          {68, 136, 170, 255}});
-                        gate_found = true;
-                    }
-                }
-            }
-        }
-
-        // Project to screen and draw
-        for (auto& lbl : labels) {
+        // Project cached labels to screen and draw
+        for (const auto& lbl : grid->facility_labels) {
             raylib::Vector2 screen = raylib::GetWorldToScreen(
                 {lbl.world_x, 0.6f, lbl.world_z}, cam->cam.camera);
 
@@ -522,8 +452,9 @@ struct RenderFacilityLabelsSystem : System<> {
             raylib::DrawRectangle((int) (tx - 3), (int) (ty - 2),
                                   (int) (m.x + 6), (int) (m.y + 4),
                                   raylib::Color{0, 0, 0, 160});
+            raylib::Color color = {lbl.r, lbl.g, lbl.b, 255};
             raylib::DrawTextEx(get_font(), lbl.text, {tx, ty}, font_size,
-                               FONT_SPACING, lbl.color);
+                               FONT_SPACING, color);
         }
     }
 };
@@ -871,7 +802,9 @@ struct RenderTimelineSidebarSystem : System<> {
     }
 };
 
-// Minimap rendering at bottom of sidebar
+// Minimap rendering at bottom of sidebar.
+// Only re-renders the tile layer when the grid changes (dirty flag).
+// Camera viewport is always updated.
 struct RenderMinimapSystem : System<> {
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
@@ -881,45 +814,48 @@ struct RenderMinimapSystem : System<> {
             g_minimap_texture =
                 raylib::LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
             g_minimap_initialized = true;
+            grid->minimap_dirty = true;
         }
 
-        // Render minimap to texture
-        raylib::BeginTextureMode(g_minimap_texture);
-        raylib::ClearBackground({152, 212, 168, 255});  // grass default
+        // Only re-render tiles when grid has changed
+        if (grid->minimap_dirty) {
+            grid->minimap_dirty = false;
 
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                const auto& tile = grid->at(x, z);
-                if (tile.type == TileType::Grass) continue;
-                raylib::Color c = tile_day_color(tile.type);
-                float px = x * MINIMAP_SCALE;
-                float py = z * MINIMAP_SCALE;
-                float ps =
-                    MINIMAP_SCALE + 0.5f;  // slight overlap to avoid gaps
-                raylib::DrawRectangle((int) px, (int) py, (int) ps, (int) ps,
-                                      c);
+            raylib::BeginTextureMode(g_minimap_texture);
+            raylib::ClearBackground({152, 212, 168, 255});  // grass default
+
+            for (int z = 0; z < MAP_SIZE; z++) {
+                for (int x = 0; x < MAP_SIZE; x++) {
+                    const auto& tile = grid->at(x, z);
+                    if (tile.type == TileType::Grass) continue;
+                    raylib::Color c = tile_day_color(tile.type);
+                    float px = x * MINIMAP_SCALE;
+                    float py = z * MINIMAP_SCALE;
+                    float ps =
+                        MINIMAP_SCALE + 0.5f;  // slight overlap to avoid gaps
+                    raylib::DrawRectangle((int) px, (int) py, (int) ps,
+                                          (int) ps, c);
+                }
             }
-        }
 
-        // Camera viewport rectangle
-        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-        if (cam) {
-            // Approximate visible area in grid coords
-            float zoom = cam->cam.camera.position.y;
-            float view_tiles = zoom * 1.5f;  // rough approximation
-            // Camera target is at position.x, position.z in world space
-            float cam_gx = cam->cam.camera.target.x / TILESIZE;
-            float cam_gz = cam->cam.camera.target.z / TILESIZE;
-            float mm_cx = cam_gx * MINIMAP_SCALE;
-            float mm_cy = cam_gz * MINIMAP_SCALE;
-            float mm_w = view_tiles * MINIMAP_SCALE;
-            float mm_h = view_tiles * MINIMAP_SCALE * 0.6f;
-            raylib::DrawRectangleLines((int) (mm_cx - mm_w / 2),
-                                       (int) (mm_cy - mm_h / 2), (int) mm_w,
-                                       (int) mm_h, raylib::WHITE);
-        }
+            // Camera viewport rectangle (rendered into texture when dirty)
+            auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+            if (cam) {
+                float zoom = cam->cam.camera.position.y;
+                float view_tiles = zoom * 1.5f;
+                float cam_gx = cam->cam.camera.target.x / TILESIZE;
+                float cam_gz = cam->cam.camera.target.z / TILESIZE;
+                float mm_cx = cam_gx * MINIMAP_SCALE;
+                float mm_cy = cam_gz * MINIMAP_SCALE;
+                float mm_w = view_tiles * MINIMAP_SCALE;
+                float mm_h = view_tiles * MINIMAP_SCALE * 0.6f;
+                raylib::DrawRectangleLines((int) (mm_cx - mm_w / 2),
+                                           (int) (mm_cy - mm_h / 2), (int) mm_w,
+                                           (int) mm_h, raylib::WHITE);
+            }
 
-        raylib::EndTextureMode();
+            raylib::EndTextureMode();
+        }
 
         // Re-enter main render texture after minimap detour
         raylib::BeginTextureMode(g_render_texture);

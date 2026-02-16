@@ -316,6 +316,7 @@ struct PathBuildSystem : System<> {
                             }
                         }
                         pds->is_drawing = false;
+                        grid->mark_tiles_dirty();
                         get_audio().play_place();
                     }
                     break;
@@ -367,7 +368,7 @@ struct PathBuildSystem : System<> {
                         bool is_gate = (tile.type == TileType::Gate);
                         if (is_gate && grid->gate_count() <= 1) break;
                         tile.type = TileType::Grass;
-                        if (is_gate) grid->rebuild_gate_cache();
+                        grid->mark_tiles_dirty();
                         get_audio().play_demolish();
                     }
                     break;
@@ -635,8 +636,8 @@ struct AgentMovementSystem : System<Agent, Transform> {
 };
 
 // Pick a spot on the stage floor as close to the stage as possible
-// without being too crowded. Mimics real concert crowd behavior:
-// everyone packs in near the front, only spreading out when it's full.
+// without being too crowded. Uses pre-sorted cached StageFloor positions
+// instead of scanning + sorting the grid on every call.
 std::pair<int, int> random_stage_spot() {
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     auto& rng = RandomEngine::get();
@@ -644,58 +645,31 @@ std::pair<int, int> random_stage_spot() {
     float scz = STAGE_Z + STAGE_SIZE / 2.0f;
 
     if (grid) {
-        int r = static_cast<int>(std::ceil(STAGE_WATCH_RADIUS));
-        int cx = static_cast<int>(scx);
-        int cz = static_cast<int>(scz);
+        grid->ensure_caches();
+        const auto& spots = grid->stage_floor_spots;
 
-        struct Spot {
-            int x, z;
-            float dist;
-            int crowd;
-        };
-        std::vector<Spot> candidates;
-        for (int z = cz - r; z <= cz + r; z++) {
-            for (int x = cx - r; x <= cx + r; x++) {
-                if (!grid->in_bounds(x, z)) continue;
-                if (grid->at(x, z).type != TileType::StageFloor) continue;
-                float dx = x - scx;
-                float dz = z - scz;
-                float d = std::sqrt(dx * dx + dz * dz);
-                int crowd = grid->at(x, z).agent_count;
-                candidates.push_back({x, z, d, crowd});
-            }
-        }
-
-        if (!candidates.empty()) {
-            // Sort by distance (closest to stage first)
-            std::sort(
-                candidates.begin(), candidates.end(),
-                [](const Spot& a, const Spot& b) { return a.dist < b.dist; });
-
-            // Pick the closest tile that isn't too crowded.
-            // "Too crowded" threshold is low so agents pack in but
-            // overflow to the next ring when a tile fills up.
+        if (!spots.empty()) {
             constexpr int CROWD_THRESHOLD = 4;
-            for (auto& s : candidates) {
-                if (s.crowd < CROWD_THRESHOLD) {
-                    // Add small jitter: sometimes pick a neighbor instead
-                    // to avoid all agents targeting the exact same tile
+            for (const auto& s : spots) {
+                int crowd = grid->at(s.x, s.z).agent_count;
+                if (crowd < CROWD_THRESHOLD) {
                     if (rng.get_float(0.f, 1.f) < 0.3f) continue;
                     return {s.x, s.z};
                 }
             }
 
-            // All tiles crowded — pick the least crowded one near the front
+            // All tiles crowded — pick the least crowded near the front
             int best_idx = 0;
-            int best_crowd = candidates[0].crowd;
-            int search_limit = std::min((int) candidates.size(), 20);
+            int best_crowd = grid->at(spots[0].x, spots[0].z).agent_count;
+            int search_limit = std::min((int) spots.size(), 20);
             for (int i = 1; i < search_limit; i++) {
-                if (candidates[i].crowd < best_crowd) {
-                    best_crowd = candidates[i].crowd;
+                int crowd = grid->at(spots[i].x, spots[i].z).agent_count;
+                if (crowd < best_crowd) {
+                    best_crowd = crowd;
                     best_idx = i;
                 }
             }
-            return {candidates[best_idx].x, candidates[best_idx].z};
+            return {spots[best_idx].x, spots[best_idx].z};
         }
     }
 
@@ -735,55 +709,34 @@ static bool facility_is_full(int gx, int gz, const Grid& grid) {
     return grid.at(gx, gz).agent_count >= FACILITY_MAX_AGENTS;
 }
 
-// Find facilities of a given type sorted by distance, skipping full ones.
-// Returns the closest non-full facility, or the closest full one if all are
-// full (so agents still move toward it for urgent needs like bathroom).
+// Find closest facility of a given type using cached positions.
+// Returns the closest non-full tile, or closest full one for urgent needs.
 static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
-                                                 TileType type,
-                                                 const Grid& grid,
+                                                 TileType type, Grid& grid,
                                                  bool urgent = false) {
-    struct FacEntry {
-        int x, z, dist;
-        bool full;
-    };
-    std::vector<FacEntry> found;
+    const auto& positions = grid.get_facility_positions(type);
+    if (positions.empty()) return {-1, -1};
 
-    // Collect unique facility anchor tiles (top-left of each footprint)
-    // To avoid counting the same 2x2 facility 4 times, track seen anchors
-    std::set<std::pair<int, int>> seen;
-    for (int z = 0; z < MAP_SIZE; z++) {
-        for (int x = 0; x < MAP_SIZE; x++) {
-            if (grid.at(x, z).type != type) continue;
-            // Use this tile as a candidate (dedup via distance later)
-            auto key = std::make_pair(x, z);
-            if (seen.count(key)) continue;
-            seen.insert(key);
+    // Find closest non-full and closest overall in a single pass
+    int best_x = -1, best_z = -1, best_dist = INT_MAX;
+    int closest_x = -1, closest_z = -1, closest_dist = INT_MAX;
 
-            int dist = std::abs(x - from_x) + std::abs(z - from_z);
-            bool full = facility_is_full(x, z, grid);
-            found.push_back({x, z, dist, full});
+    for (auto [x, z] : positions) {
+        int dist = std::abs(x - from_x) + std::abs(z - from_z);
+        if (dist < closest_dist) {
+            closest_dist = dist;
+            closest_x = x;
+            closest_z = z;
+        }
+        if (!facility_is_full(x, z, grid) && dist < best_dist) {
+            best_dist = dist;
+            best_x = x;
+            best_z = z;
         }
     }
 
-    // Sort by distance
-    std::sort(
-        found.begin(), found.end(),
-        [](const FacEntry& a, const FacEntry& b) { return a.dist < b.dist; });
-
-    // Try up to 3 closest non-full facilities
-    for (int i = 0; i < std::min((int) found.size(), 3); i++) {
-        if (!found[i].full) {
-            return {found[i].x, found[i].z};
-        }
-    }
-
-    // All full: urgent needs keep heading to closest, non-urgent gives up
-    if (urgent && !found.empty()) {
-        return {found[0].x, found[0].z};
-    }
-    if (!found.empty()) {
-        return {-1, -1};  // non-urgent: give up
-    }
+    if (best_x >= 0) return {best_x, best_z};
+    if (urgent) return {closest_x, closest_z};
     return {-1, -1};
 }
 
@@ -810,64 +763,62 @@ struct NeedTickSystem : System<Agent, AgentNeeds> {
     }
 };
 
-// Select agent's goal based on need priority: bathroom > food > stage
+// Select agent's goal based on need priority: bathroom > food > stage.
+// Skips agents that are already heading to the correct facility type
+// to avoid redundant find_nearest_facility calls every frame.
 struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float) override {
         if (skip_game_logic()) return;
-        // Don't change goal while being serviced or watching
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
+        // Determine what the agent SHOULD want based on current needs
+        FacilityType desired = FacilityType::Stage;
+        bool urgent = false;
+
+        bool needs_medical =
+            (!e.is_missing<AgentHealth>() && e.get<AgentHealth>().hp < 0.4f);
+        if (needs_medical) {
+            desired = FacilityType::MedTent;
+            urgent = true;
+        } else if (needs.needs_bathroom) {
+            desired = FacilityType::Bathroom;
+            urgent = true;
+        } else if (needs.needs_food) {
+            desired = FacilityType::Food;
+            urgent = false;
+        }
+
+        // Already heading to the right facility with a valid target? Skip.
+        if (agent.want == desired && agent.target_grid_x >= 0) return;
+
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
 
-        // Low HP? Seek medical tent (highest priority)
-        bool needs_medical = false;
-        if (!e.is_missing<AgentHealth>() && e.get<AgentHealth>().hp < 0.4f &&
-            agent.want != FacilityType::MedTent) {
-            auto [mx, mz] = find_nearest_facility(
-                cur_gx, cur_gz, TileType::MedTent, *grid, true);
-            if (mx >= 0) {
-                agent.want = FacilityType::MedTent;
-                agent.target_grid_x = mx;
-                agent.target_grid_z = mz;
-                needs_medical = true;
-            }
-        }
-
-        if (!needs_medical && needs.needs_bathroom) {
-            auto [bx, bz] = find_nearest_facility(
-                cur_gx, cur_gz, TileType::Bathroom, *grid, true);
-            if (bx >= 0) {
-                agent.want = FacilityType::Bathroom;
-                agent.target_grid_x = bx;
-                agent.target_grid_z = bz;
-            }
-        } else if (!needs_medical && needs.needs_food) {
-            // Food is non-urgent — give up if all are full
-            auto [fx, fz] = find_nearest_facility(cur_gx, cur_gz,
-                                                  TileType::Food, *grid, false);
-            if (fx >= 0) {
-                agent.want = FacilityType::Food;
-                agent.target_grid_x = fx;
-                agent.target_grid_z = fz;
-            } else {
-                // All food facilities full — go back to stage
-                needs.needs_food = false;
-                needs.food_timer = 0.f;
+        if (desired == FacilityType::Stage) {
+            if (agent.want != FacilityType::Stage &&
+                agent.want != FacilityType::MedTent) {
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = random_stage_spot();
                 agent.target_grid_x = rsx;
                 agent.target_grid_z = rsz;
             }
-        } else if (!needs_medical) {
-            // Default: go to stage
-            if (agent.want != FacilityType::Stage &&
-                agent.want != FacilityType::MedTent) {
+        } else {
+            TileType tile_type = facility_type_to_tile(desired);
+            auto [fx, fz] =
+                find_nearest_facility(cur_gx, cur_gz, tile_type, *grid, urgent);
+            if (fx >= 0) {
+                agent.want = desired;
+                agent.target_grid_x = fx;
+                agent.target_grid_z = fz;
+            } else if (desired == FacilityType::Food) {
+                // All food full — go back to stage
+                needs.needs_food = false;
+                needs.food_timer = 0.f;
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = random_stage_spot();
                 agent.target_grid_x = rsx;
@@ -1090,6 +1041,7 @@ struct ExodusSystem : System<> {
         }
 
         // Keep gate pheromone at max during Exodus (uses cached positions)
+        grid->ensure_caches();
         for (auto [gx, gz] : grid->gate_positions) {
             grid->at(gx, gz).pheromone[Tile::PHERO_EXIT] = 255;
         }
@@ -1155,14 +1107,16 @@ struct PheromoneDepositSystem : System<Agent, Transform, PheromoneDepositor> {
     }
 };
 
-// Decay all pheromones periodically
+// Decay all pheromones periodically (time-based, not frame-rate dependent)
 struct DecayPheromonesSystem : System<> {
-    int frame_counter = 0;
+    float accumulator = 0.f;
+    static constexpr float DECAY_INTERVAL = 1.5f;  // seconds between decays
 
-    void once(float) override {
+    void once(float dt) override {
         if (skip_game_logic()) return;
-        frame_counter++;
-        if (frame_counter % 90 != 0) return;  // ~1.5 sec at 60fps
+        accumulator += dt;
+        if (accumulator < DECAY_INTERVAL) return;
+        accumulator -= DECAY_INTERVAL;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -1452,25 +1406,25 @@ struct RandomEventSystem : System<> {
         auto active_events =
             EntityQuery().whereHasComponent<ActiveEvent>().gen();
 
-        // Tick active events
+        // Tick active events and check for completion
+        bool any_active = false;
         for (Entity& ev_entity : active_events) {
             auto& ev = ev_entity.get<ActiveEvent>();
             ev.elapsed += dt;
             if (ev.elapsed >= ev.duration) {
-                // Event ended - create toast
                 spawn_toast(ev.description + " has ended.");
                 ev_entity.cleanup = true;
+            } else {
+                any_active = true;
             }
         }
-        EntityHelper::cleanup();
 
         // Spawn new event?
         if (diff->event_timer < diff->next_event_time) return;
 
-        // Don't stack events
-        auto current_events =
-            EntityQuery().whereHasComponent<ActiveEvent>().gen_count();
-        if (current_events > 0) return;
+        // Don't stack events (check via flag instead of mid-frame
+        // cleanup+query)
+        if (any_active) return;
 
         diff->event_timer = 0.f;
         // Next event sooner as difficulty increases

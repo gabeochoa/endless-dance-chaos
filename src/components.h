@@ -63,6 +63,32 @@ struct Grid : afterhours::BaseComponent {
     // Cached gate positions for fast access during exodus / count_gates
     std::vector<std::pair<int, int>> gate_positions;
 
+    // Cached facility tile positions (individual tiles, not anchors).
+    // Used by find_nearest_facility to avoid full grid scans.
+    std::vector<std::pair<int, int>> bathroom_positions;
+    std::vector<std::pair<int, int>> food_positions;
+    std::vector<std::pair<int, int>> medtent_positions;
+
+    // Cached StageFloor positions sorted by distance from stage center.
+    // Used by random_stage_spot to avoid per-call grid scan + sort.
+    struct StageSpot {
+        int x, z;
+        float dist;
+    };
+    std::vector<StageSpot> stage_floor_spots;
+
+    // Cached facility label info for RenderFacilityLabelsSystem.
+    struct FacilityLabel {
+        const char* text;
+        float world_x, world_z;
+        uint8_t r, g, b;
+    };
+    std::vector<FacilityLabel> facility_labels;
+
+    // Dirty flags for lazy cache rebuilds
+    bool caches_dirty = true;
+    bool minimap_dirty = true;
+
     int index(int x, int z) const { return z * MAP_SIZE + x; }
 
     bool in_bounds(int x, int z) const {
@@ -89,25 +115,104 @@ struct Grid : afterhours::BaseComponent {
         return x >= PLAY_MIN && x <= PLAY_MAX && z >= PLAY_MIN && z <= PLAY_MAX;
     }
 
+    // Mark tile caches as needing rebuild (call after any tile type change)
+    void mark_tiles_dirty() {
+        caches_dirty = true;
+        minimap_dirty = true;
+    }
+
     // Fill a rectangular footprint with the given tile type
     void place_footprint(int x, int z, int w, int h, TileType type) {
         for (int dz = 0; dz < h; dz++)
             for (int dx = 0; dx < w; dx++)
                 if (in_bounds(x + dx, z + dz)) at(x + dx, z + dz).type = type;
+        mark_tiles_dirty();
     }
 
-    // Rebuild the gate position cache (call after placing/removing gates)
-    void rebuild_gate_cache() {
+    // Rebuild all tile-derived caches if dirty
+    void ensure_caches() {
+        if (!caches_dirty) return;
+        caches_dirty = false;
+
+        // Gate positions
         gate_positions.clear();
-        for (int z = 0; z < MAP_SIZE; z++)
-            for (int x = 0; x < MAP_SIZE; x++)
-                if (at(x, z).type == TileType::Gate)
-                    gate_positions.push_back({x, z});
+        bathroom_positions.clear();
+        food_positions.clear();
+        medtent_positions.clear();
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                switch (at(x, z).type) {
+                    case TileType::Gate:
+                        gate_positions.push_back({x, z});
+                        break;
+                    case TileType::Bathroom:
+                        bathroom_positions.push_back({x, z});
+                        break;
+                    case TileType::Food:
+                        food_positions.push_back({x, z});
+                        break;
+                    case TileType::MedTent:
+                        medtent_positions.push_back({x, z});
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        // StageFloor spots sorted by distance from stage center
+        float scx = STAGE_X + STAGE_SIZE / 2.0f;
+        float scz = STAGE_Z + STAGE_SIZE / 2.0f;
+        stage_floor_spots.clear();
+        int r = static_cast<int>(std::ceil(STAGE_WATCH_RADIUS));
+        int cx = static_cast<int>(scx);
+        int cz = static_cast<int>(scz);
+        for (int z = cz - r; z <= cz + r; z++) {
+            for (int x = cx - r; x <= cx + r; x++) {
+                if (!in_bounds(x, z)) continue;
+                if (at(x, z).type != TileType::StageFloor) continue;
+                float dx = x - scx;
+                float dz = z - scz;
+                stage_floor_spots.push_back(
+                    {x, z, std::sqrt(dx * dx + dz * dz)});
+            }
+        }
+        std::sort(stage_floor_spots.begin(), stage_floor_spots.end(),
+                  [](const StageSpot& a, const StageSpot& b) {
+                      return a.dist < b.dist;
+                  });
+
+        // Facility labels for the render system
+        rebuild_facility_labels();
     }
 
     // Number of gate pairs (each gate is 2 tiles)
-    int gate_count() const {
+    int gate_count() {
+        ensure_caches();
         return static_cast<int>(gate_positions.size()) / 2;
+    }
+
+    // Legacy compatibility: explicit gate cache rebuild
+    void rebuild_gate_cache() { mark_tiles_dirty(); }
+
+    // Get cached positions for a facility TileType
+    const std::vector<std::pair<int, int>>& get_facility_positions(
+        TileType type) {
+        ensure_caches();
+        switch (type) {
+            case TileType::Bathroom:
+                return bathroom_positions;
+            case TileType::Food:
+                return food_positions;
+            case TileType::MedTent:
+                return medtent_positions;
+            case TileType::Gate:
+                return gate_positions;
+            default:
+                // Return empty for non-facility types
+                static const std::vector<std::pair<int, int>> empty;
+                return empty;
+        }
     }
 
     // Initialize perimeter fence, gate, and pre-placed facilities
@@ -152,7 +257,52 @@ struct Grid : afterhours::BaseComponent {
         place_footprint(MEDTENT_X, MEDTENT_Z, FACILITY_SIZE, FACILITY_SIZE,
                         TileType::MedTent);
 
-        rebuild_gate_cache();
+        mark_tiles_dirty();
+    }
+
+   private:
+    // Rebuild facility label positions for the render system
+    void rebuild_facility_labels() {
+        facility_labels.clear();
+
+        // Stage (always at fixed position)
+        facility_labels.push_back(
+            {"STAGE", (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE,
+             (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE, 255, 217, 61});
+
+        // Scan for unique facility anchors (top-left of each 2x2)
+        bool seen[MAP_SIZE * MAP_SIZE] = {};
+        auto add_facility = [&](int x, int z, TileType /*type*/,
+                                const char* text, uint8_t r, uint8_t g,
+                                uint8_t b) {
+            int idx = z * MAP_SIZE + x;
+            if (seen[idx]) return;
+            facility_labels.push_back(
+                {text, (x + 1.0f) * TILESIZE, (z + 1.0f) * TILESIZE, r, g, b});
+            for (int dz = 0; dz < 2; dz++)
+                for (int dx = 0; dx < 2; dx++)
+                    if (in_bounds(x + dx, z + dz))
+                        seen[(z + dz) * MAP_SIZE + x + dx] = true;
+        };
+
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                TileType t = at(x, z).type;
+                if (t == TileType::Bathroom)
+                    add_facility(x, z, t, "WC", 126, 207, 192);
+                else if (t == TileType::Food)
+                    add_facility(x, z, t, "FOOD", 244, 164, 164);
+                else if (t == TileType::MedTent)
+                    add_facility(x, z, t, "MED", 255, 100, 100);
+            }
+        }
+
+        // First gate
+        if (!gate_positions.empty()) {
+            auto [gx, gz] = gate_positions[0];
+            facility_labels.push_back(
+                {"GATE", gx * TILESIZE, (gz + 0.5f) * TILESIZE, 68, 136, 170});
+        }
     }
 };
 
