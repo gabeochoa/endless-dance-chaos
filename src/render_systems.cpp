@@ -345,6 +345,34 @@ struct RenderUISystem : System<> {
                          raylib::Color{255, 255, 100, 255});
         }
 
+        // Toast messages (top area, centered)
+        {
+            auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+            float toast_y = 42.f;
+            for (Entity& te : toasts) {
+                auto& toast = te.get<ToastMessage>();
+                float alpha = 1.0f;
+                if (toast.elapsed > toast.lifetime - toast.fade_duration) {
+                    alpha =
+                        (toast.lifetime - toast.elapsed) / toast.fade_duration;
+                }
+                unsigned char a = static_cast<unsigned char>(alpha * 255);
+                auto measure = raylib::MeasureTextEx(
+                    get_font(), toast.text.c_str(), 18, 1.0f);
+                float tx = (DEFAULT_SCREEN_WIDTH - measure.x) / 2.f;
+                raylib::DrawRectangle(
+                    (int) (tx - 8), (int) (toast_y - 4), (int) (measure.x + 16),
+                    (int) (measure.y + 8), raylib::Color{30, 120, 60, a});
+                raylib::DrawTextEx(get_font(), toast.text.c_str(),
+                                   {tx, toast_y}, 18, 1.0f,
+                                   raylib::Color{255, 255, 255, a});
+                auto& vtr =
+                    afterhours::testing::VisibleTextRegistry::instance();
+                vtr.register_text(toast.text);
+                toast_y += measure.y + 16;
+            }
+        }
+
         // FPS (top-right)
         int fps = raylib::GetFPS();
         std::string fps_text = fmt::format("FPS: {}", fps);

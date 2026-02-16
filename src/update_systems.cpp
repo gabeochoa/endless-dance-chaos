@@ -1254,7 +1254,7 @@ struct UpdateParticlesSystem : System<Particle, Transform> {
     }
 };
 
-// Track time_survived and max_attendees; check for game over
+// Track time_survived and max_attendees; check for game over; progression
 struct TrackStatsSystem : System<> {
     void once(float dt) override {
         if (skip_game_logic()) return;
@@ -1265,8 +1265,35 @@ struct TrackStatsSystem : System<> {
 
         int count = static_cast<int>(
             EntityQuery().whereHasComponent<Agent>().gen_count());
+
+        int old_max = gs->max_attendees;
         if (count > gs->max_attendees) {
             gs->max_attendees = count;
+        }
+
+        // Check for milestone unlock (every 100 max attendees)
+        auto* fs = EntityHelper::get_singleton_cmp<FacilitySlots>();
+        if (fs) {
+            int old_slots = fs->get_slots_per_type(old_max);
+            int new_slots = fs->get_slots_per_type(gs->max_attendees);
+            if (new_slots > old_slots) {
+                // Create toast notification
+                Entity& te = EntityHelper::createEntity();
+                te.addComponent<ToastMessage>();
+                te.get<ToastMessage>().text = "New facility slots unlocked!";
+                log_info("Progression: {} slots per type (max_attendees={})",
+                         new_slots, gs->max_attendees);
+            }
+        }
+    }
+};
+
+// Update toast messages and remove expired ones
+struct UpdateToastsSystem : System<ToastMessage> {
+    void for_each_with(Entity& e, ToastMessage& toast, float dt) override {
+        toast.elapsed += dt;
+        if (toast.elapsed >= toast.lifetime) {
+            e.cleanup = true;
         }
     }
 };
@@ -1374,6 +1401,7 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CrushDamageSystem>());
     sm.register_update_system(std::make_unique<AgentDeathSystem>());
     sm.register_update_system(std::make_unique<TrackStatsSystem>());
+    sm.register_update_system(std::make_unique<UpdateToastsSystem>());
     sm.register_update_system(std::make_unique<CheckGameOverSystem>());
     sm.register_update_system(std::make_unique<RestartGameSystem>());
     sm.register_update_system(std::make_unique<UpdateParticlesSystem>());

@@ -1,0 +1,22 @@
+# Test slot unlocking via progression
+reset_game
+wait 1
+
+# Start with 1 slot each
+assert_slots bathroom eq 1
+assert_slots stage eq 1
+
+# Set max attendees to 150
+set_max_attendees 150
+wait 1
+
+# Should have 2 slots now
+assert_slots bathroom eq 2
+assert_slots stage eq 2
+
+# Set to 250
+set_max_attendees 250
+wait 1
+
+assert_slots bathroom eq 3
+wait 1
