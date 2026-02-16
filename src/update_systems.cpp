@@ -799,6 +799,127 @@ static int facility_to_channel(FacilityType type) {
     return Tile::PHERO_STAGE;
 }
 
+// During Exodus, flood exit pheromone from gates using BFS
+static void flood_exit_pheromone(Grid& grid) {
+    std::queue<std::pair<int, int>> frontier;
+    for (int z = 0; z < MAP_SIZE; z++) {
+        for (int x = 0; x < MAP_SIZE; x++) {
+            if (grid.at(x, z).type == TileType::Gate) {
+                grid.at(x, z).pheromone[Tile::PHERO_EXIT] = 255;
+                frontier.push({x, z});
+            }
+        }
+    }
+    constexpr int dirs[][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    while (!frontier.empty()) {
+        auto [x, z] = frontier.front();
+        frontier.pop();
+        uint8_t current = grid.at(x, z).pheromone[Tile::PHERO_EXIT];
+        if (current <= 5) continue;
+        for (auto [dx, dz] : dirs) {
+            int nx = x + dx, nz = z + dz;
+            if (!grid.in_bounds(nx, nz)) continue;
+            TileType type = grid.at(nx, nz).type;
+            if (type == TileType::Fence || type == TileType::Stage) continue;
+            if (grid.at(nx, nz).pheromone[Tile::PHERO_EXIT] < current - 5) {
+                grid.at(nx, nz).pheromone[Tile::PHERO_EXIT] = current - 5;
+                frontier.push({nx, nz});
+            }
+        }
+    }
+}
+
+// During Exodus phase: switch agents to exit mode and emit exit pheromone
+struct ExodusSystem : System<> {
+    bool flooded_this_exodus = false;
+    GameClock::Phase prev_phase = GameClock::Phase::Day;
+
+    void once(float) override {
+        if (skip_game_logic()) return;
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!clock || !grid) return;
+
+        auto phase = clock->get_phase();
+
+        // Detect entering Exodus phase
+        if (phase == GameClock::Phase::Exodus &&
+            prev_phase != GameClock::Phase::Exodus) {
+            flooded_this_exodus = false;
+            log_info("Exodus begins — gates emitting exit pheromone");
+        }
+
+        // Detect entering Dead Hours — mark carryover
+        if (phase == GameClock::Phase::DeadHours &&
+            prev_phase == GameClock::Phase::Exodus) {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            int count = 0;
+            auto agents = EntityQuery().whereHasComponent<Agent>().gen();
+            for (Entity& e : agents) {
+                if (e.is_missing<CarryoverAgent>()) {
+                    e.addComponent<CarryoverAgent>();
+                    count++;
+                }
+            }
+            if (gs) gs->carryover_count = count;
+            if (count > 0) log_info("Carryover: {} agents stuck", count);
+        }
+
+        prev_phase = phase;
+
+        if (phase != GameClock::Phase::Exodus) return;
+
+        // Flood exit pheromone once at start of Exodus
+        if (!flooded_this_exodus) {
+            flood_exit_pheromone(*grid);
+            flooded_this_exodus = true;
+        }
+
+        // Keep gate pheromone at max during Exodus
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                if (grid->at(x, z).type == TileType::Gate) {
+                    grid->at(x, z).pheromone[Tile::PHERO_EXIT] = 255;
+                }
+            }
+        }
+
+        // Switch all agents to Exit mode
+        auto agents = EntityQuery().whereHasComponent<Agent>().gen();
+        for (Entity& e : agents) {
+            auto& agent = e.get<Agent>();
+            if (agent.want != FacilityType::Exit) {
+                agent.want = FacilityType::Exit;
+                // Target the nearest gate
+                agent.target_grid_x = GATE_X;
+                agent.target_grid_z = GATE_Z1;
+            }
+        }
+    }
+};
+
+// Remove agents that reach a gate during Exodus
+struct GateExitSystem : System<Agent, Transform> {
+    void for_each_with(Entity& e, Agent& agent, Transform& tf, float) override {
+        if (skip_game_logic()) return;
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!clock || clock->get_phase() != GameClock::Phase::Exodus) return;
+        if (agent.want != FacilityType::Exit) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz)) return;
+
+        if (grid->at(gx, gz).type == TileType::Gate) {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            if (gs) gs->agents_exited++;
+            e.cleanup = true;
+        }
+    }
+};
+
 // Deposit pheromones as agents walk away from facilities
 struct PheromoneDepositSystem : System<Agent, Transform, PheromoneDepositor> {
     void for_each_with(Entity&, Agent&, Transform& tf, PheromoneDepositor& dep,
@@ -1152,6 +1273,8 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<NeedTickSystem>());
     sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
     sm.register_update_system(std::make_unique<SpawnAgentSystem>());
+    sm.register_update_system(std::make_unique<ExodusSystem>());
+    sm.register_update_system(std::make_unique<GateExitSystem>());
     sm.register_update_system(std::make_unique<PheromoneDepositSystem>());
     sm.register_update_system(std::make_unique<DecayPheromonesSystem>());
     sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());

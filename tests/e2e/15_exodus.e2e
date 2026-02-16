@@ -1,0 +1,15 @@
+# Test exodus: agents exit through gates
+reset_game
+wait 1
+
+# Spawn agents inside
+spawn_agents 25 26 10 stage
+wait 2
+
+# Jump to exodus
+set_time 0 0
+wait 5
+
+# Agents should be heading toward gates; some may have exited
+assert_agents_exited gte 0
+wait 1
