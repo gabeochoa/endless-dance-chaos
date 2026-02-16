@@ -2,7 +2,7 @@
 reset_game
 wait 1
 
-expect_text "TIMELINE"
+expect_text "LINEUP"
 wait 1
 
 # Set time during performance

@@ -162,93 +162,7 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
                        float) override {
         if (cmd.is_consumed() || !cmd.is("reset_game")) return;
-
-        // Clear all non-permanent entities
-        auto agents = EntityQuery().whereHasComponent<Agent>().gen();
-        for (Entity& agent : agents) {
-            agent.cleanup = true;
-        }
-        EntityHelper::cleanup();
-
-        // Reset grid: clear everything and re-init perimeter + facilities
-        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-        if (grid) {
-            for (auto& tile : grid->tiles) {
-                tile.type = TileType::Grass;
-                tile.agent_count = 0;
-            }
-            grid->init_perimeter();
-        }
-
-        // Reset game state
-        auto* state = EntityHelper::get_singleton_cmp<GameState>();
-        if (state) {
-            state->status = GameStatus::Running;
-            state->game_time = 0.f;
-            state->show_data_layer = false;
-            state->death_count = 0;
-            state->speed_multiplier = 1.0f;
-            state->total_agents_served = 0;
-            state->time_survived = 0.f;
-            state->max_attendees = 0;
-        }
-
-        // Reset spawn state
-        auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
-        if (ss) {
-            ss->interval = DEFAULT_SPAWN_INTERVAL;
-            ss->timer = 0.f;
-            ss->enabled = true;
-        }
-
-        // Reset game clock
-        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
-        if (clock) {
-            clock->game_time_minutes = 600.0f;  // 10:00am
-            clock->speed = GameSpeed::OneX;
-        }
-
-        // Reset artist schedule
-        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
-        if (sched) {
-            sched->schedule.clear();
-            sched->stage_state = StageState::Idle;
-            sched->current_artist_idx = -1;
-        }
-
-        // Reset additional game state fields
-        if (state) {
-            state->agents_exited = 0;
-            state->carryover_count = 0;
-            state->show_debug = false;
-        }
-
-        // Clear pheromones
-        if (grid) {
-            for (auto& tile : grid->tiles) {
-                tile.pheromone = {0, 0, 0, 0, 0};
-            }
-        }
-
-        // Reset difficulty state
-        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
-        if (diff) {
-            diff->day_number = 1;
-            diff->spawn_rate_mult = 1.0f;
-            diff->crowd_size_mult = 1.0f;
-            diff->event_timer = 0.f;
-            diff->next_event_time = 120.f;
-        }
-
-        // Clear particles, toasts, and active events
-        auto particles = EntityQuery().whereHasComponent<Particle>().gen();
-        for (Entity& p : particles) p.cleanup = true;
-        auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
-        for (Entity& t : toasts) t.cleanup = true;
-        auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
-        for (Entity& ev : events) ev.cleanup = true;
-        EntityHelper::cleanup();
-
+        reset_game_state();
         cmd.consume();
     }
 };
@@ -487,10 +401,13 @@ struct HandleClickGridCommand : System<testing::PendingE2ECommand> {
             testing::test_input::simulate_mouse_press();
         }
 
-        // Pre-set hover so PathBuildSystem has valid grid coords next frame
+        // Pre-set hover so PathBuildSystem has valid grid coords next frame.
+        // Lock hover for 2 frames so HoverTrackingSystem doesn't overwrite
+        // before PathBuildSystem sees the click.
         pds->hover_x = gx;
         pds->hover_z = gz;
         pds->hover_valid = true;
+        pds->hover_lock_frames = 2;
 
         log_info("[E2E] click_grid ({}, {}) injected mouse press", gx, gz);
         cmd.consume();
@@ -1532,25 +1449,16 @@ struct HandlePlaceBuildingCommand : System<testing::PendingE2ECommand> {
         std::transform(type.begin(), type.end(), type.begin(), ::tolower);
         int x = std::stoi(cmd.args[1]), z = std::stoi(cmd.args[2]);
         if (type == "gate") {
-            if (grid->in_bounds(x, z) && grid->in_bounds(x, z + 1)) {
-                grid->at(x, z).type = TileType::Gate;
-                grid->at(x, z + 1).type = TileType::Gate;
-            }
+            grid->place_footprint(x, z, 1, 2, TileType::Gate);
+            grid->rebuild_gate_cache();
         } else if (type == "stage") {
-            for (int dz = 0; dz < 4; dz++)
-                for (int dx = 0; dx < 4; dx++)
-                    if (grid->in_bounds(x + dx, z + dz))
-                        grid->at(x + dx, z + dz).type = TileType::Stage;
+            grid->place_footprint(x, z, 4, 4, TileType::Stage);
         } else if (type == "bathroom") {
-            for (int dz = 0; dz < 2; dz++)
-                for (int dx = 0; dx < 2; dx++)
-                    if (grid->in_bounds(x + dx, z + dz))
-                        grid->at(x + dx, z + dz).type = TileType::Bathroom;
+            grid->place_footprint(x, z, 2, 2, TileType::Bathroom);
         } else if (type == "food") {
-            for (int dz = 0; dz < 2; dz++)
-                for (int dx = 0; dx < 2; dx++)
-                    if (grid->in_bounds(x + dx, z + dz))
-                        grid->at(x + dx, z + dz).type = TileType::Food;
+            grid->place_footprint(x, z, 2, 2, TileType::Food);
+        } else if (type == "medtent" || type == "med") {
+            grid->place_footprint(x, z, 2, 2, TileType::MedTent);
         }
         cmd.consume();
     }

@@ -89,6 +89,81 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
     return e;
 }
 
+void reset_game_state() {
+    // Clear all agents, particles, toasts, and active events
+    auto agents = EntityQuery().whereHasComponent<Agent>().gen();
+    for (Entity& a : agents) a.cleanup = true;
+    auto particles = EntityQuery().whereHasComponent<Particle>().gen();
+    for (Entity& p : particles) p.cleanup = true;
+    auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+    for (Entity& t : toasts) t.cleanup = true;
+    auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+    for (Entity& ev : events) ev.cleanup = true;
+    EntityHelper::cleanup();
+
+    // Reset grid
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (grid) {
+        for (auto& tile : grid->tiles) {
+            tile.type = TileType::Grass;
+            tile.agent_count = 0;
+            tile.pheromone = {0, 0, 0, 0, 0};
+        }
+        grid->init_perimeter();
+    }
+
+    // Reset game state
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) {
+        gs->status = GameStatus::Running;
+        gs->game_time = 0.f;
+        gs->death_count = 0;
+        gs->total_agents_served = 0;
+        gs->time_survived = 0.f;
+        gs->max_attendees = 0;
+        gs->show_data_layer = false;
+        gs->show_debug = false;
+        gs->speed_multiplier = 1.0f;
+        gs->agents_exited = 0;
+        gs->carryover_count = 0;
+    }
+
+    // Reset spawn state
+    auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+    if (ss) {
+        ss->interval = DEFAULT_SPAWN_INTERVAL;
+        ss->timer = 0.f;
+        ss->enabled = true;
+        ss->manual_override = false;
+    }
+
+    // Reset game clock
+    auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+    if (clock) {
+        clock->game_time_minutes = 600.0f;  // 10:00am
+        clock->speed = GameSpeed::OneX;
+        clock->debug_time_mult = 0.f;
+    }
+
+    // Reset artist schedule
+    auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+    if (sched) {
+        sched->schedule.clear();
+        sched->stage_state = StageState::Idle;
+        sched->current_artist_idx = -1;
+    }
+
+    // Reset difficulty state
+    auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+    if (diff) {
+        diff->day_number = 1;
+        diff->spawn_rate_mult = 1.0f;
+        diff->crowd_size_mult = 1.0f;
+        diff->event_timer = 0.f;
+        diff->next_event_time = 120.f;
+    }
+}
+
 bool should_escape_quit() {
     auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
     if (pds && (pds->is_drawing || pds->demolish_mode)) {

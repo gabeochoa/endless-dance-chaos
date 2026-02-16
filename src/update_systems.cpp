@@ -33,6 +33,16 @@ static bool game_is_paused() {
 // Helper: check if game logic should be skipped (paused or game over)
 static bool skip_game_logic() { return game_is_over() || game_is_paused(); }
 
+// Helper: create a toast notification entity with audio cue
+static void spawn_toast(const std::string& text, float lifetime = 3.0f) {
+    Entity& te = EntityHelper::createEntity();
+    te.addComponent<ToastMessage>();
+    auto& toast = te.get<ToastMessage>();
+    toast.text = text;
+    toast.lifetime = lifetime;
+    get_audio().play_toast();
+}
+
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
         cam.cam.handle_input(dt);
@@ -237,15 +247,6 @@ static bool can_place_at(const Grid& grid, int x, int z, int w, int h) {
     return true;
 }
 
-// Count gates on the map
-static int count_gates(const Grid& grid) {
-    int count = 0;
-    for (int z = 0; z < MAP_SIZE; z++)
-        for (int x = 0; x < MAP_SIZE; x++)
-            if (grid.at(x, z).type == TileType::Gate) count++;
-    return count / 2;  // gates are 2x1
-}
-
 // Handle all build tools: rect drag for path/fence, point for facilities
 struct PathBuildSystem : System<> {
     void once(float) override {
@@ -321,48 +322,36 @@ struct PathBuildSystem : System<> {
                 }
                 case BuildTool::Gate: {
                     if (can_place_at(*grid, hx, hz, 1, 2)) {
-                        grid->at(hx, hz).type = TileType::Gate;
-                        grid->at(hx, hz + 1).type = TileType::Gate;
+                        grid->place_footprint(hx, hz, 1, 2, TileType::Gate);
+                        grid->rebuild_gate_cache();
                         get_audio().play_place();
                     }
                     break;
                 }
                 case BuildTool::Stage: {
                     if (can_place_at(*grid, hx, hz, 4, 4)) {
-                        for (int dz = 0; dz < 4; dz++)
-                            for (int dx = 0; dx < 4; dx++)
-                                grid->at(hx + dx, hz + dz).type =
-                                    TileType::Stage;
+                        grid->place_footprint(hx, hz, 4, 4, TileType::Stage);
                         get_audio().play_place();
                     }
                     break;
                 }
                 case BuildTool::Bathroom: {
                     if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        for (int dz = 0; dz < 2; dz++)
-                            for (int dx = 0; dx < 2; dx++)
-                                grid->at(hx + dx, hz + dz).type =
-                                    TileType::Bathroom;
+                        grid->place_footprint(hx, hz, 2, 2, TileType::Bathroom);
                         get_audio().play_place();
                     }
                     break;
                 }
                 case BuildTool::Food: {
                     if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        for (int dz = 0; dz < 2; dz++)
-                            for (int dx = 0; dx < 2; dx++)
-                                grid->at(hx + dx, hz + dz).type =
-                                    TileType::Food;
+                        grid->place_footprint(hx, hz, 2, 2, TileType::Food);
                         get_audio().play_place();
                     }
                     break;
                 }
                 case BuildTool::MedTent: {
                     if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        for (int dz = 0; dz < 2; dz++)
-                            for (int dx = 0; dx < 2; dx++)
-                                grid->at(hx + dx, hz + dz).type =
-                                    TileType::MedTent;
+                        grid->place_footprint(hx, hz, 2, 2, TileType::MedTent);
                         get_audio().play_place();
                     }
                     break;
@@ -375,10 +364,10 @@ struct PathBuildSystem : System<> {
                         tile.type == TileType::Food ||
                         tile.type == TileType::MedTent ||
                         tile.type == TileType::Stage) {
-                        if (tile.type == TileType::Gate &&
-                            count_gates(*grid) <= 1)
-                            break;
+                        bool is_gate = (tile.type == TileType::Gate);
+                        if (is_gate && grid->gate_count() <= 1) break;
                         tile.type = TileType::Grass;
+                        if (is_gate) grid->rebuild_gate_cache();
                         get_audio().play_demolish();
                     }
                     break;
@@ -998,17 +987,7 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
         TileType cur_type = grid->at(gx, gz).type;
 
         // Check if we've arrived at the correct facility type
-        bool at_target = false;
-        if (agent.want == FacilityType::Bathroom &&
-            cur_type == TileType::Bathroom) {
-            at_target = true;
-        } else if (agent.want == FacilityType::Food &&
-                   cur_type == TileType::Food) {
-            at_target = true;
-        } else if (agent.want == FacilityType::MedTent &&
-                   cur_type == TileType::MedTent) {
-            at_target = true;
-        }
+        bool at_target = (cur_type == facility_type_to_tile(agent.want));
 
         if (at_target) {
             // Check capacity
@@ -1110,13 +1089,9 @@ struct ExodusSystem : System<> {
             flooded_this_exodus = true;
         }
 
-        // Keep gate pheromone at max during Exodus
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                if (grid->at(x, z).type == TileType::Gate) {
-                    grid->at(x, z).pheromone[Tile::PHERO_EXIT] = 255;
-                }
-            }
+        // Keep gate pheromone at max during Exodus (uses cached positions)
+        for (auto [gx, gz] : grid->gate_positions) {
+            grid->at(gx, gz).pheromone[Tile::PHERO_EXIT] = 255;
         }
 
         // Switch all agents to Exit mode
@@ -1416,10 +1391,7 @@ struct TrackStatsSystem : System<> {
             int old_slots = fs->get_slots_per_type(old_max);
             int new_slots = fs->get_slots_per_type(gs->max_attendees);
             if (new_slots > old_slots) {
-                Entity& te = EntityHelper::createEntity();
-                te.addComponent<ToastMessage>();
-                te.get<ToastMessage>().text = "New facility slots unlocked!";
-                get_audio().play_toast();
+                spawn_toast("New facility slots unlocked!");
                 log_info("Progression: {} slots per type (max_attendees={})",
                          new_slots, gs->max_attendees);
             }
@@ -1462,64 +1434,7 @@ struct RestartGameSystem : System<> {
 
         if (action_pressed(InputAction::Restart)) {
             log_info("Restarting game...");
-
-            // Clear all agents
-            auto agents = EntityQuery().whereHasComponent<Agent>().gen();
-            for (Entity& agent : agents) {
-                agent.cleanup = true;
-            }
-            // Clear all particles
-            auto particles = EntityQuery().whereHasComponent<Particle>().gen();
-            for (Entity& p : particles) {
-                p.cleanup = true;
-            }
-            EntityHelper::cleanup();
-
-            // Reset grid
-            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-            if (grid) {
-                for (auto& tile : grid->tiles) {
-                    tile.type = TileType::Grass;
-                    tile.agent_count = 0;
-                }
-                grid->init_perimeter();
-            }
-
-            // Reset game state
-            gs->status = GameStatus::Running;
-            gs->game_time = 0.f;
-            gs->death_count = 0;
-            gs->total_agents_served = 0;
-            gs->time_survived = 0.f;
-            gs->max_attendees = 0;
-            gs->show_data_layer = false;
-
-            // Reset spawn state
-            auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
-            if (ss) {
-                ss->interval = DEFAULT_SPAWN_INTERVAL;
-                ss->timer = 0.f;
-                ss->enabled = true;
-            }
-
-            // Reset game clock
-            auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
-            if (clock) {
-                clock->game_time_minutes = 600.0f;  // 10:00am
-                clock->speed = GameSpeed::OneX;
-            }
-
-            // Reset artist schedule
-            auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
-            if (sched) {
-                sched->schedule.clear();
-                sched->stage_state = StageState::Idle;
-                sched->current_artist_idx = -1;
-            }
-
-            // Reset game state extras
-            gs->agents_exited = 0;
-            gs->carryover_count = 0;
+            reset_game_state();
         }
     }
 };
@@ -1543,10 +1458,7 @@ struct RandomEventSystem : System<> {
             ev.elapsed += dt;
             if (ev.elapsed >= ev.duration) {
                 // Event ended - create toast
-                Entity& te = EntityHelper::createEntity();
-                te.addComponent<ToastMessage>();
-                te.get<ToastMessage>().text = ev.description + " has ended.";
-                get_audio().play_toast();
+                spawn_toast(ev.description + " has ended.");
                 ev_entity.cleanup = true;
             }
         }
@@ -1596,10 +1508,7 @@ struct RandomEventSystem : System<> {
         }
 
         // Notify player
-        Entity& toast_e = EntityHelper::createEntity();
-        toast_e.addComponent<ToastMessage>();
-        toast_e.get<ToastMessage>().text = "Event: " + ev.description + "!";
-        get_audio().play_toast();
+        spawn_toast("Event: " + ev.description + "!");
     }
 };
 
@@ -1650,11 +1559,7 @@ struct DifficultyScalingSystem : System<> {
             diff->spawn_rate_mult = 1.0f + (diff->day_number - 1) * 0.15f;
             diff->crowd_size_mult = 1.0f + (diff->day_number - 1) * 0.1f;
 
-            Entity& te = EntityHelper::createEntity();
-            te.addComponent<ToastMessage>();
-            te.get<ToastMessage>().text =
-                fmt::format("Day {} begins!", diff->day_number);
-            get_audio().play_toast();
+            spawn_toast(fmt::format("Day {} begins!", diff->day_number));
         }
         last_hour = hour;
 
@@ -1671,21 +1576,13 @@ struct SaveLoadSystem : System<> {
         if (game_is_over()) return;
         if (action_pressed(InputAction::QuickSave)) {
             if (save::save_game()) {
-                Entity& te = EntityHelper::createEntity();
-                te.addComponent<ToastMessage>();
-                te.get<ToastMessage>().text = "Game saved!";
-                te.get<ToastMessage>().lifetime = 2.0f;
-                get_audio().play_toast();
+                spawn_toast("Game saved!", 2.0f);
                 log_info("Game saved to {}", save::SAVE_FILE);
             }
         }
         if (action_pressed(InputAction::QuickLoad)) {
             if (save::load_game()) {
-                Entity& te = EntityHelper::createEntity();
-                te.addComponent<ToastMessage>();
-                te.get<ToastMessage>().text = "Game loaded!";
-                te.get<ToastMessage>().lifetime = 2.0f;
-                get_audio().play_toast();
+                spawn_toast("Game loaded!", 2.0f);
                 log_info("Game loaded from {}", save::SAVE_FILE);
             }
         }

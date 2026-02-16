@@ -60,6 +60,9 @@ struct Tile {
 struct Grid : afterhours::BaseComponent {
     std::array<Tile, MAP_SIZE * MAP_SIZE> tiles{};
 
+    // Cached gate positions for fast access during exodus / count_gates
+    std::vector<std::pair<int, int>> gate_positions;
+
     int index(int x, int z) const { return z * MAP_SIZE + x; }
 
     bool in_bounds(int x, int z) const {
@@ -84,6 +87,27 @@ struct Grid : afterhours::BaseComponent {
     // Check if position is in the playable area (inside fence)
     bool in_playable(int x, int z) const {
         return x >= PLAY_MIN && x <= PLAY_MAX && z >= PLAY_MIN && z <= PLAY_MAX;
+    }
+
+    // Fill a rectangular footprint with the given tile type
+    void place_footprint(int x, int z, int w, int h, TileType type) {
+        for (int dz = 0; dz < h; dz++)
+            for (int dx = 0; dx < w; dx++)
+                if (in_bounds(x + dx, z + dz)) at(x + dx, z + dz).type = type;
+    }
+
+    // Rebuild the gate position cache (call after placing/removing gates)
+    void rebuild_gate_cache() {
+        gate_positions.clear();
+        for (int z = 0; z < MAP_SIZE; z++)
+            for (int x = 0; x < MAP_SIZE; x++)
+                if (at(x, z).type == TileType::Gate)
+                    gate_positions.push_back({x, z});
+    }
+
+    // Number of gate pairs (each gate is 2 tiles)
+    int gate_count() const {
+        return static_cast<int>(gate_positions.size()) / 2;
     }
 
     // Initialize perimeter fence, gate, and pre-placed facilities
@@ -116,29 +140,37 @@ struct Grid : afterhours::BaseComponent {
         }
 
         // Stage (4x4) — placed after floor so it overwrites the center
-        for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
-            for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
-                if (in_bounds(x, z)) at(x, z).type = TileType::Stage;
-
+        place_footprint(STAGE_X, STAGE_Z, STAGE_SIZE, STAGE_SIZE,
+                        TileType::Stage);
         // Bathroom (2x2)
-        for (int z = BATHROOM_Z; z < BATHROOM_Z + FACILITY_SIZE; z++)
-            for (int x = BATHROOM_X; x < BATHROOM_X + FACILITY_SIZE; x++)
-                if (in_bounds(x, z)) at(x, z).type = TileType::Bathroom;
-
+        place_footprint(BATHROOM_X, BATHROOM_Z, FACILITY_SIZE, FACILITY_SIZE,
+                        TileType::Bathroom);
         // Food (2x2)
-        for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++)
-            for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++)
-                if (in_bounds(x, z)) at(x, z).type = TileType::Food;
-
+        place_footprint(FOOD_X, FOOD_Z, FACILITY_SIZE, FACILITY_SIZE,
+                        TileType::Food);
         // Medical Tent (2x2)
-        for (int z = MEDTENT_Z; z < MEDTENT_Z + FACILITY_SIZE; z++)
-            for (int x = MEDTENT_X; x < MEDTENT_X + FACILITY_SIZE; x++)
-                if (in_bounds(x, z)) at(x, z).type = TileType::MedTent;
+        place_footprint(MEDTENT_X, MEDTENT_Z, FACILITY_SIZE, FACILITY_SIZE,
+                        TileType::MedTent);
+
+        rebuild_gate_cache();
     }
 };
 
 // Facility types (for agents to want)
 enum class FacilityType { Bathroom, Food, Stage, Exit, MedTent };
+
+// Map FacilityType to its corresponding TileType.
+// Indexed by FacilityType enum value.
+inline TileType facility_type_to_tile(FacilityType type) {
+    constexpr TileType MAP[] = {
+        TileType::Bathroom,  // Bathroom
+        TileType::Food,      // Food
+        TileType::Stage,     // Stage
+        TileType::Gate,      // Exit
+        TileType::MedTent,   // MedTent
+    };
+    return MAP[static_cast<int>(type)];
+}
 
 // Agent component - walks toward target using greedy neighbor pathfinding
 struct Agent : afterhours::BaseComponent {
@@ -419,6 +451,10 @@ struct PathDrawState : afterhours::BaseComponent {
 
     // Demolish mode
     bool demolish_mode = false;
+
+    // When > 0, HoverTrackingSystem skips and decrements instead of
+    // overwriting hover. Used by E2E click_grid to preserve injected hover.
+    int hover_lock_frames = 0;
 
     // Get rectangle bounds (min/max) for drawing preview
     void get_rect(int& min_x, int& min_z, int& max_x, int& max_z) const {

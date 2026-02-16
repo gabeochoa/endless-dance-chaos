@@ -395,6 +395,14 @@ struct HoverTrackingSystem : System<> {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!pds || !cam || !grid) return;
 
+        // E2E click_grid sets hover_lock_frames to prevent us from
+        // overwriting its injected hover values until PathBuildSystem
+        // has a chance to see them.
+        if (pds->hover_lock_frames > 0) {
+            --pds->hover_lock_frames;
+            return;
+        }
+
         auto mouse = input::get_mouse_position();
 
         // Block grid interaction when mouse is over UI

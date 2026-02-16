@@ -15,5 +15,8 @@ afterhours::Entity& make_sophie();
 afterhours::Entity& make_agent(int grid_x, int grid_z, FacilityType want,
                                int target_x = -1, int target_z = -1);
 
+// Reset all game state to initial values (shared by restart + E2E reset_game)
+void reset_game_state();
+
 // Check if escape should quit
 bool should_escape_quit();
