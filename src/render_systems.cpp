@@ -375,14 +375,40 @@ struct EndMode3DSystem : System<> {
 // Update hover grid position from mouse (runs in render phase after EndMode3D
 // because GetWorldToScreen needs internal raylib state from the 3D pass)
 struct HoverTrackingSystem : System<> {
+    // Check if mouse is over any UI panel (build bar, top bar, sidebar, debug)
+    static bool mouse_over_ui(float mx, float my) {
+        // Top bar (44px)
+        if (my < 44) return true;
+        // Build bar (54px at bottom)
+        if (my > DEFAULT_SCREEN_HEIGHT - 54) return true;
+        // Timeline sidebar (150px on right)
+        if (mx > DEFAULT_SCREEN_WIDTH - 150) return true;
+        // Debug panel (if visible)
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (gs && gs->show_debug) {
+            float pw = 300, ph = 240;
+            float px = 10;
+            float py = DEFAULT_SCREEN_HEIGHT - 54 - ph - 10;
+            if (mx >= px && mx <= px + pw && my >= py && my <= py + ph)
+                return true;
+        }
+        return false;
+    }
+
     void once(float) const override {
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!pds || !cam || !grid) return;
 
-        // Use afterhours input API so E2E injected positions are respected
         auto mouse = input::get_mouse_position();
+
+        // Block grid interaction when mouse is over UI
+        if (mouse_over_ui(mouse.x, mouse.y)) {
+            pds->hover_valid = false;
+            return;
+        }
+
         auto result = cam->cam.screen_to_grid(mouse.x, mouse.y);
 
         if (result.has_value()) {
