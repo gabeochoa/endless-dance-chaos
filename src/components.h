@@ -39,6 +39,19 @@ enum class TileType {
 struct Tile {
     TileType type = TileType::Grass;
     int agent_count = 0;
+
+    // 4 pheromone channels: Bathroom, Food, Stage, Exit
+    std::array<uint8_t, 4> pheromone = {0, 0, 0, 0};
+
+    static constexpr int PHERO_BATHROOM = 0;
+    static constexpr int PHERO_FOOD = 1;
+    static constexpr int PHERO_STAGE = 2;
+    static constexpr int PHERO_EXIT = 3;
+
+    static float to_strength(uint8_t val) { return val * (10.0f / 255.0f); }
+    static uint8_t from_strength(float s) {
+        return static_cast<uint8_t>(std::clamp(s * 25.5f, 0.0f, 255.0f));
+    }
 };
 
 // Grid singleton - holds the MAP_SIZE x MAP_SIZE tile map
@@ -118,7 +131,7 @@ struct Grid : afterhours::BaseComponent {
 };
 
 // Facility types (for agents to want)
-enum class FacilityType { Bathroom, Food, Stage };
+enum class FacilityType { Bathroom, Food, Stage, Exit };
 
 // Agent component - walks toward target using greedy neighbor pathfinding
 struct Agent : afterhours::BaseComponent {
@@ -167,6 +180,17 @@ struct Particle : afterhours::BaseComponent {
     raylib::Color color = {255, 80, 80, 255};
 };
 
+// Pheromone depositor: agent leaves trail after exiting facility
+struct PheromoneDepositor : afterhours::BaseComponent {
+    FacilityType leaving_type = FacilityType::Bathroom;
+    bool is_depositing = false;
+    float deposit_distance = 0.f;
+    static constexpr float MAX_DEPOSIT_DISTANCE = 30.0f;
+};
+
+// Tag: agent carried over from previous day (stuck after exodus)
+struct CarryoverAgent : afterhours::BaseComponent {};
+
 // Attached while agent is being serviced inside a facility
 struct BeingServiced : afterhours::BaseComponent {
     int facility_grid_x = 0;
@@ -189,12 +213,48 @@ struct GameState : afterhours::BaseComponent {
     int total_agents_served = 0;
     float time_survived = 0.f;  // total seconds played
     int max_attendees = 0;      // peak simultaneous agents
+    int agents_exited = 0;      // agents who left through gates
+    int carryover_count = 0;    // agents stuck after exodus
 
     bool is_game_over() const { return status == GameStatus::GameOver; }
 };
 
+// Toast notification (fades after a few seconds)
+struct ToastMessage : afterhours::BaseComponent {
+    std::string text;
+    float lifetime = 3.0f;
+    float elapsed = 0.f;
+    float fade_duration = 0.5f;
+};
+
+// Facility slot tracking for progression
+struct FacilitySlots : afterhours::BaseComponent {
+    int stages_placed = 1;
+    int bathrooms_placed = 1;
+    int food_placed = 1;
+    int gates_placed = 1;
+
+    int get_slots_per_type(int max_attendees_ever) const {
+        return 1 + (max_attendees_ever / 100);
+    }
+
+    bool can_place(FacilityType type, int max_attendees_ever) const {
+        int slots = get_slots_per_type(max_attendees_ever);
+        switch (type) {
+            case FacilityType::Bathroom:
+                return bathrooms_placed < slots;
+            case FacilityType::Food:
+                return food_placed < slots;
+            case FacilityType::Stage:
+                return stages_placed < slots;
+            default:
+                return true;
+        }
+    }
+};
+
 // Build tool - what the player is currently placing
-enum class BuildTool { Path, Bathroom, Food, Stage };
+enum class BuildTool { Path, Fence, Gate, Stage, Bathroom, Food, Demolish };
 
 struct BuilderState : afterhours::BaseComponent {
     bool active = true;
@@ -256,6 +316,43 @@ struct GameClock : afterhours::BaseComponent {
                 return "Dead Hours";
         }
         return "Unknown";
+    }
+};
+
+// Stage state machine
+enum class StageState { Idle, Announcing, Performing, Clearing };
+
+// Single scheduled artist
+struct ScheduledArtist {
+    std::string name;
+    float start_time_minutes = 0.f;
+    float duration_minutes = 60.f;
+    int expected_crowd = 100;
+    bool announced = false;
+    bool performing = false;
+    bool finished = false;
+};
+
+// Artist schedule singleton (sliding window)
+struct ArtistSchedule : afterhours::BaseComponent {
+    std::vector<ScheduledArtist> schedule;
+    int look_ahead = 6;
+    StageState stage_state = StageState::Idle;
+    int current_artist_idx = -1;
+
+    ScheduledArtist* get_current() {
+        if (current_artist_idx >= 0 &&
+            current_artist_idx < (int) schedule.size() &&
+            schedule[current_artist_idx].performing)
+            return &schedule[current_artist_idx];
+        return nullptr;
+    }
+
+    ScheduledArtist* get_next() {
+        for (auto& a : schedule) {
+            if (!a.finished && !a.performing) return &a;
+        }
+        return nullptr;
     }
 };
 

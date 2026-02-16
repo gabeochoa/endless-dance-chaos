@@ -73,6 +73,146 @@ struct UpdateGameClockSystem : System<> {
     }
 };
 
+// Generate a scheduled artist at a given start time
+static ScheduledArtist generate_artist(float start_minutes, int max_att) {
+    auto& rng = RandomEngine::get();
+    ScheduledArtist a;
+    a.name = fmt::format("Artist {:03d}", rng.get_int(100, 999));
+    a.start_time_minutes = start_minutes;
+    a.duration_minutes = rng.get_float(30.f, 60.f);
+    int base = 50 + (max_att / 10);
+    int variation = static_cast<int>(base * 0.3f);
+    a.expected_crowd = base + rng.get_int(-variation, variation);
+    if (a.expected_crowd < 20) a.expected_crowd = 20;
+    return a;
+}
+
+// Fill schedule with look-ahead artists starting from given time
+static void fill_schedule(ArtistSchedule& sched, float after_time,
+                          int max_att) {
+    // Fixed 2-hour slots: 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
+    static constexpr float slots[] = {600, 720, 840, 960, 1080, 1200, 1320};
+    static constexpr int NUM_SLOTS = 7;
+
+    while ((int) sched.schedule.size() < sched.look_ahead) {
+        // Find next available slot after the latest scheduled artist
+        float last_end = after_time;
+        if (!sched.schedule.empty()) {
+            auto& back = sched.schedule.back();
+            last_end = back.start_time_minutes + back.duration_minutes + 30.f;
+        }
+        // Find the next slot time
+        float next_slot = -1;
+        for (int i = 0; i < NUM_SLOTS; i++) {
+            if (slots[i] >= last_end) {
+                next_slot = slots[i];
+                break;
+            }
+        }
+        if (next_slot < 0) {
+            // Wrap to next day: add 1440 to first slot
+            next_slot = slots[0] + 1440.f;
+        }
+        sched.schedule.push_back(generate_artist(next_slot, max_att));
+    }
+}
+
+// Update artist schedule: advance states, manage stage state machine
+struct UpdateArtistScheduleSystem : System<> {
+    bool initialized = false;
+
+    void once(float) override {
+        if (skip_game_logic()) return;
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!sched || !clock || !gs) return;
+
+        float now = clock->game_time_minutes;
+
+        // Initialize schedule on first run
+        if (!initialized) {
+            fill_schedule(*sched, now, gs->max_attendees);
+            initialized = true;
+        }
+
+        // Update artist states
+        sched->stage_state = StageState::Idle;
+        sched->current_artist_idx = -1;
+
+        for (int i = 0; i < (int) sched->schedule.size(); i++) {
+            auto& a = sched->schedule[i];
+            if (a.finished) continue;
+
+            float end_time = a.start_time_minutes + a.duration_minutes;
+            float announce_time = a.start_time_minutes - 15.f;
+
+            if (now >= end_time) {
+                // Performance ended
+                if (a.performing) {
+                    a.performing = false;
+                    a.finished = true;
+                    sched->stage_state = StageState::Clearing;
+                    log_info("Artist '{}' finished", a.name);
+                }
+            } else if (now >= a.start_time_minutes) {
+                // Performing
+                if (!a.performing) {
+                    a.performing = true;
+                    a.announced = true;
+                    log_info("Artist '{}' now performing (crowd ~{})", a.name,
+                             a.expected_crowd);
+                }
+                sched->stage_state = StageState::Performing;
+                sched->current_artist_idx = i;
+                break;
+            } else if (now >= announce_time) {
+                // Announcing
+                if (!a.announced) {
+                    a.announced = true;
+                    log_info("Announcing: '{}' at {}", a.name,
+                             fmt::format("{:02d}:{:02d}",
+                                         (int) (a.start_time_minutes / 60) % 24,
+                                         (int) a.start_time_minutes % 60));
+                }
+                sched->stage_state = StageState::Announcing;
+                break;
+            } else {
+                break;  // Future artists not yet relevant
+            }
+        }
+
+        // Prune finished artists and refill
+        while (!sched->schedule.empty() && sched->schedule.front().finished) {
+            sched->schedule.erase(sched->schedule.begin());
+            if (sched->current_artist_idx > 0) sched->current_artist_idx--;
+        }
+        if ((int) sched->schedule.size() < sched->look_ahead) {
+            fill_schedule(*sched, now, gs->max_attendees);
+        }
+
+        // Adjust spawn rate based on artist schedule
+        auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+        if (ss) {
+            float base_rate = 1.f / DEFAULT_SPAWN_INTERVAL;
+            auto* current = sched->get_current();
+            auto* next = sched->get_next();
+
+            if (current) {
+                float mult = current->expected_crowd / 100.0f;
+                if (mult < 0.5f) mult = 0.5f;
+                ss->interval = 1.f / (base_rate * mult);
+            } else if (next && now > next->start_time_minutes - 15.f) {
+                float mult = next->expected_crowd / 100.0f;
+                if (mult < 0.5f) mult = 0.5f;
+                ss->interval = 1.f / (base_rate * mult);
+            } else {
+                ss->interval = DEFAULT_SPAWN_INTERVAL;
+            }
+        }
+    }
+};
+
 // Handle path drawing (rectangle drag) and demolish mode
 struct PathBuildSystem : System<> {
     void once(float) override {
@@ -357,6 +497,10 @@ struct SpawnAgentSystem : System<> {
         if (skip_game_logic()) return;
         auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
         if (!ss || !ss->enabled) return;
+
+        // Don't spawn during Dead Hours (3am-10am)
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock && clock->get_phase() == GameClock::Phase::DeadHours) return;
 
         ss->timer += dt;
         if (ss->timer >= ss->interval) {
@@ -905,6 +1049,18 @@ struct RestartGameSystem : System<> {
                 clock->game_time_minutes = 600.0f;  // 10:00am
                 clock->speed = GameSpeed::OneX;
             }
+
+            // Reset artist schedule
+            auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+            if (sched) {
+                sched->schedule.clear();
+                sched->stage_state = StageState::Idle;
+                sched->current_artist_idx = -1;
+            }
+
+            // Reset game state extras
+            gs->agents_exited = 0;
+            gs->carryover_count = 0;
         }
     }
 };
@@ -912,6 +1068,7 @@ struct RestartGameSystem : System<> {
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<UpdateGameClockSystem>());
+    sm.register_update_system(std::make_unique<UpdateArtistScheduleSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
     sm.register_update_system(std::make_unique<ToggleDataLayerSystem>());
     sm.register_update_system(std::make_unique<NeedTickSystem>());

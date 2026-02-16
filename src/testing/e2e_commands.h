@@ -1065,6 +1065,263 @@ struct HandleAssertTimeBetweenCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// assert_stage_state STATE — assert stage state
+// (idle/announcing/performing/clearing)
+struct HandleAssertStageStateCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_stage_state")) return;
+        if (cmd.args.empty()) {
+            cmd.consume();
+            return;
+        }
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        if (!sched) {
+            log_warn("assert_stage_state: no ArtistSchedule");
+            cmd.consume();
+            return;
+        }
+        std::string expected = cmd.args[0];
+        std::transform(expected.begin(), expected.end(), expected.begin(),
+                       ::tolower);
+        std::string actual;
+        switch (sched->stage_state) {
+            case StageState::Idle:
+                actual = "idle";
+                break;
+            case StageState::Announcing:
+                actual = "announcing";
+                break;
+            case StageState::Performing:
+                actual = "performing";
+                break;
+            case StageState::Clearing:
+                actual = "clearing";
+                break;
+        }
+        if (actual == expected) {
+            log_info("assert_stage_state PASSED: {}", actual);
+        } else {
+            log_error("assert_stage_state FAILED: expected '{}', got '{}'",
+                      expected, actual);
+        }
+        cmd.consume();
+    }
+};
+
+// force_artist NAME CROWD DURATION — schedule a specific artist next
+struct HandleForceArtistCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("force_artist")) return;
+        if (cmd.args.size() < 3) {
+            cmd.consume();
+            return;
+        }
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!sched || !clock) {
+            cmd.consume();
+            return;
+        }
+        ScheduledArtist a;
+        a.name = cmd.args[0];
+        a.expected_crowd = std::stoi(cmd.args[1]);
+        a.duration_minutes = std::stof(cmd.args[2]);
+        a.start_time_minutes = clock->game_time_minutes + 1.f;
+        sched->schedule.insert(sched->schedule.begin(), a);
+        log_info("force_artist: '{}' crowd={} dur={}", a.name, a.expected_crowd,
+                 a.duration_minutes);
+        cmd.consume();
+    }
+};
+
+// assert_agents_exited OP VALUE
+struct HandleAssertAgentsExitedCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agents_exited")) return;
+        if (cmd.args.size() < 2) {
+            cmd.consume();
+            return;
+        }
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.consume();
+            return;
+        }
+        if (compare_op(gs->agents_exited, cmd.args[0],
+                       std::stoi(cmd.args[1]))) {
+            log_info("assert_agents_exited PASSED: {} {} {}", gs->agents_exited,
+                     cmd.args[0], cmd.args[1]);
+        } else {
+            log_error("assert_agents_exited FAILED: {} {} {} (actual: {})",
+                      gs->agents_exited, cmd.args[0], cmd.args[1],
+                      gs->agents_exited);
+        }
+        cmd.consume();
+    }
+};
+
+// assert_carryover_count OP VALUE
+struct HandleAssertCarryoverCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_carryover_count")) return;
+        if (cmd.args.size() < 2) {
+            cmd.consume();
+            return;
+        }
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.consume();
+            return;
+        }
+        if (compare_op(gs->carryover_count, cmd.args[0],
+                       std::stoi(cmd.args[1]))) {
+            log_info("assert_carryover_count PASSED: {}", gs->carryover_count);
+        } else {
+            log_error("assert_carryover_count FAILED: actual={}",
+                      gs->carryover_count);
+        }
+        cmd.consume();
+    }
+};
+
+// set_pheromone X Z CHANNEL VALUE
+struct HandleSetPheromoneCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_pheromone")) return;
+        if (cmd.args.size() < 4) {
+            cmd.consume();
+            return;
+        }
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.consume();
+            return;
+        }
+        int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
+        int ch = std::stoi(cmd.args[2]);
+        int val = std::stoi(cmd.args[3]);
+        if (grid->in_bounds(x, z) && ch >= 0 && ch < 4) {
+            grid->at(x, z).pheromone[ch] =
+                static_cast<uint8_t>(std::clamp(val, 0, 255));
+        }
+        cmd.consume();
+    }
+};
+
+// assert_pheromone X Z CHANNEL OP VALUE
+struct HandleAssertPheromoneCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_pheromone")) return;
+        if (cmd.args.size() < 5) {
+            cmd.consume();
+            return;
+        }
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.consume();
+            return;
+        }
+        int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
+        int ch = std::stoi(cmd.args[2]);
+        if (grid->in_bounds(x, z) && ch >= 0 && ch < 4) {
+            int actual = grid->at(x, z).pheromone[ch];
+            if (compare_op(actual, cmd.args[3], std::stoi(cmd.args[4]))) {
+                log_info("assert_pheromone PASSED: ({},{}) ch={} val={}", x, z,
+                         ch, actual);
+            } else {
+                log_error(
+                    "assert_pheromone FAILED: ({},{}) ch={} actual={} {} {}", x,
+                    z, ch, actual, cmd.args[3], cmd.args[4]);
+            }
+        }
+        cmd.consume();
+    }
+};
+
+// clear_pheromones — reset all pheromones to 0
+struct HandleClearPheromonesCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("clear_pheromones")) return;
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (grid) {
+            for (auto& tile : grid->tiles) tile.pheromone = {0, 0, 0, 0};
+        }
+        cmd.consume();
+    }
+};
+
+// set_max_attendees VALUE
+struct HandleSetMaxAttendeesCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_max_attendees")) return;
+        if (cmd.args.empty()) {
+            cmd.consume();
+            return;
+        }
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (gs) gs->max_attendees = std::stoi(cmd.args[0]);
+        cmd.consume();
+    }
+};
+
+// assert_max_attendees OP VALUE
+struct HandleAssertMaxAttendeesCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_max_attendees")) return;
+        if (cmd.args.size() < 2) {
+            cmd.consume();
+            return;
+        }
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) {
+            cmd.consume();
+            return;
+        }
+        if (compare_op(gs->max_attendees, cmd.args[0],
+                       std::stoi(cmd.args[1]))) {
+            log_info("assert_max_attendees PASSED: {}", gs->max_attendees);
+        } else {
+            log_error("assert_max_attendees FAILED: actual={}",
+                      gs->max_attendees);
+        }
+        cmd.consume();
+    }
+};
+
+// assert_slots TYPE OP VALUE
+struct HandleAssertSlotsCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_slots")) return;
+        if (cmd.args.size() < 3) {
+            cmd.consume();
+            return;
+        }
+        auto* fs = EntityHelper::get_singleton_cmp<FacilitySlots>();
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!fs || !gs) {
+            cmd.consume();
+            return;
+        }
+        int slots = fs->get_slots_per_type(gs->max_attendees);
+        if (compare_op(slots, cmd.args[1], std::stoi(cmd.args[2]))) {
+            log_info("assert_slots PASSED: {} slots={}", cmd.args[0], slots);
+        } else {
+            log_error("assert_slots FAILED: {} actual={}", cmd.args[0], slots);
+        }
+        cmd.consume();
+    }
+};
+
 // Register all custom E2E command handler systems
 void register_e2e_systems(SystemManager& sm) {
     // Register built-in handlers first
@@ -1114,6 +1371,19 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<HandleAssertPhaseCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertTimeBetweenCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertStageStateCommand>());
+    sm.register_update_system(std::make_unique<HandleForceArtistCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertAgentsExitedCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertCarryoverCommand>());
+    sm.register_update_system(std::make_unique<HandleSetPheromoneCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertPheromoneCommand>());
+    sm.register_update_system(std::make_unique<HandleClearPheromonesCommand>());
+    sm.register_update_system(std::make_unique<HandleSetMaxAttendeesCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertMaxAttendeesCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertSlotsCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);

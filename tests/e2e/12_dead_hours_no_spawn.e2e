@@ -1,0 +1,13 @@
+# Test no spawning during dead hours
+reset_game
+wait 1
+
+set_time 4 0
+wait 1
+clear_agents
+wait 2
+
+# Wait — no agents should spawn during dead hours
+wait 3
+assert_agent_count eq 0
+wait 1

@@ -38,6 +38,12 @@ Entity& make_sophie() {
     sophie.addComponent<GameClock>();
     EntityHelper::registerSingleton<GameClock>(sophie);
 
+    sophie.addComponent<ArtistSchedule>();
+    EntityHelper::registerSingleton<ArtistSchedule>(sophie);
+
+    sophie.addComponent<FacilitySlots>();
+    EntityHelper::registerSingleton<FacilitySlots>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();

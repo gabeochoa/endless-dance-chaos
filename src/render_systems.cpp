@@ -95,6 +95,24 @@ struct RenderGridSystem : System<> {
     }
 };
 
+// Stage performance glow overlay
+struct RenderStageGlowSystem : System<> {
+    void once(float) const override {
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        if (!sched || sched->stage_state != StageState::Performing) return;
+
+        float tile_size = TILESIZE * 0.98f;
+        raylib::Color glow = {255, 200, 0, 80};
+
+        for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
+            for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
+                raylib::DrawPlane({x * TILESIZE, 0.06f, z * TILESIZE},
+                                  {tile_size, tile_size}, glow);
+            }
+        }
+    }
+};
+
 // Render agents as small person-shaped primitives in 3D space
 struct RenderAgentsSystem : System<Agent, Transform> {
     static constexpr raylib::Color AGENT_COLOR = {212, 165, 116,
@@ -530,6 +548,7 @@ struct EndRenderSystem : System<> {
 void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
     sm.register_render_system(std::make_unique<RenderGridSystem>());
+    sm.register_render_system(std::make_unique<RenderStageGlowSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
     sm.register_render_system(std::make_unique<RenderDensityOverlaySystem>());
     sm.register_render_system(std::make_unique<RenderParticlesSystem>());
