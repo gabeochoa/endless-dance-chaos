@@ -1,0 +1,13 @@
+# Test timeline sidebar displays
+reset_game
+wait 1
+
+expect_text "TIMELINE"
+wait 1
+
+# Set time during performance
+set_time 10 30
+wait 2
+
+# Timeline should be visible (verified via screenshots)
+wait 1

@@ -435,6 +435,79 @@ struct RenderUISystem : System<> {
     }
 };
 
+// Timeline sidebar showing artist schedule
+struct RenderTimelineSidebarSystem : System<> {
+    void once(float) const override {
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!sched || !clock) return;
+
+        float sidebar_w = 150.f;
+        float sidebar_x = DEFAULT_SCREEN_WIDTH - sidebar_w;
+        float sidebar_y = 0.f;
+        float sidebar_h = static_cast<float>(DEFAULT_SCREEN_HEIGHT);
+
+        // Background
+        raylib::DrawRectangle((int) sidebar_x, (int) sidebar_y, (int) sidebar_w,
+                              (int) sidebar_h, raylib::Color{15, 15, 25, 200});
+
+        // Title
+        raylib::DrawTextEx(get_font(), "TIMELINE", {sidebar_x + 10, 8}, 16,
+                           1.0f, raylib::Color{255, 220, 100, 255});
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        vtr.register_text("TIMELINE");
+
+        // NOW marker at ~20% from top
+        float now_y = sidebar_y + sidebar_h * 0.2f;
+        raylib::DrawLine((int) sidebar_x, (int) now_y,
+                         (int) (sidebar_x + sidebar_w), (int) now_y,
+                         raylib::Color{255, 100, 100, 255});
+        raylib::DrawTextEx(get_font(), "NOW", {sidebar_x + 6, now_y - 14}, 12,
+                           1.0f, raylib::Color{255, 100, 100, 255});
+
+        float now_minutes = clock->game_time_minutes;
+        float px_per_minute = 2.0f;
+
+        // Draw artist blocks
+        for (auto& a : sched->schedule) {
+            float minutes_from_now = a.start_time_minutes - now_minutes;
+            float block_y = now_y + minutes_from_now * px_per_minute;
+            float block_h = a.duration_minutes * px_per_minute;
+
+            // Skip if off screen
+            if (block_y + block_h < sidebar_y ||
+                block_y > sidebar_y + sidebar_h)
+                continue;
+
+            // Background color
+            raylib::Color bg = a.performing ? raylib::Color{255, 217, 61, 64}
+                                            // warm yellow highlight
+                                            : raylib::Color{40, 40, 60, 180};
+            raylib::DrawRectangle((int) (sidebar_x + 4), (int) block_y,
+                                  (int) (sidebar_w - 8), (int) block_h, bg);
+            raylib::DrawRectangleLines((int) (sidebar_x + 4), (int) block_y,
+                                       (int) (sidebar_w - 8), (int) block_h,
+                                       raylib::Color{100, 100, 120, 200});
+
+            // Artist name
+            std::string label =
+                a.performing ? fmt::format("> {}", a.name) : a.name;
+            raylib::DrawTextEx(get_font(), label.c_str(),
+                               {sidebar_x + 10, block_y + 4}, 13, 1.0f,
+                               raylib::WHITE);
+
+            // Time and crowd
+            int h = (int) (a.start_time_minutes / 60) % 24;
+            int m = (int) a.start_time_minutes % 60;
+            std::string info =
+                fmt::format("{:02d}:{:02d} ~{}", h, m, a.expected_crowd);
+            raylib::DrawTextEx(get_font(), info.c_str(),
+                               {sidebar_x + 10, block_y + 20}, 11, 1.0f,
+                               raylib::Color{180, 180, 200, 255});
+        }
+    }
+};
+
 // Debug panel with sliders for tuning
 struct RenderDebugPanelSystem : System<> {
     // Draw a horizontal slider, returns new value. Handles mouse interaction.
@@ -556,6 +629,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
+    sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
     sm.register_render_system(std::make_unique<RenderDebugPanelSystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
