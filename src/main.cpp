@@ -3,6 +3,7 @@
 
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
 #include "afterhours/src/plugins/e2e_testing/test_input.h"
+#include "audio.h"
 #include "entity_makers.h"
 #include "game.h"
 #include "mcp_integration.h"
@@ -118,6 +119,12 @@ int main(int argc, char* argv[]) {
     raylib::SetTargetFPS(500);
     raylib::SetExitKey(0);  // Disable Escape from closing window
 
+    // Initialize audio (skip in test mode for speed)
+    raylib::InitAudioDevice();
+    if (!g_test_mode) {
+        get_audio().init();
+    }
+
     // Create render texture for MCP screenshots
     g_render_texture =
         raylib::LoadRenderTexture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
@@ -136,6 +143,8 @@ int main(int argc, char* argv[]) {
     game(test_script, test_dir);
 
     mcp_integration::shutdown();
+    get_audio().shutdown();
+    raylib::CloseAudioDevice();
     raylib::UnloadRenderTexture(g_render_texture);
     raylib::CloseWindow();
 

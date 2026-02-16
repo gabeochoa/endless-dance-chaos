@@ -4,6 +4,7 @@
 
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
+#include "audio.h"
 #include "components.h"
 #include "engine/random_engine.h"
 #include "entity_makers.h"
@@ -307,6 +308,7 @@ struct PathBuildSystem : System<> {
                             }
                         }
                         pds->is_drawing = false;
+                        get_audio().play_place();
                     }
                     break;
                 }
@@ -314,6 +316,7 @@ struct PathBuildSystem : System<> {
                     if (can_place_at(*grid, hx, hz, 1, 2)) {
                         grid->at(hx, hz).type = TileType::Gate;
                         grid->at(hx, hz + 1).type = TileType::Gate;
+                        get_audio().play_place();
                     }
                     break;
                 }
@@ -323,6 +326,7 @@ struct PathBuildSystem : System<> {
                             for (int dx = 0; dx < 4; dx++)
                                 grid->at(hx + dx, hz + dz).type =
                                     TileType::Stage;
+                        get_audio().play_place();
                     }
                     break;
                 }
@@ -332,6 +336,7 @@ struct PathBuildSystem : System<> {
                             for (int dx = 0; dx < 2; dx++)
                                 grid->at(hx + dx, hz + dz).type =
                                     TileType::Bathroom;
+                        get_audio().play_place();
                     }
                     break;
                 }
@@ -341,6 +346,7 @@ struct PathBuildSystem : System<> {
                             for (int dx = 0; dx < 2; dx++)
                                 grid->at(hx + dx, hz + dz).type =
                                     TileType::Food;
+                        get_audio().play_place();
                     }
                     break;
                 }
@@ -351,11 +357,11 @@ struct PathBuildSystem : System<> {
                         tile.type == TileType::Bathroom ||
                         tile.type == TileType::Food ||
                         tile.type == TileType::Stage) {
-                        // Don't demolish last gate
                         if (tile.type == TileType::Gate &&
                             count_gates(*grid) <= 1)
                             break;
                         tile.type = TileType::Grass;
+                        get_audio().play_demolish();
                     }
                     break;
                 }
@@ -1179,6 +1185,7 @@ struct AgentDeathSystem : System<> {
 
             if (gs) {
                 gs->death_count++;
+                get_audio().play_death();
                 log_info("Agent died at ({}, {}), deaths: {}/{}", gx, gz,
                          gs->death_count, gs->max_deaths);
             }
@@ -1277,10 +1284,10 @@ struct TrackStatsSystem : System<> {
             int old_slots = fs->get_slots_per_type(old_max);
             int new_slots = fs->get_slots_per_type(gs->max_attendees);
             if (new_slots > old_slots) {
-                // Create toast notification
                 Entity& te = EntityHelper::createEntity();
                 te.addComponent<ToastMessage>();
                 te.get<ToastMessage>().text = "New facility slots unlocked!";
+                get_audio().play_toast();
                 log_info("Progression: {} slots per type (max_attendees={})",
                          new_slots, gs->max_attendees);
             }
@@ -1306,6 +1313,8 @@ struct CheckGameOverSystem : System<> {
 
         if (gs->death_count >= gs->max_deaths) {
             gs->status = GameStatus::GameOver;
+            get_audio().play_gameover();
+            get_audio().stop_music();
             log_info("GAME OVER: {} deaths reached", gs->death_count);
         }
     }
@@ -1381,6 +1390,16 @@ struct RestartGameSystem : System<> {
     }
 };
 
+// Update audio: drive beat music based on stage performance state
+struct UpdateAudioSystem : System<> {
+    void once(float) override {
+        if (!get_audio().initialized) return;
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        bool performing = sched && sched->stage_state == StageState::Performing;
+        get_audio().update(performing && !game_is_over());
+    }
+};
+
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<UpdateGameClockSystem>());
@@ -1405,4 +1424,5 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CheckGameOverSystem>());
     sm.register_update_system(std::make_unique<RestartGameSystem>());
     sm.register_update_system(std::make_unique<UpdateParticlesSystem>());
+    sm.register_update_system(std::make_unique<UpdateAudioSystem>());
 }
