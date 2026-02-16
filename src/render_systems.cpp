@@ -484,15 +484,20 @@ struct RenderFacilityLabelsSystem : System<> {
             }
         }
 
-        // Gate labels
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                if (grid->at(x, z).type == TileType::Gate) {
-                    labels.push_back({"GATE",
-                                      x * TILESIZE,
-                                      z * TILESIZE,
-                                      {68, 136, 170, 255}});
-                    break;  // one label per gate cluster
+        // Gate labels: find first gate tile, place label centered on the 1x2
+        // gate
+        {
+            bool gate_found = false;
+            for (int z = 0; z < MAP_SIZE && !gate_found; z++) {
+                for (int x = 0; x < MAP_SIZE && !gate_found; x++) {
+                    if (grid->at(x, z).type == TileType::Gate) {
+                        // Center label on the gate pair (1x2)
+                        labels.push_back({"GATE",
+                                          x * TILESIZE,
+                                          (z + 0.5f) * TILESIZE,
+                                          {68, 136, 170, 255}});
+                        gate_found = true;
+                    }
                 }
             }
         }
@@ -548,20 +553,21 @@ struct RenderUISystem : System<> {
         draw_text(text, x, y, size, color);
     }
 
-    // Build tool colors and labels
+    // Build tool colors, labels, and full names
     struct ToolInfo {
         const char* label;
         raylib::Color color;
+        const char* full_name;
     };
     static constexpr ToolInfo TOOL_INFO[] = {
-        {"P", {184, 168, 138, 255}},   // Path - brown
-        {"F", {136, 136, 136, 255}},   // Fence - gray
-        {"G", {68, 136, 170, 255}},    // Gate - blue
-        {"S", {255, 217, 61, 255}},    // Stage - yellow
-        {"B", {126, 207, 192, 255}},   // Bathroom - cyan
-        {"Fd", {244, 164, 164, 255}},  // Food - coral
-        {"M", {255, 100, 100, 255}},   // MedTent - red cross
-        {"X", {255, 68, 68, 255}},     // Demolish - red
+        {"P", {184, 168, 138, 255}, "Path"},
+        {"F", {136, 136, 136, 255}, "Fence"},
+        {"G", {68, 136, 170, 255}, "Gate"},
+        {"S", {255, 217, 61, 255}, "Stage"},
+        {"B", {126, 207, 192, 255}, "Bathroom"},
+        {"Fd", {244, 164, 164, 255}, "Food Stall"},
+        {"M", {255, 100, 100, 255}, "Med Tent"},
+        {"X", {255, 68, 68, 255}, "Demolish"},
     };
     static constexpr int TOOL_COUNT = 8;
 
@@ -684,6 +690,20 @@ struct RenderUISystem : System<> {
                 float lx = ox + (s - label_m.x) / 2.f;
                 float ly = oy + (s - label_m.y) / 2.f;
                 draw_text(TOOL_INFO[i].label, lx, ly, 16, raylib::WHITE);
+
+                // Hover tooltip
+                if (mouse.x >= ox && mouse.x <= ox + s && mouse.y >= oy &&
+                    mouse.y <= oy + s) {
+                    auto tip_m = measure_text(TOOL_INFO[i].full_name, 16);
+                    float tip_x = ox + (s - tip_m.x) / 2.f;
+                    float tip_y = oy - tip_m.y - 8.f;
+                    raylib::DrawRectangle((int) (tip_x - 4), (int) (tip_y - 2),
+                                          (int) (tip_m.x + 8),
+                                          (int) (tip_m.y + 4),
+                                          raylib::Color{20, 20, 30, 220});
+                    draw_text(TOOL_INFO[i].full_name, tip_x, tip_y, 16,
+                              raylib::WHITE);
+                }
             }
         }
 
@@ -751,67 +771,7 @@ struct RenderUISystem : System<> {
                          raylib::Color{255, 255, 100, 255});
         }
 
-        // Game over screen
-        if (gs && gs->is_game_over()) {
-            raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH,
-                                  DEFAULT_SCREEN_HEIGHT,
-                                  raylib::Color{0, 0, 0, 200});
-
-            float pw = 460, ph = 360;
-            float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
-            float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
-            raylib::DrawRectangle((int) px, (int) py, (int) pw, (int) ph,
-                                  raylib::Color{20, 20, 30, 240});
-            raylib::DrawRectangleLines((int) px, (int) py, (int) pw, (int) ph,
-                                       raylib::Color{255, 80, 80, 255});
-
-            std::string title = "FESTIVAL SHUT DOWN";
-            draw_text_centered(title, py + 20, 34,
-                               raylib::Color{255, 80, 80, 255});
-
-            int minutes = static_cast<int>(gs->time_survived) / 60;
-            int seconds = static_cast<int>(gs->time_survived) % 60;
-            std::string stats1 =
-                fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
-            std::string stats2 =
-                fmt::format("Agents Served: {}", gs->total_agents_served);
-            std::string stats3 =
-                fmt::format("Time Survived: {:02d}:{:02d}", minutes, seconds);
-            std::string stats4 =
-                fmt::format("Peak Attendees: {}", gs->max_attendees);
-
-            float sy = py + 66;
-            draw_text_centered(stats1, sy, 20, raylib::WHITE);
-            draw_text_centered(stats2, sy + 28, 20, raylib::WHITE);
-            draw_text_centered(stats3, sy + 56, 20, raylib::WHITE);
-            draw_text_centered(stats4, sy + 84, 20, raylib::WHITE);
-
-            // Meta-progression records
-            save::MetaProgress meta;
-            save::load_meta(meta);
-            float my = sy + 124;
-            raylib::DrawLine((int) (px + 20), (int) my, (int) (px + pw - 20),
-                             (int) my, raylib::Color{100, 100, 120, 200});
-            my += 8;
-            draw_text_centered("--- All-Time Records ---", my, 16,
-                               raylib::Color{180, 200, 255, 255});
-            my += 24;
-            draw_text_centered(
-                fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
-                            meta.best_agents_served),
-                my, 16, raylib::Color{160, 180, 220, 255});
-            my += 22;
-            draw_text_centered(
-                fmt::format("Peak Attendees: {}  |  Runs: {}",
-                            meta.best_max_attendees, meta.total_runs),
-                my, 16, raylib::Color{160, 180, 220, 255});
-
-            draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
-                               raylib::Color{180, 180, 180, 255});
-
-            vtr.register_text(title);
-            vtr.register_text("Press SPACE to restart");
-        }
+        // Game over screen rendered by RenderGameOverSystem (after sidebar)
     }
 };
 
@@ -863,36 +823,41 @@ struct RenderTimelineSidebarSystem : System<> {
                               (int) sidebar_h, raylib::Color{15, 15, 25, 200});
 
         // Title
-        raylib::DrawTextEx(get_font(), "TIMELINE", {sidebar_x + 10, 8}, 18,
+        raylib::DrawTextEx(get_font(), "LINEUP", {sidebar_x + 10, 8}, 18,
                            FONT_SPACING, raylib::Color{255, 220, 100, 255});
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
-        vtr.register_text("TIMELINE");
+        vtr.register_text("LINEUP");
+
+        // Clip region for sidebar content (below title bar, above minimap)
+        float content_top = 30.f;
+        float content_bot = DEFAULT_SCREEN_HEIGHT - 150.f;
+        raylib::BeginScissorMode((int) sidebar_x, (int) content_top,
+                                 (int) sidebar_w,
+                                 (int) (content_bot - content_top));
 
         // NOW marker at ~20% from top
         float now_y = sidebar_y + sidebar_h * 0.2f;
         raylib::DrawLine((int) sidebar_x, (int) now_y,
                          (int) (sidebar_x + sidebar_w), (int) now_y,
                          raylib::Color{255, 100, 100, 255});
-        raylib::DrawTextEx(get_font(), "NOW", {sidebar_x + 6, now_y - 16}, 14,
+        raylib::DrawTextEx(get_font(), "NOW", {sidebar_x + 6, now_y - 18}, 16,
                            FONT_SPACING, raylib::Color{255, 100, 100, 255});
 
         float now_minutes = clock->game_time_minutes;
-        float px_per_minute = 2.0f;
+        float px_per_minute = 2.4f;
 
         // Draw artist blocks
         for (auto& a : sched->schedule) {
             float minutes_from_now = a.start_time_minutes - now_minutes;
             float block_y = now_y + minutes_from_now * px_per_minute;
-            float block_h = a.duration_minutes * px_per_minute;
+            float block_h = std::max(a.duration_minutes * px_per_minute, 42.f);
 
             // Skip if off screen
-            if (block_y + block_h < sidebar_y ||
-                block_y > sidebar_y + sidebar_h)
+            if (block_y + block_h < content_top || block_y > content_bot)
                 continue;
 
             // Background color
-            raylib::Color bg = a.performing ? raylib::Color{255, 217, 61, 64}
-                                            // warm yellow highlight
+            raylib::Color bg = a.performing ? raylib::Color{255, 217, 61, 80}
                                             : raylib::Color{40, 40, 60, 180};
             raylib::DrawRectangle((int) (sidebar_x + 4), (int) block_y,
                                   (int) (sidebar_w - 8), (int) block_h, bg);
@@ -900,22 +865,29 @@ struct RenderTimelineSidebarSystem : System<> {
                                        (int) (sidebar_w - 8), (int) block_h,
                                        raylib::Color{100, 100, 120, 200});
 
-            // Artist name
+            // Artist name (larger, bold-simulated via shadow)
             std::string label =
                 a.performing ? fmt::format("> {}", a.name) : a.name;
+            raylib::Color name_col =
+                a.performing ? raylib::Color{255, 230, 80, 255} : raylib::WHITE;
             raylib::DrawTextEx(get_font(), label.c_str(),
-                               {sidebar_x + 10, block_y + 4}, 15, FONT_SPACING,
-                               raylib::WHITE);
+                               {sidebar_x + 11, block_y + 5}, 16, FONT_SPACING,
+                               raylib::Color{0, 0, 0, 120});
+            raylib::DrawTextEx(get_font(), label.c_str(),
+                               {sidebar_x + 10, block_y + 4}, 16, FONT_SPACING,
+                               name_col);
 
             // Time and crowd
             int h = (int) (a.start_time_minutes / 60) % 24;
             int m = (int) a.start_time_minutes % 60;
             std::string info =
-                fmt::format("{:02d}:{:02d} ~{}", h, m, a.expected_crowd);
+                fmt::format("{:02d}:{:02d}  ~{} ppl", h, m, a.expected_crowd);
             raylib::DrawTextEx(get_font(), info.c_str(),
-                               {sidebar_x + 10, block_y + 22}, 13, FONT_SPACING,
-                               raylib::Color{180, 180, 200, 255});
+                               {sidebar_x + 10, block_y + 24}, 14, FONT_SPACING,
+                               raylib::Color{190, 190, 210, 255});
         }
+
+        raylib::EndScissorMode();
     }
 };
 
@@ -984,6 +956,89 @@ struct RenderMinimapSystem : System<> {
         raylib::DrawRectangleLines((int) sidebar_x, (int) minimap_y,
                                    MINIMAP_SIZE, MINIMAP_SIZE,
                                    raylib::Color{100, 100, 120, 255});
+    }
+};
+
+// Helpers shared between systems
+static void ui_draw_text(const std::string& text, float x, float y, float size,
+                         raylib::Color color) {
+    raylib::DrawTextEx(get_font(), text.c_str(), {x, y}, size, FONT_SPACING,
+                       color);
+}
+static raylib::Vector2 ui_measure_text(const std::string& text, float size) {
+    return raylib::MeasureTextEx(get_font(), text.c_str(), size, FONT_SPACING);
+}
+static void ui_draw_text_centered(const std::string& text, float y, float size,
+                                  raylib::Color color) {
+    auto m = ui_measure_text(text, size);
+    float x = (DEFAULT_SCREEN_WIDTH - m.x) / 2.f;
+    ui_draw_text(text, x, y, size, color);
+}
+
+// Game over overlay - rendered after sidebar so it covers everything
+struct RenderGameOverSystem : System<> {
+    void once(float) const override {
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs || !gs->is_game_over()) return;
+
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+
+        raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
+                              raylib::Color{0, 0, 0, 200});
+
+        float pw = 460, ph = 360;
+        float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
+        float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
+        raylib::DrawRectangle((int) px, (int) py, (int) pw, (int) ph,
+                              raylib::Color{20, 20, 30, 240});
+        raylib::DrawRectangleLines((int) px, (int) py, (int) pw, (int) ph,
+                                   raylib::Color{255, 80, 80, 255});
+
+        std::string title = "FESTIVAL SHUT DOWN";
+        ui_draw_text_centered(title, py + 20, 34,
+                              raylib::Color{255, 80, 80, 255});
+
+        int minutes = static_cast<int>(gs->time_survived) / 60;
+        int seconds = static_cast<int>(gs->time_survived) % 60;
+        std::string stats1 =
+            fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
+        std::string stats2 =
+            fmt::format("Agents Served: {}", gs->total_agents_served);
+        std::string stats3 =
+            fmt::format("Time Survived: {:02d}:{:02d}", minutes, seconds);
+        std::string stats4 =
+            fmt::format("Peak Attendees: {}", gs->max_attendees);
+
+        float sy = py + 66;
+        ui_draw_text_centered(stats1, sy, 20, raylib::WHITE);
+        ui_draw_text_centered(stats2, sy + 28, 20, raylib::WHITE);
+        ui_draw_text_centered(stats3, sy + 56, 20, raylib::WHITE);
+        ui_draw_text_centered(stats4, sy + 84, 20, raylib::WHITE);
+
+        save::MetaProgress meta;
+        save::load_meta(meta);
+        float my = sy + 124;
+        raylib::DrawLine((int) (px + 20), (int) my, (int) (px + pw - 20),
+                         (int) my, raylib::Color{100, 100, 120, 200});
+        my += 8;
+        ui_draw_text_centered("--- All-Time Records ---", my, 16,
+                              raylib::Color{180, 200, 255, 255});
+        my += 24;
+        ui_draw_text_centered(
+            fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
+                        meta.best_agents_served),
+            my, 16, raylib::Color{160, 180, 220, 255});
+        my += 22;
+        ui_draw_text_centered(
+            fmt::format("Peak Attendees: {}  |  Runs: {}",
+                        meta.best_max_attendees, meta.total_runs),
+            my, 16, raylib::Color{160, 180, 220, 255});
+
+        ui_draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
+                              raylib::Color{180, 180, 180, 255});
+
+        vtr.register_text(title);
+        vtr.register_text("Press SPACE to restart");
     }
 };
 
@@ -1124,6 +1179,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
+    sm.register_render_system(std::make_unique<RenderGameOverSystem>());
     sm.register_render_system(std::make_unique<RenderDebugPanelSystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
