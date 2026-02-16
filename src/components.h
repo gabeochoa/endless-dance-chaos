@@ -32,7 +32,8 @@ enum class TileType {
     Stage,
     StageFloor,
     Bathroom,
-    Food
+    Food,
+    MedTent
 };
 
 // Single tile in the grid
@@ -40,13 +41,14 @@ struct Tile {
     TileType type = TileType::Grass;
     int agent_count = 0;
 
-    // 4 pheromone channels: Bathroom, Food, Stage, Exit
-    std::array<uint8_t, 4> pheromone = {0, 0, 0, 0};
+    // 5 pheromone channels: Bathroom, Food, Stage, Exit, MedTent
+    std::array<uint8_t, 5> pheromone = {0, 0, 0, 0, 0};
 
     static constexpr int PHERO_BATHROOM = 0;
     static constexpr int PHERO_FOOD = 1;
     static constexpr int PHERO_STAGE = 2;
     static constexpr int PHERO_EXIT = 3;
+    static constexpr int PHERO_MEDTENT = 4;
 
     static float to_strength(uint8_t val) { return val * (10.0f / 255.0f); }
     static uint8_t from_strength(float s) {
@@ -127,11 +129,16 @@ struct Grid : afterhours::BaseComponent {
         for (int z = FOOD_Z; z < FOOD_Z + FACILITY_SIZE; z++)
             for (int x = FOOD_X; x < FOOD_X + FACILITY_SIZE; x++)
                 if (in_bounds(x, z)) at(x, z).type = TileType::Food;
+
+        // Medical Tent (2x2)
+        for (int z = MEDTENT_Z; z < MEDTENT_Z + FACILITY_SIZE; z++)
+            for (int x = MEDTENT_X; x < MEDTENT_X + FACILITY_SIZE; x++)
+                if (in_bounds(x, z)) at(x, z).type = TileType::MedTent;
     }
 };
 
 // Facility types (for agents to want)
-enum class FacilityType { Bathroom, Food, Stage, Exit };
+enum class FacilityType { Bathroom, Food, Stage, Exit, MedTent };
 
 // Agent component - walks toward target using greedy neighbor pathfinding
 struct Agent : afterhours::BaseComponent {
@@ -256,7 +263,37 @@ struct FacilitySlots : afterhours::BaseComponent {
 };
 
 // Build tool - what the player is currently placing
-enum class BuildTool { Path, Fence, Gate, Stage, Bathroom, Food, Demolish };
+enum class BuildTool {
+    Path,
+    Fence,
+    Gate,
+    Stage,
+    Bathroom,
+    Food,
+    MedTent,
+    Demolish
+};
+
+// Random event types that affect gameplay
+enum class EventType { Rain, PowerOutage, VIPVisit, HeatWave };
+
+// Active random event
+struct ActiveEvent : afterhours::BaseComponent {
+    EventType type = EventType::Rain;
+    float duration = 0.f;  // total seconds
+    float elapsed = 0.f;   // seconds elapsed
+    std::string description;
+    bool notified = false;
+};
+
+// Difficulty scaling singleton
+struct DifficultyState : afterhours::BaseComponent {
+    int day_number = 1;
+    float spawn_rate_mult = 1.0f;
+    float crowd_size_mult = 1.0f;
+    float event_timer = 0.f;
+    float next_event_time = 120.f;  // first event after 2 minutes
+};
 
 struct BuilderState : afterhours::BaseComponent {
     bool active = true;

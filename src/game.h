@@ -44,6 +44,8 @@ constexpr int BATHROOM_X = 20;
 constexpr int BATHROOM_Z = 20;
 constexpr int FOOD_X = 20;
 constexpr int FOOD_Z = 30;
+constexpr int MEDTENT_X = 15;
+constexpr int MEDTENT_Z = 25;
 constexpr int FACILITY_SIZE = 2;  // 2x2 footprint
 
 // Facility service

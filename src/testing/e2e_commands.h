@@ -215,15 +215,27 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
         // Clear pheromones
         if (grid) {
             for (auto& tile : grid->tiles) {
-                tile.pheromone = {0, 0, 0, 0};
+                tile.pheromone = {0, 0, 0, 0, 0};
             }
         }
 
-        // Clear particles and toast messages
+        // Reset difficulty state
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        if (diff) {
+            diff->day_number = 1;
+            diff->spawn_rate_mult = 1.0f;
+            diff->crowd_size_mult = 1.0f;
+            diff->event_timer = 0.f;
+            diff->next_event_time = 120.f;
+        }
+
+        // Clear particles, toasts, and active events
         auto particles = EntityQuery().whereHasComponent<Particle>().gen();
         for (Entity& p : particles) p.cleanup = true;
         auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
         for (Entity& t : toasts) t.cleanup = true;
+        auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+        for (Entity& ev : events) ev.cleanup = true;
         EntityHelper::cleanup();
 
         cmd.consume();
@@ -1302,7 +1314,7 @@ struct HandleClearPheromonesCommand : System<testing::PendingE2ECommand> {
         if (cmd.is_consumed() || !cmd.is("clear_pheromones")) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (grid) {
-            for (auto& tile : grid->tiles) tile.pheromone = {0, 0, 0, 0};
+            for (auto& tile : grid->tiles) tile.pheromone = {0, 0, 0, 0, 0};
         }
         cmd.consume();
     }

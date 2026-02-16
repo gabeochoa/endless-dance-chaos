@@ -44,6 +44,9 @@ Entity& make_sophie() {
     sophie.addComponent<FacilitySlots>();
     EntityHelper::registerSingleton<FacilitySlots>(sophie);
 
+    sophie.addComponent<DifficultyState>();
+    EntityHelper::registerSingleton<DifficultyState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();

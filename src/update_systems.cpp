@@ -269,7 +269,8 @@ struct PathBuildSystem : System<> {
         if (action_pressed(InputAction::ToolStage)) bs->tool = BuildTool::Stage;
         if (action_pressed(InputAction::Tool5)) bs->tool = BuildTool::Bathroom;
         if (action_pressed(InputAction::Tool6)) bs->tool = BuildTool::Food;
-        if (action_pressed(InputAction::Tool7)) bs->tool = BuildTool::Demolish;
+        if (action_pressed(InputAction::Tool7)) bs->tool = BuildTool::MedTent;
+        if (action_pressed(InputAction::Tool8)) bs->tool = BuildTool::Demolish;
         if (action_pressed(InputAction::ToggleDemolish))
             bs->tool = BuildTool::Demolish;
 
@@ -350,12 +351,23 @@ struct PathBuildSystem : System<> {
                     }
                     break;
                 }
+                case BuildTool::MedTent: {
+                    if (can_place_at(*grid, hx, hz, 2, 2)) {
+                        for (int dz = 0; dz < 2; dz++)
+                            for (int dx = 0; dx < 2; dx++)
+                                grid->at(hx + dx, hz + dz).type =
+                                    TileType::MedTent;
+                        get_audio().play_place();
+                    }
+                    break;
+                }
                 case BuildTool::Demolish: {
                     Tile& tile = grid->at(hx, hz);
                     if (tile.type == TileType::Path ||
                         tile.type == TileType::Fence ||
                         tile.type == TileType::Bathroom ||
                         tile.type == TileType::Food ||
+                        tile.type == TileType::MedTent ||
                         tile.type == TileType::Stage) {
                         if (tile.type == TileType::Gate &&
                             count_gates(*grid) <= 1)
@@ -713,8 +725,21 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
 
-        if (needs.needs_bathroom) {
-            // Bathroom is urgent — keep searching even if all are full
+        // Low HP? Seek medical tent (highest priority)
+        bool needs_medical = false;
+        if (!e.is_missing<AgentHealth>() && e.get<AgentHealth>().hp < 0.4f &&
+            agent.want != FacilityType::MedTent) {
+            auto [mx, mz] = find_nearest_facility(
+                cur_gx, cur_gz, TileType::MedTent, *grid, true);
+            if (mx >= 0) {
+                agent.want = FacilityType::MedTent;
+                agent.target_grid_x = mx;
+                agent.target_grid_z = mz;
+                needs_medical = true;
+            }
+        }
+
+        if (!needs_medical && needs.needs_bathroom) {
             auto [bx, bz] = find_nearest_facility(
                 cur_gx, cur_gz, TileType::Bathroom, *grid, true);
             if (bx >= 0) {
@@ -722,7 +747,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 agent.target_grid_x = bx;
                 agent.target_grid_z = bz;
             }
-        } else if (needs.needs_food) {
+        } else if (!needs_medical && needs.needs_food) {
             // Food is non-urgent — give up if all are full
             auto [fx, fz] = find_nearest_facility(cur_gx, cur_gz,
                                                   TileType::Food, *grid, false);
@@ -739,9 +764,10 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 agent.target_grid_x = rsx;
                 agent.target_grid_z = rsz;
             }
-        } else {
+        } else if (!needs_medical) {
             // Default: go to stage
-            if (agent.want != FacilityType::Stage) {
+            if (agent.want != FacilityType::Stage &&
+                agent.want != FacilityType::MedTent) {
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = random_stage_spot();
                 agent.target_grid_x = rsx;
@@ -816,6 +842,11 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                     needs.needs_food = false;
                     needs.food_timer = 0.f;
                     needs.food_threshold = rng.get_float(45.f, 120.f);
+                } else if (bs.facility_type == FacilityType::MedTent) {
+                    // Heal the agent
+                    if (!e.is_missing<AgentHealth>()) {
+                        e.get<AgentHealth>().hp = 1.0f;
+                    }
                 }
 
                 // Reappear adjacent to facility
@@ -860,6 +891,9 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
         } else if (agent.want == FacilityType::Food &&
                    cur_type == TileType::Food) {
             at_target = true;
+        } else if (agent.want == FacilityType::MedTent &&
+                   cur_type == TileType::MedTent) {
+            at_target = true;
         }
 
         if (at_target) {
@@ -891,6 +925,8 @@ static int facility_to_channel(FacilityType type) {
             return Tile::PHERO_STAGE;
         case FacilityType::Exit:
             return Tile::PHERO_EXIT;
+        case FacilityType::MedTent:
+            return Tile::PHERO_MEDTENT;
     }
     return Tile::PHERO_STAGE;
 }
@@ -1390,6 +1426,168 @@ struct RestartGameSystem : System<> {
     }
 };
 
+// Random events system: triggers events that affect gameplay
+struct RandomEventSystem : System<> {
+    void once(float dt) override {
+        if (skip_game_logic()) return;
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        if (!diff) return;
+
+        diff->event_timer += dt;
+
+        // Check for active events
+        auto active_events =
+            EntityQuery().whereHasComponent<ActiveEvent>().gen();
+
+        // Tick active events
+        for (Entity& ev_entity : active_events) {
+            auto& ev = ev_entity.get<ActiveEvent>();
+            ev.elapsed += dt;
+            if (ev.elapsed >= ev.duration) {
+                // Event ended - create toast
+                Entity& te = EntityHelper::createEntity();
+                te.addComponent<ToastMessage>();
+                te.get<ToastMessage>().text = ev.description + " has ended.";
+                get_audio().play_toast();
+                ev_entity.cleanup = true;
+            }
+        }
+        EntityHelper::cleanup();
+
+        // Spawn new event?
+        if (diff->event_timer < diff->next_event_time) return;
+
+        // Don't stack events
+        auto current_events =
+            EntityQuery().whereHasComponent<ActiveEvent>().gen_count();
+        if (current_events > 0) return;
+
+        diff->event_timer = 0.f;
+        // Next event sooner as difficulty increases
+        auto& rng = RandomEngine::get();
+        diff->next_event_time =
+            rng.get_float(90.f, 180.f) / diff->spawn_rate_mult;
+
+        // Pick random event
+        int event_id = rng.get_int(0, 3);
+        Entity& ev_entity = EntityHelper::createEntity();
+        ev_entity.addComponent<ActiveEvent>();
+        auto& ev = ev_entity.get<ActiveEvent>();
+
+        switch (event_id) {
+            case 0:  // Rain
+                ev.type = EventType::Rain;
+                ev.duration = rng.get_float(30.f, 60.f);
+                ev.description = "Rain storm";
+                break;
+            case 1:  // Power outage
+                ev.type = EventType::PowerOutage;
+                ev.duration = rng.get_float(15.f, 30.f);
+                ev.description = "Power outage";
+                break;
+            case 2:  // VIP visit
+                ev.type = EventType::VIPVisit;
+                ev.duration = rng.get_float(30.f, 60.f);
+                ev.description = "VIP visit";
+                break;
+            case 3:  // Heat wave
+                ev.type = EventType::HeatWave;
+                ev.duration = rng.get_float(20.f, 45.f);
+                ev.description = "Heat wave";
+                break;
+        }
+
+        // Notify player
+        Entity& toast_e = EntityHelper::createEntity();
+        toast_e.addComponent<ToastMessage>();
+        toast_e.get<ToastMessage>().text = "Event: " + ev.description + "!";
+        get_audio().play_toast();
+    }
+};
+
+// Apply active event effects each frame
+struct ApplyEventEffectsSystem : System<> {
+    void once(float) override {
+        if (skip_game_logic()) return;
+        auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (!gs) return;
+
+        // Default: no event modifiers
+        bool rain_active = false;
+        bool heat_active = false;
+
+        for (Entity& ev_entity : events) {
+            auto& ev = ev_entity.get<ActiveEvent>();
+            switch (ev.type) {
+                case EventType::Rain:
+                    rain_active = true;
+                    break;
+                case EventType::PowerOutage:
+                    // Handled in UpdateArtistScheduleSystem
+                    break;
+                case EventType::VIPVisit:
+                    // Boost satisfaction (more attendees exit happy)
+                    break;
+                case EventType::HeatWave:
+                    heat_active = true;
+                    break;
+            }
+        }
+
+        // Rain: slow all agents by 50%
+        if (rain_active) {
+            auto agents = EntityQuery().whereHasComponent<Agent>().gen();
+            for (Entity& a : agents) {
+                a.get<Agent>().speed *= 0.5f;
+            }
+        }
+
+        // Heat wave: need thresholds decay 2x faster (tick in NeedTickSystem)
+        // We'll just accelerate bathroom/food needs by reducing thresholds
+        if (heat_active) {
+            auto agents = EntityQuery().whereHasComponent<AgentNeeds>().gen();
+            for (Entity& a : agents) {
+                auto& n = a.get<AgentNeeds>();
+                n.bathroom_threshold =
+                    std::max(10.f, n.bathroom_threshold - 0.1f);
+                n.food_threshold = std::max(15.f, n.food_threshold - 0.1f);
+            }
+        }
+    }
+};
+
+// Difficulty scaling: increase spawn rate and crowd sizes over time
+struct DifficultyScalingSystem : System<> {
+    void once(float) override {
+        if (skip_game_logic()) return;
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        auto* spawn = EntityHelper::get_singleton_cmp<SpawnState>();
+        if (!diff || !clock || !spawn) return;
+
+        // Track day transitions
+        int hour = clock->get_hour();
+        static int last_hour = -1;
+        if (last_hour >= 3 && last_hour < 10 && hour >= 10) {
+            diff->day_number++;
+            // Escalate difficulty each day
+            diff->spawn_rate_mult = 1.0f + (diff->day_number - 1) * 0.15f;
+            diff->crowd_size_mult = 1.0f + (diff->day_number - 1) * 0.1f;
+
+            Entity& te = EntityHelper::createEntity();
+            te.addComponent<ToastMessage>();
+            te.get<ToastMessage>().text =
+                fmt::format("Day {} begins!", diff->day_number);
+            get_audio().play_toast();
+        }
+        last_hour = hour;
+
+        // Apply spawn rate scaling
+        spawn->interval = DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult;
+    }
+};
+
 // Update audio: drive beat music based on stage performance state
 struct UpdateAudioSystem : System<> {
     void once(float) override {
@@ -1424,5 +1622,8 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CheckGameOverSystem>());
     sm.register_update_system(std::make_unique<RestartGameSystem>());
     sm.register_update_system(std::make_unique<UpdateParticlesSystem>());
+    sm.register_update_system(std::make_unique<RandomEventSystem>());
+    sm.register_update_system(std::make_unique<ApplyEventEffectsSystem>());
+    sm.register_update_system(std::make_unique<DifficultyScalingSystem>());
     sm.register_update_system(std::make_unique<UpdateAudioSystem>());
 }

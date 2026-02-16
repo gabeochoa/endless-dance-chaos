@@ -89,6 +89,7 @@ struct RenderGridSystem : System<> {
     static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};
     static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192, 255};
     static constexpr raylib::Color FOOD_COLOR = {244, 164, 164, 255};
+    static constexpr raylib::Color MEDTENT_COLOR = {255, 100, 100, 255};
 
     static raylib::Color tile_color(TileType type, float night_t) {
         switch (type) {
@@ -109,6 +110,8 @@ struct RenderGridSystem : System<> {
                 return lerp_color(BATHROOM_COLOR, {60, 100, 90, 255}, night_t);
             case TileType::Food:
                 return lerp_color(FOOD_COLOR, {120, 80, 80, 255}, night_t);
+            case TileType::MedTent:
+                return lerp_color(MEDTENT_COLOR, {120, 50, 50, 255}, night_t);
         }
         return DAY_GRASS;
     }
@@ -431,8 +434,10 @@ struct RenderUISystem : System<> {
         {"S", {255, 217, 61, 255}},    // Stage - yellow
         {"B", {126, 207, 192, 255}},   // Bathroom - cyan
         {"Fd", {244, 164, 164, 255}},  // Food - coral
+        {"M", {255, 100, 100, 255}},   // MedTent - red cross
         {"X", {255, 68, 68, 255}},     // Demolish - red
     };
+    static constexpr int TOOL_COUNT = 8;
 
     void once(float) const override {
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
@@ -475,6 +480,31 @@ struct RenderUISystem : System<> {
             draw_text(att_text, bar_x, 11, 20, raylib::WHITE);
             vtr.register_text(att_text);
         }
+        // Day counter
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        if (diff) {
+            std::string day_text = fmt::format("Day {}", diff->day_number);
+            draw_text(day_text, bar_x, 11, 20,
+                      raylib::Color{180, 220, 255, 255});
+            vtr.register_text(day_text);
+            bar_x += 90;
+        }
+
+        // Active event indicator
+        {
+            auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+            for (Entity& ev_e : events) {
+                auto& ev = ev_e.get<ActiveEvent>();
+                float remain = ev.duration - ev.elapsed;
+                std::string ev_text =
+                    fmt::format("{} ({:.0f}s)", ev.description, remain);
+                draw_text(ev_text, bar_x, 11, 16,
+                          raylib::Color{255, 200, 80, 255});
+                vtr.register_text(ev_text);
+                bar_x += measure_text(ev_text, 16).x + 12;
+            }
+        }
+
         // FPS (top-right in top bar)
         int fps = raylib::GetFPS();
         std::string fps_text = fmt::format("FPS: {}", fps);
@@ -492,9 +522,9 @@ struct RenderUISystem : System<> {
         if (bs) {
             float icon_size = 36.f;
             float gap = 6.f;
-            float total_w = 7 * icon_size + 6 * gap;
+            float total_w = TOOL_COUNT * icon_size + (TOOL_COUNT - 1) * gap;
             float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
-            for (int i = 0; i < 7; i++) {
+            for (int i = 0; i < TOOL_COUNT; i++) {
                 float ix = start_x + i * (icon_size + gap);
                 float iy = build_bar_y + (54 - icon_size) / 2.f;
                 bool selected = (static_cast<int>(bs->tool) == i);
@@ -658,6 +688,8 @@ static raylib::Color minimap_tile_color(TileType type) {
             return {126, 207, 192, 255};
         case TileType::Food:
             return {244, 164, 164, 255};
+        case TileType::MedTent:
+            return {255, 100, 100, 255};
     }
     return {152, 212, 168, 255};
 }
