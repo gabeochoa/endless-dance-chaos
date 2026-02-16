@@ -8,6 +8,7 @@
 #include "components.h"
 #include "entity_makers.h"
 #include "game.h"
+#include "save_system.h"
 #include "systems.h"
 
 // Render texture from main.cpp for MCP screenshots
@@ -615,13 +616,11 @@ struct RenderUISystem : System<> {
 
         // Game over screen
         if (gs && gs->is_game_over()) {
-            // Dark overlay
             raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH,
                                   DEFAULT_SCREEN_HEIGHT,
                                   raylib::Color{0, 0, 0, 200});
 
-            // Panel background
-            float pw = 460, ph = 260;
+            float pw = 460, ph = 360;
             float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
             float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
             raylib::DrawRectangle((int) px, (int) py, (int) pw, (int) ph,
@@ -629,12 +628,10 @@ struct RenderUISystem : System<> {
             raylib::DrawRectangleLines((int) px, (int) py, (int) pw, (int) ph,
                                        raylib::Color{255, 80, 80, 255});
 
-            // Title
             std::string title = "FESTIVAL SHUT DOWN";
-            draw_text_centered(title, py + 24, 34,
+            draw_text_centered(title, py + 20, 34,
                                raylib::Color{255, 80, 80, 255});
 
-            // Stats
             int minutes = static_cast<int>(gs->time_survived) / 60;
             int seconds = static_cast<int>(gs->time_survived) % 60;
             std::string stats1 =
@@ -646,17 +643,35 @@ struct RenderUISystem : System<> {
             std::string stats4 =
                 fmt::format("Peak Attendees: {}", gs->max_attendees);
 
-            float sy = py + 80;
-            draw_text_centered(stats1, sy, 22, raylib::WHITE);
-            draw_text_centered(stats2, sy + 32, 22, raylib::WHITE);
-            draw_text_centered(stats3, sy + 64, 22, raylib::WHITE);
-            draw_text_centered(stats4, sy + 96, 22, raylib::WHITE);
+            float sy = py + 66;
+            draw_text_centered(stats1, sy, 20, raylib::WHITE);
+            draw_text_centered(stats2, sy + 28, 20, raylib::WHITE);
+            draw_text_centered(stats3, sy + 56, 20, raylib::WHITE);
+            draw_text_centered(stats4, sy + 84, 20, raylib::WHITE);
 
-            // Restart prompt
-            draw_text_centered("Press SPACE to restart", py + ph - 50, 20,
+            // Meta-progression records
+            save::MetaProgress meta;
+            save::load_meta(meta);
+            float my = sy + 124;
+            raylib::DrawLine((int) (px + 20), (int) my, (int) (px + pw - 20),
+                             (int) my, raylib::Color{100, 100, 120, 200});
+            my += 8;
+            draw_text_centered("--- All-Time Records ---", my, 16,
+                               raylib::Color{180, 200, 255, 255});
+            my += 24;
+            draw_text_centered(
+                fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
+                            meta.best_agents_served),
+                my, 16, raylib::Color{160, 180, 220, 255});
+            my += 22;
+            draw_text_centered(
+                fmt::format("Peak Attendees: {}  |  Runs: {}",
+                            meta.best_max_attendees, meta.total_runs),
+                my, 16, raylib::Color{160, 180, 220, 255});
+
+            draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
                                raylib::Color{180, 180, 180, 255});
 
-            // Register text for E2E expect_text assertions
             vtr.register_text(title);
             vtr.register_text("Press SPACE to restart");
         }

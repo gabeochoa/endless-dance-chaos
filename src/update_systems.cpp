@@ -8,6 +8,7 @@
 #include "components.h"
 #include "engine/random_engine.h"
 #include "entity_makers.h"
+#include "save_system.h"
 #include "systems.h"
 
 // Helper: check if game is over (skip game logic)
@@ -1351,6 +1352,8 @@ struct CheckGameOverSystem : System<> {
             gs->status = GameStatus::GameOver;
             get_audio().play_gameover();
             get_audio().stop_music();
+            save::update_meta_on_game_over();
+            save::delete_save();
             log_info("GAME OVER: {} deaths reached", gs->death_count);
         }
     }
@@ -1588,6 +1591,33 @@ struct DifficultyScalingSystem : System<> {
     }
 };
 
+// Quick save/load system: F5 to save, F9 to load
+struct SaveLoadSystem : System<> {
+    void once(float) override {
+        if (game_is_over()) return;
+        if (action_pressed(InputAction::QuickSave)) {
+            if (save::save_game()) {
+                Entity& te = EntityHelper::createEntity();
+                te.addComponent<ToastMessage>();
+                te.get<ToastMessage>().text = "Game saved!";
+                te.get<ToastMessage>().lifetime = 2.0f;
+                get_audio().play_toast();
+                log_info("Game saved to {}", save::SAVE_FILE);
+            }
+        }
+        if (action_pressed(InputAction::QuickLoad)) {
+            if (save::load_game()) {
+                Entity& te = EntityHelper::createEntity();
+                te.addComponent<ToastMessage>();
+                te.get<ToastMessage>().text = "Game loaded!";
+                te.get<ToastMessage>().lifetime = 2.0f;
+                get_audio().play_toast();
+                log_info("Game loaded from {}", save::SAVE_FILE);
+            }
+        }
+    }
+};
+
 // Update audio: drive beat music based on stage performance state
 struct UpdateAudioSystem : System<> {
     void once(float) override {
@@ -1625,5 +1655,6 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<RandomEventSystem>());
     sm.register_update_system(std::make_unique<ApplyEventEffectsSystem>());
     sm.register_update_system(std::make_unique<DifficultyScalingSystem>());
+    sm.register_update_system(std::make_unique<SaveLoadSystem>());
     sm.register_update_system(std::make_unique<UpdateAudioSystem>());
 }

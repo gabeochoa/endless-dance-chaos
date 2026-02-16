@@ -46,6 +46,9 @@ enum class InputAction {
     Tool6,  // Food
     Tool7,  // MedTent
     Tool8,  // Demolish
+    // Save/Load
+    QuickSave,
+    QuickLoad,
     // Game state
     Restart,
     TogglePause,
@@ -213,6 +216,12 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::Tool8)] = {
         raylib::KEY_EIGHT,
+    };
+    mapping[to_int(InputAction::QuickSave)] = {
+        raylib::KEY_F5,
+    };
+    mapping[to_int(InputAction::QuickLoad)] = {
+        raylib::KEY_F9,
     };
 
     // Game state
