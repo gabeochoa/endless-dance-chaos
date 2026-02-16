@@ -204,9 +204,31 @@ struct RenderStageGlowSystem : System<> {
     }
 };
 
-// Render agents as small person-shaped primitives in 3D space
+// Desire pip colors: indexed by FacilityType enum (Bathroom, Food, Stage,
+// Exit, MedTent). Matches the facility tile day-palette so players can
+// associate the pip with the building the agent is walking toward.
+static constexpr raylib::Color DESIRE_COLORS[] = {
+    {126, 207, 192, 255},  // Bathroom  (teal)
+    {244, 164, 164, 255},  // Food      (pink)
+    {255, 217, 61, 255},   // Stage     (yellow)
+    {68, 136, 170, 255},   // Exit/Gate (blue)
+    {255, 100, 100, 255},  // MedTent   (red)
+};
+
+// Hash an integer to a deterministic float in [-1, 1].
+// Used for sub-tile scatter so agents don't stack on top of each other.
+static float hash_scatter(int seed) {
+    uint32_t h = static_cast<uint32_t>(seed);
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return (static_cast<float>(h & 0xFFFF) / 32767.5f) - 1.0f;
+}
+
+// Render agents as small person-shaped primitives in 3D space.
+// Body = outfit palette color, head pip = desire color, position jittered
+// within the tile so density is visually readable.
 struct RenderAgentsSystem : System<Agent, Transform> {
-    // Festival attendee color palette: diverse, vibrant outfits
     static constexpr raylib::Color PALETTE[] = {
         {212, 165, 116, 255},  // warm tan
         {180, 120, 90, 255},   // brown
@@ -218,12 +240,26 @@ struct RenderAgentsSystem : System<Agent, Transform> {
         {255, 220, 100, 255},  // yellow top
     };
 
+    static constexpr float BODY_W = 0.14f;
+    static constexpr float BODY_H = 0.32f;
+    static constexpr float PIP_W = 0.09f;
+    static constexpr float PIP_H = 0.08f;
+    static constexpr float SCATTER_RANGE = 0.35f;
+
     void for_each_with(Entity& e, Agent& agent, Transform& tf, float) override {
         if (!e.is_missing<BeingServiced>()) return;
 
         float wx = tf.position.x;
         float wz = tf.position.y;
-        raylib::Color col = PALETTE[agent.color_idx % 8];
+
+        // Sub-tile scatter: deterministic offset from entity id
+        int eid = static_cast<int>(e.id);
+        float ox = hash_scatter(eid * 7 + 3) * SCATTER_RANGE;
+        float oz = hash_scatter(eid * 13 + 7) * SCATTER_RANGE;
+        wx += ox;
+        wz += oz;
+
+        raylib::Color body_col = PALETTE[agent.color_idx % 8];
 
         // Bob animation when watching stage
         float bob_y = 0.0f;
@@ -232,18 +268,28 @@ struct RenderAgentsSystem : System<Agent, Transform> {
             bob_y = std::sin(ws.watch_timer * 6.0f) * 0.03f;
         }
 
-        // Low HP: tint red
+        // Low HP: tint body red (pip stays clean for readability)
         if (!e.is_missing<AgentHealth>()) {
             float hp = e.get<AgentHealth>().hp;
             if (hp < 0.5f) {
                 float t = hp / 0.5f;
-                col.r = static_cast<unsigned char>(col.r * t + 255 * (1.f - t));
-                col.g = static_cast<unsigned char>(col.g * t);
-                col.b = static_cast<unsigned char>(col.b * t);
+                body_col.r = static_cast<unsigned char>(body_col.r * t +
+                                                        255 * (1.f - t));
+                body_col.g = static_cast<unsigned char>(body_col.g * t);
+                body_col.b = static_cast<unsigned char>(body_col.b * t);
             }
         }
 
-        raylib::DrawCube({wx, 0.2f + bob_y, wz}, 0.18f, 0.4f, 0.18f, col);
+        float base_y = 0.16f + bob_y;
+
+        // Body
+        raylib::DrawCube({wx, base_y, wz}, BODY_W, BODY_H, BODY_W, body_col);
+
+        // Desire pip on top
+        int desire_idx = static_cast<int>(agent.want);
+        raylib::Color pip_col = DESIRE_COLORS[desire_idx];
+        float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
+        raylib::DrawCube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
     }
 };
 
