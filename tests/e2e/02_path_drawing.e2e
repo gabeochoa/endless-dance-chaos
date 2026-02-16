@@ -20,17 +20,21 @@ screenshot 02_path_removed
 reset_game
 wait_frames 2
 
-# Test mouse clicking: draw a rectangle from (20,20) to (22,22)
-click_grid 20 20
+# Select path tool before clicking (build tool may not default to path)
+select_tool path
+wait_frames 2
+
+# Test mouse clicking: use area far from facilities (40,40)
+click_grid 40 40
 wait_frames 3
-click_grid 22 22
+click_grid 42 42
 wait_frames 3
 
 # Verify the rectangle was filled with path
-assert_tile_type 20 20 path
-assert_tile_type 21 21 path
-assert_tile_type 22 22 path
+assert_tile_type 40 40 path
+assert_tile_type 41 41 path
+assert_tile_type 42 42 path
 # Outside the rectangle should still be grass
-assert_tile_type 19 19 grass
-assert_tile_type 23 23 grass
+assert_tile_type 39 39 grass
+assert_tile_type 43 43 grass
 screenshot 02_mouse_path_drawn

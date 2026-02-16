@@ -13,9 +13,9 @@ assert_tile_type 51 51 fence
 assert_tile_type 0 10 fence
 assert_tile_type 51 10 fence
 
-# Assert playable area is grass
+# Assert playable area is grass (pick points far from stage/facilities)
 assert_tile_type 1 1 grass
-assert_tile_type 25 25 grass
+assert_tile_type 5 5 grass
 assert_tile_type 50 50 grass
 
 # Assert gate exists

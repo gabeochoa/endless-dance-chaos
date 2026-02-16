@@ -1,24 +1,25 @@
-# Test agent need cycle: stage -> bathroom -> back
+# Test agent need cycle: watching stage -> forced bathroom need -> walk to bathroom
 reset_game
 set_spawn_enabled 0
+set_agent_speed 5
 wait_frames 2
 
-# Build paths connecting spawn to all facilities
+# Build paths connecting all areas
 draw_path_rect 0 24 33 28
-draw_path_rect 19 19 21 31
+draw_path_rect 19 19 22 31
 wait_frames 2
 
-# Spawn agents near the stage so they start watching
-spawn_agents 28 25 5 stage
+# Spawn agents right at the stage watch zone so they start watching
+spawn_agents 30 26 5 stage
 wait_frames 2
 
-# Wait a moment for them to enter watch zone
-wait 2
+# Wait for them to begin watching
+wait 1
 
-# Force bathroom need on all agents
+# Force bathroom need on all agents - should interrupt watching
 force_need bathroom
-wait 12
+wait 8
 
-# At least one agent should be at the bathroom by now
-assert_agent_near 20 20 3
+# At least one agent should be near the bathroom (20,20-21,21)
+assert_agent_near 20 21 4
 screenshot 04_agents_cycling

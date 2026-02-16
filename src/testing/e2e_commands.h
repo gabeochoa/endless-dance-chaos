@@ -577,12 +577,16 @@ struct HandleForceNeedCommand : System<testing::PendingE2ECommand> {
                           .whereHasComponent<Agent>()
                           .whereHasComponent<AgentNeeds>()
                           .gen();
-        for (Entity& agent : agents) {
-            auto& needs = agent.get<AgentNeeds>();
+        for (Entity& agent_e : agents) {
+            auto& needs = agent_e.get<AgentNeeds>();
             if (type_str == "bathroom") {
                 needs.needs_bathroom = true;
             } else if (type_str == "food") {
                 needs.needs_food = true;
+            }
+            // Interrupt watching so agents act on the new need
+            if (!agent_e.is_missing<WatchingStage>()) {
+                agent_e.removeComponent<WatchingStage>();
             }
         }
         cmd.consume();

@@ -1,6 +1,7 @@
 # Test fence perimeter and gate entry
 reset_game
 set_spawn_enabled 0
+set_agent_speed 5
 wait_frames 2
 
 # Verify fence exists on perimeter
@@ -23,7 +24,7 @@ wait_frames 2
 
 # Spawn agents at gate - they should enter and walk to stage
 spawn_agents 0 26 5 stage
-wait 16
+wait 10
 
 assert_agent_near 30 25 10
 screenshot 06_agents_entered
