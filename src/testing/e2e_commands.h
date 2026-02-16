@@ -126,7 +126,7 @@ static void cmd_spawn_agents(testing::PendingE2ECommand& cmd) {
     for (int i = 0; i < count; i++) {
         int tx, tz;
         if (type == FacilityType::Stage) {
-            auto [sx, sz] = random_stage_spot();
+            auto [sx, sz] = best_stage_spot(x, z);
             tx = sx;
             tz = sz;
         } else {

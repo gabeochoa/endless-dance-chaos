@@ -1,0 +1,70 @@
+# Test: agents spread to fill all sides of the stage area
+# Spawns a crowd from multiple directions with high speed,
+# verifies agents distribute across the entire StageFloor ring
+# (not just clustering on one side).
+
+reset_game
+set_spawn_enabled 0
+set_agent_speed 15
+wait_frames 5
+
+# Force a long artist so agents stay watching (no exodus)
+force_artist LongAct 100 120
+set_time 10:05
+wait_frames 5
+
+# Build paths from all four directions into the stage floor ring
+# Left approach (gate side)
+draw_path_rect 1 25 29 28
+# Right approach
+draw_path_rect 34 25 50 28
+# Top approach
+draw_path_rect 30 1 33 24
+# Bottom approach
+draw_path_rect 30 29 33 50
+wait_frames 5
+
+screenshot 22_stage_empty
+
+# Spawn agents from all four sides (80 total)
+# Left side
+spawn_agents 1 26 20 stage
+# Right side
+spawn_agents 50 27 20 stage
+# Top
+spawn_agents 31 1 20 stage
+# Bottom
+spawn_agents 32 50 20 stage
+wait_frames 5
+
+assert_agent_count >= 80
+
+# Wait for fast agents to cross the map and settle
+wait 20
+
+screenshot 22_stage_filling
+
+# Wait more for re-targeting to spread agents to emptier tiles
+wait 20
+
+screenshot 22_stage_full
+
+# Most agents should be on StageFloor tiles
+assert_agents_on_tiletype stagefloor >= 50
+
+# A good number should be watching the stage
+assert_agent_watching >= 15
+
+# Verify agents spread to all four sides of the stage building.
+# Check for at least one agent near each side (radius 5 from check point).
+# Stage building is at (30-33, 25-28), center (32, 27).
+# Left side
+assert_agent_near 27 27 5
+# Right side
+assert_agent_near 37 27 5
+# Top side
+assert_agent_near 32 22 5
+# Bottom side
+assert_agent_near 32 32 5
+
+screenshot 22_stage_filled

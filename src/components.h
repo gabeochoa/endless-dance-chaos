@@ -70,7 +70,7 @@ struct Grid : afterhours::BaseComponent {
     std::vector<std::pair<int, int>> medtent_positions;
 
     // Cached StageFloor positions sorted by distance from stage center.
-    // Used by random_stage_spot to avoid per-call grid scan + sort.
+    // Used by best_stage_spot to find closest non-crowded tile to an agent.
     struct StageSpot {
         int x, z;
         float dist;

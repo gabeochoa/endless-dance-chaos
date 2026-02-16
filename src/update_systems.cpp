@@ -636,9 +636,17 @@ struct AgentMovementSystem : System<Agent, Transform> {
 };
 
 // Pick a spot on the stage floor as close to the stage as possible
-// without being too crowded. Uses pre-sorted cached StageFloor positions
-// instead of scanning + sorting the grid on every call.
-std::pair<int, int> random_stage_spot() {
+// The agent_count at which a tile is considered "orange" (crowded) on the
+// density overlay, and agents should look for a different spot.
+static constexpr int STAGE_CROWD_LIMIT =
+    static_cast<int>(DENSITY_WARNING * MAX_AGENTS_PER_TILE);  // 20
+
+// Pick the closest non-crowded StageFloor tile to the agent at (from_x,from_z).
+// "Crowded" = agent_count >= STAGE_CROWD_LIMIT (the orange threshold).
+// To prevent all agents from the same position targeting the exact same tile,
+// we collect all non-crowded candidates within a small tolerance of the
+// absolute closest distance, then pick randomly among them.
+std::pair<int, int> best_stage_spot(int from_x, int from_z) {
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     auto& rng = RandomEngine::get();
     float scx = STAGE_X + STAGE_SIZE / 2.0f;
@@ -649,31 +657,59 @@ std::pair<int, int> random_stage_spot() {
         const auto& spots = grid->stage_floor_spots;
 
         if (!spots.empty()) {
-            constexpr int CROWD_THRESHOLD = 4;
+            constexpr int DIST_TOLERANCE = 3;  // tiles of slack
+
+            // First pass: find the minimum distance among non-crowded tiles
+            int min_dist = INT_MAX;
             for (const auto& s : spots) {
-                int crowd = grid->at(s.x, s.z).agent_count;
-                if (crowd < CROWD_THRESHOLD) {
-                    if (rng.get_float(0.f, 1.f) < 0.3f) continue;
-                    return {s.x, s.z};
+                if (grid->at(s.x, s.z).agent_count < STAGE_CROWD_LIMIT) {
+                    int dist = std::abs(s.x - from_x) + std::abs(s.z - from_z);
+                    if (dist < min_dist) min_dist = dist;
                 }
             }
 
-            // All tiles crowded — pick the least crowded near the front
-            int best_idx = 0;
-            int best_crowd = grid->at(spots[0].x, spots[0].z).agent_count;
-            int search_limit = std::min((int) spots.size(), 20);
-            for (int i = 1; i < search_limit; i++) {
-                int crowd = grid->at(spots[i].x, spots[i].z).agent_count;
-                if (crowd < best_crowd) {
-                    best_crowd = crowd;
-                    best_idx = i;
+            // Second pass: collect candidates within tolerance of best
+            if (min_dist < INT_MAX) {
+                struct Candidate {
+                    int x, z;
+                };
+                std::vector<Candidate> near;
+                near.reserve(16);
+                int limit = min_dist + DIST_TOLERANCE;
+                for (const auto& s : spots) {
+                    if (grid->at(s.x, s.z).agent_count >= STAGE_CROWD_LIMIT)
+                        continue;
+                    int dist = std::abs(s.x - from_x) + std::abs(s.z - from_z);
+                    if (dist <= limit) near.push_back({s.x, s.z});
+                }
+                if (!near.empty()) {
+                    auto& pick = near[rng.get_int(0, (int) near.size() - 1)];
+                    return {pick.x, pick.z};
                 }
             }
-            return {spots[best_idx].x, spots[best_idx].z};
+
+            // All tiles crowded — pick the least-crowded closest to agent
+            int fallback_x = spots[0].x, fallback_z = spots[0].z;
+            int fallback_crowd = grid->at(spots[0].x, spots[0].z).agent_count;
+            int fallback_dist =
+                std::abs(spots[0].x - from_x) + std::abs(spots[0].z - from_z);
+            for (size_t i = 1; i < spots.size(); i++) {
+                int crowd = grid->at(spots[i].x, spots[i].z).agent_count;
+                int dist = std::abs(spots[i].x - from_x) +
+                           std::abs(spots[i].z - from_z);
+                if (crowd < fallback_crowd ||
+                    (crowd == fallback_crowd && dist < fallback_dist)) {
+                    fallback_crowd = crowd;
+                    fallback_dist = dist;
+                    fallback_x = spots[i].x;
+                    fallback_z = spots[i].z;
+                }
+            }
+            return {fallback_x, fallback_z};
         }
     }
 
-    // Fallback
+    // Fallback — no cached spots
     int gx = static_cast<int>(scx) + rng.get_int(-2, 2);
     int gz = static_cast<int>(scz) + rng.get_int(-2, 2);
     gx = std::clamp(gx, PLAY_MIN, PLAY_MAX);
@@ -696,8 +732,8 @@ struct SpawnAgentSystem : System<> {
         if (ss->timer >= ss->interval) {
             ss->timer -= ss->interval;
 
-            // Spawn agent heading toward a random spot near the stage
-            auto [sx, sz] = random_stage_spot();
+            // Spawn agent heading toward the closest open stage spot
+            auto [sx, sz] = best_stage_spot(SPAWN_X, SPAWN_Z);
             make_agent(SPAWN_X, SPAWN_Z, FacilityType::Stage, sx, sz);
         }
     }
@@ -793,17 +829,33 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
             urgent = false;
         }
 
-        // Already heading to the right facility with a valid target? Skip.
-        if (agent.want == desired && agent.target_grid_x >= 0) return;
-
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
+
+        // Already heading to the right facility with a valid target?
+        if (agent.want == desired && agent.target_grid_x >= 0) {
+            // For Stage targets, re-evaluate if the target tile got crowded
+            // (orange on the density overlay). This makes agents spread out
+            // to emptier tiles instead of piling onto one spot.
+            if (desired == FacilityType::Stage &&
+                grid->in_bounds(agent.target_grid_x, agent.target_grid_z)) {
+                int target_crowd =
+                    grid->at(agent.target_grid_x, agent.target_grid_z)
+                        .agent_count;
+                if (target_crowd >= STAGE_CROWD_LIMIT) {
+                    auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
+                    agent.target_grid_x = rsx;
+                    agent.target_grid_z = rsz;
+                }
+            }
+            return;
+        }
 
         if (desired == FacilityType::Stage) {
             if (agent.want != FacilityType::Stage &&
                 agent.want != FacilityType::MedTent) {
                 agent.want = FacilityType::Stage;
-                auto [rsx, rsz] = random_stage_spot();
+                auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
                 agent.target_grid_x = rsx;
                 agent.target_grid_z = rsz;
             }
@@ -820,7 +872,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 needs.needs_food = false;
                 needs.food_timer = 0.f;
                 agent.want = FacilityType::Stage;
-                auto [rsx, rsz] = random_stage_spot();
+                auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
                 agent.target_grid_x = rsx;
                 agent.target_grid_z = rsz;
             }
@@ -920,9 +972,11 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
 
                 e.removeComponent<BeingServiced>();
 
-                // Reset goal to stage (random spot near it)
+                // Reset goal to stage — closest non-crowded spot
                 agent.want = FacilityType::Stage;
-                auto [rsx, rsz] = random_stage_spot();
+                auto [fgx, fgz] =
+                    grid->world_to_grid(tf.position.x, tf.position.y);
+                auto [rsx, rsz] = best_stage_spot(fgx, fgz);
                 agent.target_grid_x = rsx;
                 agent.target_grid_z = rsz;
             }

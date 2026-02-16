@@ -13,9 +13,12 @@ wait_frames 2
 spawn_agents 10 25 5 stage
 wait_frames 2
 
-# Wait for agents to walk ~22 tiles at 2.5 t/s effective (0.5 * 5x) = ~9 sec
-wait 12
+# Wait for agents to walk toward stage area at 2.5 t/s effective (0.5 * 5x)
+# Agents target the closest non-crowded StageFloor tile, which may be on the
+# near edge of the ring (~14 tiles from spawn, plus some pathing overhead)
+wait 15
 
-# At least one agent should be near the stage (wider radius since they may be watching)
-assert_agent_near 32 27 8
+# At least one agent should be near the stage area (radius includes edge
+# of the StageFloor ring where closest-tile agents may cluster)
+assert_agent_near 32 27 12
 screenshot 03_agents_near_stage

@@ -15,8 +15,8 @@ extern bool g_test_mode;
 void register_update_systems(SystemManager& sm);
 void register_render_systems(SystemManager& sm);
 
-// Pick a random walkable StageFloor tile near the stage
-std::pair<int, int> random_stage_spot();
+// Pick the closest non-crowded StageFloor tile to (from_x, from_z)
+std::pair<int, int> best_stage_spot(int from_x, int from_z);
 void register_mcp_update_systems(SystemManager& sm);
 void register_mcp_render_systems(SystemManager& sm);
 void register_e2e_systems(SystemManager& sm);
