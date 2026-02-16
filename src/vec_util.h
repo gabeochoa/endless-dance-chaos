@@ -24,7 +24,7 @@ bool remove_all_matching(std::vector<T>& vec,
     if (it == vec.end()) {
         return false;
     }
-    vec.erase(it);
+    vec.erase(it, vec.end());
     return true;
 }
 

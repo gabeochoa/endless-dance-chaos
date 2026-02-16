@@ -11,6 +11,13 @@
 #include "save_system.h"
 #include "systems.h"
 
+// Global event effect flags set by ApplyEventEffectsSystem each frame.
+// Read by AgentMovementSystem (rain) and NeedTickSystem (heat).
+namespace event_flags {
+static bool rain_active = false;
+static bool heat_active = false;
+}  // namespace event_flags
+
 // Helper: check if game is over (skip game logic)
 static bool game_is_over() {
     auto* gs = EntityHelper::get_singleton_cmp<GameState>();
@@ -572,6 +579,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     }
                     agent.speed = SPEED_PATH;
                     if (gs) agent.speed *= gs->speed_multiplier;
+                    if (event_flags::rain_active) agent.speed *= 0.5f;
                 }
             } else {
                 // Safe — clear any flee commitment
@@ -603,6 +611,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
                 agent.speed *= density_speed_modifier(density);
             }
             if (gs) agent.speed *= gs->speed_multiplier;
+            if (event_flags::rain_active) agent.speed *= 0.5f;
 
             auto [px, pz] =
                 pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
@@ -626,15 +635,15 @@ struct AgentMovementSystem : System<Agent, Transform> {
     }
 };
 
-// Pick a random spot on the stage floor (StageFloor tiles only).
-// Returns a grid position that agents can actually walk to.
+// Pick a spot on the stage floor as close to the stage as possible
+// without being too crowded. Mimics real concert crowd behavior:
+// everyone packs in near the front, only spreading out when it's full.
 std::pair<int, int> random_stage_spot() {
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     auto& rng = RandomEngine::get();
     float scx = STAGE_X + STAGE_SIZE / 2.0f;
     float scz = STAGE_Z + STAGE_SIZE / 2.0f;
 
-    // Collect all StageFloor tiles as candidates
     if (grid) {
         int r = static_cast<int>(std::ceil(STAGE_WATCH_RADIUS));
         int cx = static_cast<int>(scx);
@@ -643,6 +652,7 @@ std::pair<int, int> random_stage_spot() {
         struct Spot {
             int x, z;
             float dist;
+            int crowd;
         };
         std::vector<Spot> candidates;
         for (int z = cz - r; z <= cz + r; z++) {
@@ -652,28 +662,45 @@ std::pair<int, int> random_stage_spot() {
                 float dx = x - scx;
                 float dz = z - scz;
                 float d = std::sqrt(dx * dx + dz * dz);
-                candidates.push_back({x, z, d});
+                int crowd = grid->at(x, z).agent_count;
+                candidates.push_back({x, z, d, crowd});
             }
         }
 
         if (!candidates.empty()) {
-            // Weight toward closer spots: 60% inner half, 40% outer
-            bool prefer_close = rng.get_float(0.f, 1.f) < 0.6f;
-            float half_r = STAGE_WATCH_RADIUS * 0.5f;
+            // Sort by distance (closest to stage first)
+            std::sort(
+                candidates.begin(), candidates.end(),
+                [](const Spot& a, const Spot& b) { return a.dist < b.dist; });
 
-            // Filter to preferred range
-            std::vector<Spot> preferred;
+            // Pick the closest tile that isn't too crowded.
+            // "Too crowded" threshold is low so agents pack in but
+            // overflow to the next ring when a tile fills up.
+            constexpr int CROWD_THRESHOLD = 4;
             for (auto& s : candidates) {
-                if (prefer_close ? (s.dist <= half_r) : (s.dist > half_r))
-                    preferred.push_back(s);
+                if (s.crowd < CROWD_THRESHOLD) {
+                    // Add small jitter: sometimes pick a neighbor instead
+                    // to avoid all agents targeting the exact same tile
+                    if (rng.get_float(0.f, 1.f) < 0.3f) continue;
+                    return {s.x, s.z};
+                }
             }
-            auto& pool = preferred.empty() ? candidates : preferred;
-            int idx = rng.get_int(0, (int) pool.size() - 1);
-            return {pool[idx].x, pool[idx].z};
+
+            // All tiles crowded — pick the least crowded one near the front
+            int best_idx = 0;
+            int best_crowd = candidates[0].crowd;
+            int search_limit = std::min((int) candidates.size(), 20);
+            for (int i = 1; i < search_limit; i++) {
+                if (candidates[i].crowd < best_crowd) {
+                    best_crowd = candidates[i].crowd;
+                    best_idx = i;
+                }
+            }
+            return {candidates[best_idx].x, candidates[best_idx].z};
         }
     }
 
-    // Fallback: approximate position near stage center
+    // Fallback
     int gx = static_cast<int>(scx) + rng.get_int(-2, 2);
     int gz = static_cast<int>(scz) + rng.get_int(-2, 2);
     gx = std::clamp(gx, PLAY_MIN, PLAY_MAX);
@@ -770,8 +797,9 @@ struct NeedTickSystem : System<Agent, AgentNeeds> {
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
 
-        needs.bathroom_timer += dt;
-        needs.food_timer += dt;
+        float need_dt = event_flags::heat_active ? dt * 2.0f : dt;
+        needs.bathroom_timer += need_dt;
+        needs.food_timer += need_dt;
 
         if (!needs.needs_bathroom &&
             needs.bathroom_timer >= needs.bathroom_threshold) {
@@ -1201,38 +1229,24 @@ struct UpdateTileDensitySystem : System<> {
     }
 };
 
-// Apply crush damage to agents on critically dense tiles
-struct CrushDamageSystem : System<> {
-    void once(float dt) override {
+// Apply crush damage to agents on critically dense tiles.
+// Iterates agents once (O(n)) instead of per-tile agent queries (O(tiles*n)).
+struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
+    void for_each_with(Entity& e, Agent&, Transform& tf, AgentHealth& health,
+                       float dt) override {
         if (skip_game_logic()) return;
+        if (!e.is_missing<BeingServiced>()) return;
+
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
-        // Iterate tiles, find critically dense ones
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                const Tile& tile = grid->at(x, z);
-                float density =
-                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
-                if (density < DENSITY_CRITICAL) continue;
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz)) return;
 
-                // Find all agents on this tile and apply damage
-                auto agents = EntityQuery()
-                                  .whereHasComponent<Agent>()
-                                  .whereHasComponent<Transform>()
-                                  .whereHasComponent<AgentHealth>()
-                                  .gen();
-                for (Entity& agent_ent : agents) {
-                    if (!agent_ent.is_missing<BeingServiced>()) continue;
-                    auto& tf = agent_ent.get<Transform>();
-                    auto [gx, gz] =
-                        grid->world_to_grid(tf.position.x, tf.position.y);
-                    if (gx == x && gz == z) {
-                        agent_ent.get<AgentHealth>().hp -=
-                            CRUSH_DAMAGE_RATE * dt;
-                    }
-                }
-            }
+        float density = grid->at(gx, gz).agent_count /
+                        static_cast<float>(MAX_AGENTS_PER_TILE);
+        if (density >= DENSITY_CRITICAL) {
+            health.hp -= CRUSH_DAMAGE_RATE * dt;
         }
     }
 };
@@ -1590,53 +1604,29 @@ struct RandomEventSystem : System<> {
     }
 };
 
-// Apply active event effects each frame
+// Track active event flags for other systems to query.
+// Sets flags each frame so movement/need systems can check them cheaply.
 struct ApplyEventEffectsSystem : System<> {
     void once(float) override {
+        event_flags::rain_active = false;
+        event_flags::heat_active = false;
+
         if (skip_game_logic()) return;
         auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
-        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (!gs) return;
-
-        // Default: no event modifiers
-        bool rain_active = false;
-        bool heat_active = false;
 
         for (Entity& ev_entity : events) {
             auto& ev = ev_entity.get<ActiveEvent>();
             switch (ev.type) {
                 case EventType::Rain:
-                    rain_active = true;
+                    event_flags::rain_active = true;
                     break;
                 case EventType::PowerOutage:
-                    // Handled in UpdateArtistScheduleSystem
                     break;
                 case EventType::VIPVisit:
-                    // Boost satisfaction (more attendees exit happy)
                     break;
                 case EventType::HeatWave:
-                    heat_active = true;
+                    event_flags::heat_active = true;
                     break;
-            }
-        }
-
-        // Rain: slow all agents by 50%
-        if (rain_active) {
-            auto agents = EntityQuery().whereHasComponent<Agent>().gen();
-            for (Entity& a : agents) {
-                a.get<Agent>().speed *= 0.5f;
-            }
-        }
-
-        // Heat wave: need thresholds decay 2x faster (tick in NeedTickSystem)
-        // We'll just accelerate bathroom/food needs by reducing thresholds
-        if (heat_active) {
-            auto agents = EntityQuery().whereHasComponent<AgentNeeds>().gen();
-            for (Entity& a : agents) {
-                auto& n = a.get<AgentNeeds>();
-                n.bathroom_threshold =
-                    std::max(10.f, n.bathroom_threshold - 0.1f);
-                n.food_threshold = std::max(15.f, n.food_threshold - 0.1f);
             }
         }
     }
@@ -1644,6 +1634,8 @@ struct ApplyEventEffectsSystem : System<> {
 
 // Difficulty scaling: increase spawn rate and crowd sizes over time
 struct DifficultyScalingSystem : System<> {
+    int last_hour = -1;
+
     void once(float) override {
         if (skip_game_logic()) return;
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
@@ -1653,7 +1645,6 @@ struct DifficultyScalingSystem : System<> {
 
         // Track day transitions
         int hour = clock->get_hour();
-        static int last_hour = -1;
         if (last_hour >= 3 && last_hour < 10 && hour >= 10) {
             diff->day_number++;
             // Escalate difficulty each day
@@ -1715,6 +1706,7 @@ struct UpdateAudioSystem : System<> {
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
     sm.register_update_system(std::make_unique<UpdateGameClockSystem>());
+    sm.register_update_system(std::make_unique<ApplyEventEffectsSystem>());
     sm.register_update_system(std::make_unique<UpdateArtistScheduleSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
     sm.register_update_system(std::make_unique<ToggleDataLayerSystem>());
@@ -1737,7 +1729,6 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<RestartGameSystem>());
     sm.register_update_system(std::make_unique<UpdateParticlesSystem>());
     sm.register_update_system(std::make_unique<RandomEventSystem>());
-    sm.register_update_system(std::make_unique<ApplyEventEffectsSystem>());
     sm.register_update_system(std::make_unique<DifficultyScalingSystem>());
     sm.register_update_system(std::make_unique<SaveLoadSystem>());
     sm.register_update_system(std::make_unique<UpdateAudioSystem>());

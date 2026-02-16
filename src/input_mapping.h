@@ -113,14 +113,14 @@ inline auto get_mapping() {
         raylib::KEY_E,
     };
 
-    // Build tools - number keys
+    // Build tools - number keys (1-8 for each tool in order)
     mapping[to_int(InputAction::ToolPath)] = {
         raylib::KEY_ONE,
     };
-    mapping[to_int(InputAction::ToolBathroom)] = {
+    mapping[to_int(InputAction::ToolFence)] = {
         raylib::KEY_TWO,
     };
-    mapping[to_int(InputAction::ToolFood)] = {
+    mapping[to_int(InputAction::ToolGate)] = {
         raylib::KEY_THREE,
     };
     mapping[to_int(InputAction::ToolStage)] = {
@@ -139,18 +139,10 @@ inline auto get_mapping() {
         raylib::KEY_X,
     };
 
-    // Data layer
+    // Data layer (TAB for overlay, filters unused for now to avoid key
+    // conflicts)
     mapping[to_int(InputAction::ToggleDataLayer)] = {
         raylib::KEY_TAB,
-    };
-    mapping[to_int(InputAction::FilterBathroom)] = {
-        raylib::KEY_ONE,
-    };
-    mapping[to_int(InputAction::FilterFood)] = {
-        raylib::KEY_TWO,
-    };
-    mapping[to_int(InputAction::FilterStage)] = {
-        raylib::KEY_THREE,
     };
 
     // Widget navigation
@@ -167,7 +159,6 @@ inline auto get_mapping() {
         raylib::KEY_UP,
     };
     mapping[to_int(InputAction::WidgetNext)] = {
-        raylib::KEY_TAB,
         raylib::GAMEPAD_BUTTON_LEFT_FACE_DOWN,
         raylib::KEY_DOWN,
     };
@@ -198,12 +189,6 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::NextTool)] = {
         raylib::KEY_RIGHT_BRACKET,
-    };
-    mapping[to_int(InputAction::ToolFence)] = {
-        raylib::KEY_TWO,
-    };
-    mapping[to_int(InputAction::ToolGate)] = {
-        raylib::KEY_THREE,
     };
     mapping[to_int(InputAction::Tool5)] = {
         raylib::KEY_FIVE,

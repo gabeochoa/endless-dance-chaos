@@ -50,6 +50,8 @@ inline TileType parse_tile_type(const std::string& s) {
         return TileType::StageFloor;
     if (lower == "bathroom") return TileType::Bathroom;
     if (lower == "food") return TileType::Food;
+    if (lower == "medtent" || lower == "med_tent" || lower == "med")
+        return TileType::MedTent;
     return TileType::Grass;
 }
 
@@ -1322,7 +1324,7 @@ struct HandleSetPheromoneCommand : System<testing::PendingE2ECommand> {
         int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
         int ch = std::stoi(cmd.args[2]);
         int val = std::stoi(cmd.args[3]);
-        if (grid->in_bounds(x, z) && ch >= 0 && ch < 4) {
+        if (grid->in_bounds(x, z) && ch >= 0 && ch < 5) {
             grid->at(x, z).pheromone[ch] =
                 static_cast<uint8_t>(std::clamp(val, 0, 255));
         }
@@ -1346,7 +1348,7 @@ struct HandleAssertPheromoneCommand : System<testing::PendingE2ECommand> {
         }
         int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
         int ch = std::stoi(cmd.args[2]);
-        if (grid->in_bounds(x, z) && ch >= 0 && ch < 4) {
+        if (grid->in_bounds(x, z) && ch >= 0 && ch < 5) {
             int actual = grid->at(x, z).pheromone[ch];
             if (compare_op(actual, cmd.args[3], std::stoi(cmd.args[4]))) {
                 log_info("assert_pheromone PASSED: ({},{}) ch={} val={}", x, z,
@@ -1470,6 +1472,8 @@ struct HandleSelectToolCommand : System<testing::PendingE2ECommand> {
             bs->tool = BuildTool::Bathroom;
         else if (tool == "food")
             bs->tool = BuildTool::Food;
+        else if (tool == "medtent" || tool == "med")
+            bs->tool = BuildTool::MedTent;
         else if (tool == "demolish")
             bs->tool = BuildTool::Demolish;
         else
@@ -1495,10 +1499,11 @@ struct HandleAssertToolCommand : System<testing::PendingE2ECommand> {
         std::string expected = cmd.args[0];
         std::transform(expected.begin(), expected.end(), expected.begin(),
                        ::tolower);
-        static const char* names[] = {"path",     "fence", "gate",    "stage",
-                                      "bathroom", "food",  "demolish"};
+        static const char* names[] = {"path",    "fence",    "gate",
+                                      "stage",   "bathroom", "food",
+                                      "medtent", "demolish"};
         int idx = static_cast<int>(bs->tool);
-        std::string actual = (idx >= 0 && idx < 7) ? names[idx] : "unknown";
+        std::string actual = (idx >= 0 && idx < 8) ? names[idx] : "unknown";
         if (actual == expected) {
             log_info("assert_tool PASSED: {}", actual);
             cmd.consume();
