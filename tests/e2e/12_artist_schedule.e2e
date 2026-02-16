@@ -1,19 +1,24 @@
 # Test artist schedule and stage state machine
 reset_game
-wait 1
+wait_frames 5
 
-# Jump to just before first artist (10am slot, announce at 9:45)
+# Force a known artist starting at 10:00 with 45min duration
+# Then immediately set time to just before announce window
+force_artist TestAct 50 45 10 0
+wait_frames 5
+
+# Set time to announce window (9:45 = 15 min before 10:00)
+# Clock runs at 1x = 60 game-min/real-sec, so 1 frame ~= 0.12 min at 500fps
+# Must assert quickly before time passes the window
 set_time 9 45
-wait 2
+wait_frames 2
 assert_stage_state announcing
-wait 1
 
-# Jump to performance
+# Jump to performance time (10:05)
 set_time 10 5
-wait 2
+wait_frames 2
 assert_stage_state performing
-wait 1
 
-# Jump past end of set (max 60 min duration, so 11:05 should be clearing/idle)
-set_time 11 5
-wait 2
+# Jump past end of set (10:00 + 45min = 10:45, so 10:50 should be done)
+set_time 10 50
+wait_frames 2

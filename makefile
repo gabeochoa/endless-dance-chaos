@@ -31,7 +31,7 @@ ifdef CCACHE
     CXX := ccache $(CXX)
 endif
 
-.PHONY: all clean run format
+.PHONY: all clean run format test
 .DEFAULT_GOAL := all
 
 all: format $(OUTPUT_EXE)
@@ -54,6 +54,9 @@ clean:
 
 run: $(OUTPUT_EXE)
 	./$(OUTPUT_EXE)
+
+test: $(OUTPUT_EXE)
+	./$(OUTPUT_EXE) --test-dir tests/e2e
 
 count:
 	git ls-files | grep "src" | grep -v "vendor" | grep -v "resources" | xargs wc -l | sort -rn

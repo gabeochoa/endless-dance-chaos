@@ -190,6 +190,42 @@ struct HandleResetGameCommand : System<testing::PendingE2ECommand> {
             ss->enabled = true;
         }
 
+        // Reset game clock
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock) {
+            clock->game_time_minutes = 600.0f;  // 10:00am
+            clock->speed = GameSpeed::OneX;
+        }
+
+        // Reset artist schedule
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        if (sched) {
+            sched->schedule.clear();
+            sched->stage_state = StageState::Idle;
+            sched->current_artist_idx = -1;
+        }
+
+        // Reset additional game state fields
+        if (state) {
+            state->agents_exited = 0;
+            state->carryover_count = 0;
+            state->show_debug = false;
+        }
+
+        // Clear pheromones
+        if (grid) {
+            for (auto& tile : grid->tiles) {
+                tile.pheromone = {0, 0, 0, 0};
+            }
+        }
+
+        // Clear particles and toast messages
+        auto particles = EntityQuery().whereHasComponent<Particle>().gen();
+        for (Entity& p : particles) p.cleanup = true;
+        auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+        for (Entity& t : toasts) t.cleanup = true;
+        EntityHelper::cleanup();
+
         cmd.consume();
     }
 };
@@ -1024,11 +1060,11 @@ struct HandleAssertPhaseCommand : System<testing::PendingE2ECommand> {
             (actual_lower == expected) ||
             (expected == "dead" && phase == GameClock::Phase::DeadHours);
         if (!match) {
-            log_error("assert_phase FAILED: expected '{}', got '{}'", expected,
-                      actual_str);
-        } else {
-            log_info("assert_phase PASSED: phase is '{}'", actual_str);
+            cmd.fail(fmt::format("assert_phase FAILED: expected '{}', got '{}'",
+                                 expected, actual_str));
+            return;
         }
+        log_info("assert_phase PASSED: phase is '{}'", actual_str);
         cmd.consume();
     }
 };
@@ -1057,11 +1093,12 @@ struct HandleAssertTimeBetweenCommand : System<testing::PendingE2ECommand> {
         if (current >= t1 && current <= t2) {
             log_info("assert_time_between PASSED: {} in [{}, {}]", current, t1,
                      t2);
+            cmd.consume();
         } else {
-            log_error("assert_time_between FAILED: {} not in [{}, {}]", current,
-                      t1, t2);
+            cmd.fail(
+                fmt::format("assert_time_between FAILED: {} not in [{}, {}]",
+                            current, t1, t2));
         }
-        cmd.consume();
     }
 };
 
@@ -1101,15 +1138,16 @@ struct HandleAssertStageStateCommand : System<testing::PendingE2ECommand> {
         }
         if (actual == expected) {
             log_info("assert_stage_state PASSED: {}", actual);
+            cmd.consume();
         } else {
-            log_error("assert_stage_state FAILED: expected '{}', got '{}'",
-                      expected, actual);
+            cmd.fail(fmt::format(
+                "assert_stage_state FAILED: expected '{}', got '{}'", expected,
+                actual));
         }
-        cmd.consume();
     }
 };
 
-// force_artist NAME CROWD DURATION — schedule a specific artist next
+// force_artist NAME CROWD DURATION [START_H START_M]
 struct HandleForceArtistCommand : System<testing::PendingE2ECommand> {
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
                        float) override {
@@ -1128,7 +1166,13 @@ struct HandleForceArtistCommand : System<testing::PendingE2ECommand> {
         a.name = cmd.args[0];
         a.expected_crowd = std::stoi(cmd.args[1]);
         a.duration_minutes = std::stof(cmd.args[2]);
-        a.start_time_minutes = clock->game_time_minutes + 1.f;
+        if (cmd.args.size() >= 5) {
+            int h = std::stoi(cmd.args[3]);
+            int m = std::stoi(cmd.args[4]);
+            a.start_time_minutes = static_cast<float>(h * 60 + m);
+        } else {
+            a.start_time_minutes = clock->game_time_minutes + 1.f;
+        }
         sched->schedule.insert(sched->schedule.begin(), a);
         log_info("force_artist: '{}' crowd={} dur={}", a.name, a.expected_crowd,
                  a.duration_minutes);
@@ -1154,12 +1198,13 @@ struct HandleAssertAgentsExitedCommand : System<testing::PendingE2ECommand> {
                        std::stoi(cmd.args[1]))) {
             log_info("assert_agents_exited PASSED: {} {} {}", gs->agents_exited,
                      cmd.args[0], cmd.args[1]);
+            cmd.consume();
         } else {
-            log_error("assert_agents_exited FAILED: {} {} {} (actual: {})",
-                      gs->agents_exited, cmd.args[0], cmd.args[1],
-                      gs->agents_exited);
+            cmd.fail(fmt::format(
+                "assert_agents_exited FAILED: {} {} {} (actual: {})",
+                gs->agents_exited, cmd.args[0], cmd.args[1],
+                gs->agents_exited));
         }
-        cmd.consume();
     }
 };
 
@@ -1180,11 +1225,11 @@ struct HandleAssertCarryoverCommand : System<testing::PendingE2ECommand> {
         if (compare_op(gs->carryover_count, cmd.args[0],
                        std::stoi(cmd.args[1]))) {
             log_info("assert_carryover_count PASSED: {}", gs->carryover_count);
+            cmd.consume();
         } else {
-            log_error("assert_carryover_count FAILED: actual={}",
-                      gs->carryover_count);
+            cmd.fail(fmt::format("assert_carryover_count FAILED: actual={}",
+                                 gs->carryover_count));
         }
-        cmd.consume();
     }
 };
 
@@ -1234,11 +1279,13 @@ struct HandleAssertPheromoneCommand : System<testing::PendingE2ECommand> {
             if (compare_op(actual, cmd.args[3], std::stoi(cmd.args[4]))) {
                 log_info("assert_pheromone PASSED: ({},{}) ch={} val={}", x, z,
                          ch, actual);
+                cmd.consume();
             } else {
-                log_error(
+                cmd.fail(fmt::format(
                     "assert_pheromone FAILED: ({},{}) ch={} actual={} {} {}", x,
-                    z, ch, actual, cmd.args[3], cmd.args[4]);
+                    z, ch, actual, cmd.args[3], cmd.args[4]));
             }
+            return;
         }
         cmd.consume();
     }
@@ -1289,11 +1336,11 @@ struct HandleAssertMaxAttendeesCommand : System<testing::PendingE2ECommand> {
         if (compare_op(gs->max_attendees, cmd.args[0],
                        std::stoi(cmd.args[1]))) {
             log_info("assert_max_attendees PASSED: {}", gs->max_attendees);
+            cmd.consume();
         } else {
-            log_error("assert_max_attendees FAILED: actual={}",
-                      gs->max_attendees);
+            cmd.fail(fmt::format("assert_max_attendees FAILED: actual={}",
+                                 gs->max_attendees));
         }
-        cmd.consume();
     }
 };
 
@@ -1315,10 +1362,11 @@ struct HandleAssertSlotsCommand : System<testing::PendingE2ECommand> {
         int slots = fs->get_slots_per_type(gs->max_attendees);
         if (compare_op(slots, cmd.args[1], std::stoi(cmd.args[2]))) {
             log_info("assert_slots PASSED: {} slots={}", cmd.args[0], slots);
+            cmd.consume();
         } else {
-            log_error("assert_slots FAILED: {} actual={}", cmd.args[0], slots);
+            cmd.fail(fmt::format("assert_slots FAILED: {} actual={}",
+                                 cmd.args[0], slots));
         }
-        cmd.consume();
     }
 };
 
@@ -1381,11 +1429,11 @@ struct HandleAssertToolCommand : System<testing::PendingE2ECommand> {
         std::string actual = (idx >= 0 && idx < 7) ? names[idx] : "unknown";
         if (actual == expected) {
             log_info("assert_tool PASSED: {}", actual);
+            cmd.consume();
         } else {
-            log_error("assert_tool FAILED: expected '{}', got '{}'", expected,
-                      actual);
+            cmd.fail(fmt::format("assert_tool FAILED: expected '{}', got '{}'",
+                                 expected, actual));
         }
-        cmd.consume();
     }
 };
 

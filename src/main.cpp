@@ -16,7 +16,7 @@ raylib::RenderTexture2D g_render_texture;
 
 using namespace afterhours;
 
-void game(const std::string& test_script) {
+void game(const std::string& test_script, const std::string& test_dir) {
     SystemManager systems;
     register_all_systems(systems);
 
@@ -25,16 +25,11 @@ void game(const std::string& test_script) {
 
     // E2E test runner setup
     testing::E2ERunner runner;
-    if (g_test_mode && !test_script.empty()) {
-        runner.load_script(test_script);
-        runner.set_timeout(30.0f);
 
-        // Screenshot callback - save PNGs to tests/e2e/screenshots/
+    auto setup_screenshot_callback = [&]() {
         runner.set_screenshot_callback([](const std::string& name) {
             std::filesystem::create_directories("tests/e2e/screenshots");
             std::string path = "tests/e2e/screenshots/" + name + ".png";
-
-            // Capture from render texture
             raylib::Image img =
                 raylib::LoadImageFromTexture(g_render_texture.texture);
             raylib::ImageFlipVertical(&img);
@@ -42,7 +37,19 @@ void game(const std::string& test_script) {
             raylib::UnloadImage(img);
             log_info("[E2E] Screenshot saved: {}", path);
         });
+    };
 
+    if (g_test_mode && !test_dir.empty()) {
+        // Batch mode: run all .e2e files in a directory with one window
+        runner.load_scripts_from_directory(test_dir);
+        runner.set_timeout(
+            60.0f);  // per-script timeout (resets between scripts)
+        setup_screenshot_callback();
+        log_info("[E2E] Loaded test directory: {}", test_dir);
+    } else if (g_test_mode && !test_script.empty()) {
+        runner.load_script(test_script);
+        runner.set_timeout(30.0f);
+        setup_screenshot_callback();
         log_info("[E2E] Loaded test script: {}", test_script);
     }
 
@@ -90,6 +97,9 @@ int main(int argc, char* argv[]) {
     std::string test_script;
     cmdl("--test-script") >> test_script;
 
+    std::string test_dir;
+    cmdl("--test-dir") >> test_dir;
+
     // In MCP mode, suppress raylib logs and redirect our logs to stderr
     if (mcp_mode) {
         raylib::SetTraceLogLevel(raylib::LOG_NONE);
@@ -117,7 +127,13 @@ int main(int argc, char* argv[]) {
         mcp_integration::init();
     }
 
-    game(test_script);
+    // Enable test mode if --test-dir given (even without explicit --test-mode)
+    if (!test_dir.empty()) {
+        g_test_mode = true;
+        raylib::SetTraceLogLevel(raylib::LOG_NONE);
+    }
+
+    game(test_script, test_dir);
 
     mcp_integration::shutdown();
     raylib::UnloadRenderTexture(g_render_texture);
