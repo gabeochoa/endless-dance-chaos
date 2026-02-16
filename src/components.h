@@ -201,6 +201,64 @@ struct BuilderState : afterhours::BaseComponent {
     BuildTool tool = BuildTool::Path;
 };
 
+// Game clock - 24-hour cycle with phases
+enum class GameSpeed { Paused, OneX, TwoX, FourX };
+
+struct GameClock : afterhours::BaseComponent {
+    float game_time_minutes = 600.0f;  // Start at 10:00am
+    GameSpeed speed = GameSpeed::OneX;
+
+    // 12 real minutes = 24 game hours = 1440 game minutes
+    static constexpr float SECONDS_PER_GAME_MINUTE = 0.5f;
+
+    float speed_multiplier() const {
+        switch (speed) {
+            case GameSpeed::Paused:
+                return 0.0f;
+            case GameSpeed::OneX:
+                return 1.0f;
+            case GameSpeed::TwoX:
+                return 2.0f;
+            case GameSpeed::FourX:
+                return 4.0f;
+        }
+        return 1.0f;
+    }
+
+    enum class Phase { Day, Night, Exodus, DeadHours };
+
+    Phase get_phase() const {
+        int hour = get_hour();
+        if (hour >= 10 && hour < 18) return Phase::Day;
+        if (hour >= 18) return Phase::Night;
+        if (hour < 3) return Phase::Exodus;
+        return Phase::DeadHours;  // 3am - 10am
+    }
+
+    int get_hour() const {
+        return static_cast<int>(game_time_minutes / 60.0f) % 24;
+    }
+    int get_minute() const { return static_cast<int>(game_time_minutes) % 60; }
+
+    std::string format_time() const {
+        return fmt::format("{:02d}:{:02d}", get_hour(), get_minute());
+    }
+
+    static const char* phase_name(Phase p) {
+        switch (p) {
+            case Phase::Day:
+                return "Day";
+            case Phase::Night:
+                return "Night";
+            case Phase::Exodus:
+                return "Exodus";
+            case Phase::DeadHours:
+                return "Dead Hours";
+        }
+        return "Unknown";
+    }
+};
+
 // Spawn control singleton
 struct SpawnState : afterhours::BaseComponent {
     float interval = DEFAULT_SPAWN_INTERVAL;  // seconds between spawns

@@ -1,0 +1,21 @@
+# Test pause
+reset_game
+wait 1
+
+# Pause immediately then set time (avoids drift)
+set_speed paused
+wait 1
+set_time 12 0
+wait 3
+
+# Time should not have advanced while paused
+assert_time_between 12 0 12 0
+wait 1
+
+# Unpause
+set_speed 1x
+wait 5
+
+# Time should have advanced (1x = 2 game min per real sec, ~5s = ~10 game min)
+assert_time_between 12 5 12 30
+wait 1

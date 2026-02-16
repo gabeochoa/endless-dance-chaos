@@ -284,11 +284,30 @@ struct RenderUISystem : System<> {
         // Title
         draw_text_bg("Endless Dance Chaos", 10, 10, 26, raylib::WHITE);
 
+        // Clock display
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock) {
+            std::string time_str = clock->format_time();
+            std::string phase_str = GameClock::phase_name(clock->get_phase());
+            std::string clock_text = fmt::format("{}  {}", time_str, phase_str);
+            if (clock->speed == GameSpeed::Paused) {
+                clock_text += "  PAUSED";
+            }
+            draw_text_bg(clock_text, 10, 42, 22,
+                         raylib::Color{255, 220, 100, 255});
+            auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+            vtr.register_text(time_str);
+            vtr.register_text(phase_str);
+            if (clock->speed == GameSpeed::Paused) {
+                vtr.register_text("PAUSED");
+            }
+        }
+
         // Agent count
         int agent_count =
             (int) EntityQuery().whereHasComponent<Agent>().gen_count();
         std::string count_text = fmt::format("Agents: {}", agent_count);
-        draw_text_bg(count_text, 10, 100, 22,
+        draw_text_bg(count_text, 10, 128, 22,
                      raylib::Color{200, 220, 255, 255});
 
         // Death count
@@ -296,7 +315,7 @@ struct RenderUISystem : System<> {
         if (gs && gs->death_count > 0) {
             std::string death_text =
                 fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
-            draw_text_bg(death_text, 10, 128, 22,
+            draw_text_bg(death_text, 10, 156, 22,
                          gs->death_count >= gs->max_deaths
                              ? raylib::Color{255, 50, 50, 255}
                              : raylib::Color{255, 180, 80, 255});
@@ -304,7 +323,7 @@ struct RenderUISystem : System<> {
 
         // Overlay indicator
         if (gs && gs->show_data_layer) {
-            draw_text_bg("[TAB] Density Overlay ON", 10, 156, 20,
+            draw_text_bg("[TAB] Density Overlay ON", 10, 184, 20,
                          raylib::Color{255, 255, 100, 255});
         }
 
@@ -322,14 +341,14 @@ struct RenderUISystem : System<> {
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         if (pds) {
             if (pds->demolish_mode) {
-                draw_text_bg("DEMOLISH MODE [X]", 10, 42, 22,
+                draw_text_bg("DEMOLISH MODE [X]", 10, 70, 22,
                              raylib::Color{255, 80, 80, 255});
             } else if (pds->is_drawing) {
                 draw_text_bg(
                     "Drawing path... (click to confirm, right-click to cancel)",
-                    10, 42, 20, raylib::Color{180, 255, 180, 255});
+                    10, 70, 20, raylib::Color{180, 255, 180, 255});
             } else {
-                draw_text_bg("Build Path [click] | [X] Demolish", 10, 42, 20,
+                draw_text_bg("Build Path [click] | [X] Demolish", 10, 70, 20,
                              raylib::Color{220, 220, 220, 255});
             }
 
@@ -341,7 +360,7 @@ struct RenderUISystem : System<> {
                     std::string hover_text =
                         fmt::format("Grid: ({}, {})  Agents: {}", pds->hover_x,
                                     pds->hover_z, tile.agent_count);
-                    draw_text_bg(hover_text, 10, 70, 20,
+                    draw_text_bg(hover_text, 10, 98, 20,
                                  raylib::Color{200, 200, 200, 255});
                 }
             }

@@ -1,0 +1,27 @@
+# Test time phases
+reset_game
+wait 1
+
+# Day phase (starts at 10:00)
+set_time 10 0
+wait 1
+assert_phase day
+wait 1
+
+# Night phase
+set_time 18 0
+wait 1
+assert_phase night
+wait 1
+
+# Exodus phase
+set_time 0 30
+wait 1
+assert_phase exodus
+wait 1
+
+# Dead hours
+set_time 4 0
+wait 1
+assert_phase dead
+wait 1

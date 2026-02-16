@@ -35,6 +35,9 @@ Entity& make_sophie() {
     sophie.addComponent<SpawnState>();
     EntityHelper::registerSingleton<SpawnState>(sophie);
 
+    sophie.addComponent<GameClock>();
+    EntityHelper::registerSingleton<GameClock>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();

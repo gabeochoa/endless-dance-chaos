@@ -38,6 +38,7 @@ enum class InputAction {
     ToggleUILayoutDebug,
     // Game state
     Restart,
+    TogglePause,
 };
 
 inline int to_int(InputAction action) { return static_cast<int>(action); }
@@ -180,6 +181,9 @@ inline auto get_mapping() {
 
     // Game state
     mapping[to_int(InputAction::Restart)] = {
+        raylib::KEY_SPACE,
+    };
+    mapping[to_int(InputAction::TogglePause)] = {
         raylib::KEY_SPACE,
     };
 

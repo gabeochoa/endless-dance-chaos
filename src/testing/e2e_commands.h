@@ -943,6 +943,128 @@ struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// set_time HOUR MINUTE — set game clock to specific time
+struct HandleSetTimeCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_time")) return;
+        if (cmd.args.size() < 2) {
+            log_warn("set_time requires HOUR MINUTE");
+            cmd.consume();
+            return;
+        }
+        int hour = std::stoi(cmd.args[0]);
+        int minute = std::stoi(cmd.args[1]);
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock) {
+            clock->game_time_minutes = static_cast<float>(hour * 60 + minute);
+            log_info("set_time: {:02d}:{:02d} ({} minutes)", hour, minute,
+                     clock->game_time_minutes);
+        }
+        cmd.consume();
+    }
+};
+
+// set_speed SPEED — set game speed (paused/1x/2x/4x)
+struct HandleSetSpeedCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("set_speed")) return;
+        if (cmd.args.empty()) {
+            log_warn("set_speed requires SPEED arg");
+            cmd.consume();
+            return;
+        }
+        std::string s = cmd.args[0];
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock) {
+            if (s == "paused" || s == "0")
+                clock->speed = GameSpeed::Paused;
+            else if (s == "1x" || s == "1")
+                clock->speed = GameSpeed::OneX;
+            else if (s == "2x" || s == "2")
+                clock->speed = GameSpeed::TwoX;
+            else if (s == "4x" || s == "4")
+                clock->speed = GameSpeed::FourX;
+            else
+                log_warn("set_speed: unknown speed '{}'", s);
+            log_info("set_speed: {}", s);
+        }
+        cmd.consume();
+    }
+};
+
+// assert_phase PHASE — assert current phase (day/night/exodus/dead)
+struct HandleAssertPhaseCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_phase")) return;
+        if (cmd.args.empty()) {
+            log_warn("assert_phase requires PHASE arg");
+            cmd.consume();
+            return;
+        }
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!clock) {
+            log_warn("assert_phase: no GameClock");
+            cmd.consume();
+            return;
+        }
+        std::string expected = cmd.args[0];
+        std::transform(expected.begin(), expected.end(), expected.begin(),
+                       ::tolower);
+        GameClock::Phase phase = clock->get_phase();
+        std::string actual_str = GameClock::phase_name(phase);
+        std::string actual_lower = actual_str;
+        std::transform(actual_lower.begin(), actual_lower.end(),
+                       actual_lower.begin(), ::tolower);
+        // Handle "dead" matching "dead hours"
+        bool match =
+            (actual_lower == expected) ||
+            (expected == "dead" && phase == GameClock::Phase::DeadHours);
+        if (!match) {
+            log_error("assert_phase FAILED: expected '{}', got '{}'", expected,
+                      actual_str);
+        } else {
+            log_info("assert_phase PASSED: phase is '{}'", actual_str);
+        }
+        cmd.consume();
+    }
+};
+
+// assert_time_between H1 M1 H2 M2 — assert time is in range
+struct HandleAssertTimeBetweenCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_time_between")) return;
+        if (cmd.args.size() < 4) {
+            log_warn("assert_time_between requires H1 M1 H2 M2");
+            cmd.consume();
+            return;
+        }
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!clock) {
+            log_warn("assert_time_between: no GameClock");
+            cmd.consume();
+            return;
+        }
+        float t1 = static_cast<float>(std::stoi(cmd.args[0]) * 60 +
+                                      std::stoi(cmd.args[1]));
+        float t2 = static_cast<float>(std::stoi(cmd.args[2]) * 60 +
+                                      std::stoi(cmd.args[3]));
+        float current = clock->game_time_minutes;
+        if (current >= t1 && current <= t2) {
+            log_info("assert_time_between PASSED: {} in [{}, {}]", current, t1,
+                     t2);
+        } else {
+            log_error("assert_time_between FAILED: {} not in [{}, {}]", current,
+                      t1, t2);
+        }
+        cmd.consume();
+    }
+};
+
 // Register all custom E2E command handler systems
 void register_e2e_systems(SystemManager& sm) {
     // Register built-in handlers first
@@ -987,6 +1109,11 @@ void register_e2e_systems(SystemManager& sm) {
         std::make_unique<HandleAssertAgentsAtFacilityCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertAgentWatchingCommand>());
+    sm.register_update_system(std::make_unique<HandleSetTimeCommand>());
+    sm.register_update_system(std::make_unique<HandleSetSpeedCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertPhaseCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertTimeBetweenCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);

@@ -15,9 +15,61 @@ static bool game_is_over() {
     return gs && gs->is_game_over();
 }
 
+// Helper: check if game is paused
+static bool game_is_paused() {
+    auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+    return clock && clock->speed == GameSpeed::Paused;
+}
+
+// Helper: check if game logic should be skipped (paused or game over)
+static bool skip_game_logic() { return game_is_over() || game_is_paused(); }
+
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
         cam.cam.handle_input(dt);
+    }
+};
+
+// Advance game clock and detect phase changes
+struct UpdateGameClockSystem : System<> {
+    GameClock::Phase prev_phase = GameClock::Phase::Day;
+    bool was_pause_down = false;
+
+    void once(float dt) override {
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (!clock) return;
+
+        // Toggle pause with SPACE (only when game is not over)
+        if (!game_is_over()) {
+            bool pause_down = action_down(InputAction::TogglePause);
+            if (pause_down && !was_pause_down) {
+                if (clock->speed == GameSpeed::Paused)
+                    clock->speed = GameSpeed::OneX;
+                else
+                    clock->speed = GameSpeed::Paused;
+                log_info("Game speed: {}",
+                         clock->speed == GameSpeed::Paused ? "PAUSED" : "1x");
+            }
+            was_pause_down = pause_down;
+        }
+
+        // Advance time
+        float game_dt = (dt / GameClock::SECONDS_PER_GAME_MINUTE) *
+                        clock->speed_multiplier();
+        clock->game_time_minutes += game_dt;
+
+        // Wrap at 24 hours
+        if (clock->game_time_minutes >= 1440.0f) {
+            clock->game_time_minutes -= 1440.0f;
+        }
+
+        // Detect phase change
+        GameClock::Phase new_phase = clock->get_phase();
+        if (new_phase != prev_phase) {
+            log_info("Phase: {} -> {}", GameClock::phase_name(prev_phase),
+                     GameClock::phase_name(new_phase));
+            prev_phase = new_phase;
+        }
     }
 };
 
@@ -181,7 +233,7 @@ static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
 struct AgentMovementSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
@@ -302,7 +354,7 @@ static std::pair<int, int> random_stage_spot() {
 // Spawn agents at the spawn point on a timer
 struct SpawnAgentSystem : System<> {
     void once(float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
         if (!ss || !ss->enabled) return;
 
@@ -379,7 +431,7 @@ static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
 struct NeedTickSystem : System<Agent, AgentNeeds> {
     void for_each_with(Entity& e, Agent&, AgentNeeds& needs,
                        float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         // Don't tick timers while being serviced or watching
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
@@ -401,7 +453,7 @@ struct NeedTickSystem : System<Agent, AgentNeeds> {
 struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         // Don't change goal while being serviced or watching
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
@@ -454,7 +506,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
 struct StageWatchingSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -494,7 +546,7 @@ struct StageWatchingSystem : System<Agent, Transform> {
 struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -572,7 +624,7 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
 // Update per-tile agent density each frame
 struct UpdateTileDensitySystem : System<> {
     void once(float) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -601,7 +653,7 @@ struct UpdateTileDensitySystem : System<> {
 // Apply crush damage to agents on critically dense tiles
 struct CrushDamageSystem : System<> {
     void once(float dt) override {
-        if (game_is_over()) return;
+        if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -663,6 +715,7 @@ static void spawn_death_particles(float wx, float wz, int count, float radius) {
 // Remove dead agents, track death count, spawn death particles
 struct AgentDeathSystem : System<> {
     void once(float) override {
+        if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
 
@@ -754,6 +807,7 @@ struct ToggleDataLayerSystem : System<> {
 struct UpdateParticlesSystem : System<Particle, Transform> {
     void for_each_with(Entity& e, Particle& p, Transform& tf,
                        float dt) override {
+        if (game_is_paused()) return;
         p.lifetime -= dt;
         if (p.lifetime <= 0.f) {
             e.cleanup = true;
@@ -770,8 +824,9 @@ struct UpdateParticlesSystem : System<Particle, Transform> {
 // Track time_survived and max_attendees; check for game over
 struct TrackStatsSystem : System<> {
     void once(float dt) override {
+        if (skip_game_logic()) return;
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (!gs || gs->is_game_over()) return;
+        if (!gs) return;
 
         gs->time_survived += dt;
 
@@ -843,12 +898,20 @@ struct RestartGameSystem : System<> {
                 ss->timer = 0.f;
                 ss->enabled = true;
             }
+
+            // Reset game clock
+            auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+            if (clock) {
+                clock->game_time_minutes = 600.0f;  // 10:00am
+                clock->speed = GameSpeed::OneX;
+            }
         }
     }
 };
 
 void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CameraInputSystem>());
+    sm.register_update_system(std::make_unique<UpdateGameClockSystem>());
     sm.register_update_system(std::make_unique<PathBuildSystem>());
     sm.register_update_system(std::make_unique<ToggleDataLayerSystem>());
     sm.register_update_system(std::make_unique<NeedTickSystem>());
