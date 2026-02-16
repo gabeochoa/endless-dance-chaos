@@ -274,17 +274,24 @@ struct PathBuildSystem : System<> {
     }
 };
 
-// Greedy neighbor pathfinding: pick the adjacent tile closest to goal,
-// preferring Path tiles over Grass when distances are equal.
-static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
-                                          int goal_z, const Grid& grid) {
+// Forward declaration for pheromone channel mapping
+static int facility_to_channel(FacilityType type);
+
+// Greedy neighbor pathfinding with pheromone weighting.
+// Pheromone reduces effective distance score, creating emergent trails.
+static std::pair<int, int> pick_next_tile(
+    int cur_x, int cur_z, int goal_x, int goal_z, const Grid& grid,
+    FacilityType want = FacilityType::Stage) {
     static constexpr int dx[] = {1, -1, 0, 0};
     static constexpr int dz[] = {0, 0, 1, -1};
 
     int best_x = cur_x;
     int best_z = cur_z;
-    int best_dist = std::abs(cur_x - goal_x) + std::abs(cur_z - goal_z);
+    float best_score =
+        static_cast<float>(std::abs(cur_x - goal_x) + std::abs(cur_z - goal_z));
     bool best_is_path = false;
+
+    int channel = facility_to_channel(want);
 
     for (int i = 0; i < 4; i++) {
         int nx = cur_x + dx[i];
@@ -292,20 +299,21 @@ static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
         if (!grid.in_bounds(nx, nz)) continue;
 
         TileType type = grid.at(nx, nz).type;
-        // Can't walk through fences
         if (type == TileType::Fence) continue;
-        // Don't move into a full tile — stay put instead
         if (grid.at(nx, nz).agent_count >= MAX_AGENTS_PER_TILE) continue;
 
-        int dist = std::abs(nx - goal_x) + std::abs(nz - goal_z);
+        float dist =
+            static_cast<float>(std::abs(nx - goal_x) + std::abs(nz - goal_z));
+        float phero = Tile::to_strength(grid.at(nx, nz).pheromone[channel]);
+        float score = dist - (phero * 2.0f);
+
         bool is_path = (type == TileType::Path || type == TileType::Gate);
 
-        // Pick if closer, or same distance but on path and current best isn't
-        if (dist < best_dist ||
-            (dist == best_dist && is_path && !best_is_path)) {
+        if (score < best_score || (std::abs(score - best_score) < 0.01f &&
+                                   is_path && !best_is_path)) {
             best_x = nx;
             best_z = nz;
-            best_dist = dist;
+            best_score = score;
             best_is_path = is_path;
         }
     }
@@ -445,8 +453,9 @@ struct AgentMovementSystem : System<Agent, Transform> {
             }
             if (gs) agent.speed *= gs->speed_multiplier;
 
-            auto [px, pz] = pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
-                                           agent.target_grid_z, *grid);
+            auto [px, pz] =
+                pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
+                               agent.target_grid_z, *grid, agent.want);
             next_x = px;
             next_z = pz;
         }
@@ -718,6 +727,16 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                 tf.position.x = bs.facility_grid_x * TILESIZE - TILESIZE;
                 tf.position.y = bs.facility_grid_z * TILESIZE;
 
+                // Start depositing pheromone trail for the facility just
+                // visited
+                if (e.is_missing<PheromoneDepositor>()) {
+                    e.addComponent<PheromoneDepositor>();
+                }
+                auto& pdep = e.get<PheromoneDepositor>();
+                pdep.leaving_type = bs.facility_type;
+                pdep.is_depositing = true;
+                pdep.deposit_distance = 0.f;
+
                 e.removeComponent<BeingServiced>();
 
                 // Reset goal to stage (random spot near it)
@@ -761,6 +780,65 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
             bs.facility_grid_z = gz;
             bs.facility_type = agent.want;
             bs.time_remaining = SERVICE_TIME;
+        }
+    }
+};
+
+// Map FacilityType to pheromone channel index
+static int facility_to_channel(FacilityType type) {
+    switch (type) {
+        case FacilityType::Bathroom:
+            return Tile::PHERO_BATHROOM;
+        case FacilityType::Food:
+            return Tile::PHERO_FOOD;
+        case FacilityType::Stage:
+            return Tile::PHERO_STAGE;
+        case FacilityType::Exit:
+            return Tile::PHERO_EXIT;
+    }
+    return Tile::PHERO_STAGE;
+}
+
+// Deposit pheromones as agents walk away from facilities
+struct PheromoneDepositSystem : System<Agent, Transform, PheromoneDepositor> {
+    void for_each_with(Entity&, Agent&, Transform& tf, PheromoneDepositor& dep,
+                       float) override {
+        if (skip_game_logic()) return;
+        if (!dep.is_depositing) return;
+        if (dep.deposit_distance >= PheromoneDepositor::MAX_DEPOSIT_DISTANCE) {
+            dep.is_depositing = false;
+            return;
+        }
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz)) return;
+
+        int ch = facility_to_channel(dep.leaving_type);
+        auto& val = grid->at(gx, gz).pheromone[ch];
+        int nv = static_cast<int>(val) + 50;
+        val = static_cast<uint8_t>(std::min(nv, 255));
+        dep.deposit_distance += 1.0f;
+    }
+};
+
+// Decay all pheromones periodically
+struct DecayPheromonesSystem : System<> {
+    int frame_counter = 0;
+
+    void once(float) override {
+        if (skip_game_logic()) return;
+        frame_counter++;
+        if (frame_counter % 90 != 0) return;  // ~1.5 sec at 60fps
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+        for (auto& tile : grid->tiles) {
+            for (auto& p : tile.pheromone) {
+                if (p > 0) p--;
+            }
         }
     }
 };
@@ -1074,6 +1152,8 @@ void register_update_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<NeedTickSystem>());
     sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
     sm.register_update_system(std::make_unique<SpawnAgentSystem>());
+    sm.register_update_system(std::make_unique<PheromoneDepositSystem>());
+    sm.register_update_system(std::make_unique<DecayPheromonesSystem>());
     sm.register_update_system(std::make_unique<UpdateTileDensitySystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
     sm.register_update_system(std::make_unique<StageWatchingSystem>());

@@ -1,0 +1,8 @@
+# Test pheromone set and verify
+reset_game
+wait 1
+
+# Set strong pheromone and immediately verify
+set_pheromone 25 25 0 200
+assert_pheromone 25 25 0 gte 190
+wait 1
