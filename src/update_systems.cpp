@@ -416,7 +416,8 @@ static std::pair<int, int> pick_next_tile(
         float phero = Tile::to_strength(grid.at(nx, nz).pheromone[channel]);
         float score = dist - (phero * 2.0f);
 
-        bool is_path = (type == TileType::Path || type == TileType::Gate);
+        bool is_path = (type == TileType::Path || type == TileType::Gate ||
+                        type == TileType::StageFloor);
 
         if (score < best_score || (std::abs(score - best_score) < 0.01f &&
                                    is_path && !best_is_path)) {
@@ -551,7 +552,8 @@ struct AgentMovementSystem : System<Agent, Transform> {
                 cur_type = grid->at(cur_gx, cur_gz).type;
             }
             agent.speed =
-                (cur_type == TileType::Path || cur_type == TileType::Gate)
+                (cur_type == TileType::Path || cur_type == TileType::Gate ||
+                 cur_type == TileType::StageFloor)
                     ? SPEED_PATH
                     : SPEED_GRASS;
 

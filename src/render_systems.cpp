@@ -396,6 +396,105 @@ struct HoverTrackingSystem : System<> {
     }
 };
 
+// Render facility labels as 2D text projected from 3D positions
+struct RenderFacilityLabelsSystem : System<> {
+    struct FacilityLabel {
+        const char* text;
+        float world_x, world_z;
+        raylib::Color color;
+    };
+
+    void once(float) const override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!grid || !cam) return;
+
+        // Collect unique facility positions and labels
+        std::vector<FacilityLabel> labels;
+
+        // Stage
+        float scx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
+        float scz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
+        labels.push_back({"STAGE", scx, scz, {255, 217, 61, 255}});
+
+        // Scan grid for facility clusters (take top-left of each)
+        bool bathroom_found[MAP_SIZE * MAP_SIZE] = {};
+        bool food_found[MAP_SIZE * MAP_SIZE] = {};
+        bool med_found[MAP_SIZE * MAP_SIZE] = {};
+
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                TileType t = grid->at(x, z).type;
+                int idx = z * MAP_SIZE + x;
+                if (t == TileType::Bathroom && !bathroom_found[idx]) {
+                    labels.push_back({"WC",
+                                      (x + 1.0f) * TILESIZE,
+                                      (z + 1.0f) * TILESIZE,
+                                      {126, 207, 192, 255}});
+                    for (int dz = 0; dz < 2; dz++)
+                        for (int dx = 0; dx < 2; dx++)
+                            if (grid->in_bounds(x + dx, z + dz))
+                                bathroom_found[(z + dz) * MAP_SIZE + x + dx] =
+                                    true;
+                } else if (t == TileType::Food && !food_found[idx]) {
+                    labels.push_back({"FOOD",
+                                      (x + 1.0f) * TILESIZE,
+                                      (z + 1.0f) * TILESIZE,
+                                      {244, 164, 164, 255}});
+                    for (int dz = 0; dz < 2; dz++)
+                        for (int dx = 0; dx < 2; dx++)
+                            if (grid->in_bounds(x + dx, z + dz))
+                                food_found[(z + dz) * MAP_SIZE + x + dx] = true;
+                } else if (t == TileType::MedTent && !med_found[idx]) {
+                    labels.push_back({"MED",
+                                      (x + 1.0f) * TILESIZE,
+                                      (z + 1.0f) * TILESIZE,
+                                      {255, 100, 100, 255}});
+                    for (int dz = 0; dz < 2; dz++)
+                        for (int dx = 0; dx < 2; dx++)
+                            if (grid->in_bounds(x + dx, z + dz))
+                                med_found[(z + dz) * MAP_SIZE + x + dx] = true;
+                }
+            }
+        }
+
+        // Gate labels
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                if (grid->at(x, z).type == TileType::Gate) {
+                    labels.push_back({"GATE",
+                                      x * TILESIZE,
+                                      z * TILESIZE,
+                                      {68, 136, 170, 255}});
+                    break;  // one label per gate cluster
+                }
+            }
+        }
+
+        // Project to screen and draw
+        for (auto& lbl : labels) {
+            raylib::Vector2 screen = raylib::GetWorldToScreen(
+                {lbl.world_x, 0.6f, lbl.world_z}, cam->cam.camera);
+
+            if (screen.x < -50 || screen.x > DEFAULT_SCREEN_WIDTH + 50 ||
+                screen.y < -50 || screen.y > DEFAULT_SCREEN_HEIGHT + 50)
+                continue;
+
+            float font_size = 13;
+            raylib::Vector2 m = raylib::MeasureTextEx(get_font(), lbl.text,
+                                                      font_size, FONT_SPACING);
+            float tx = screen.x - m.x / 2.f;
+            float ty = screen.y - m.y / 2.f;
+
+            raylib::DrawRectangle((int) (tx - 3), (int) (ty - 2),
+                                  (int) (m.x + 6), (int) (m.y + 4),
+                                  raylib::Color{0, 0, 0, 160});
+            raylib::DrawTextEx(get_font(), lbl.text, {tx, ty}, font_size,
+                               FONT_SPACING, lbl.color);
+        }
+    }
+};
+
 struct RenderUISystem : System<> {
     static void draw_text(const std::string& text, float x, float y, float size,
                           raylib::Color color) {
@@ -480,6 +579,7 @@ struct RenderUISystem : System<> {
             std::string att_text = fmt::format("Attendees: {}", agent_count);
             draw_text(att_text, bar_x, 11, 20, raylib::WHITE);
             vtr.register_text(att_text);
+            bar_x += measure_text(att_text, 20).x + 20;
         }
         // Day counter
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
@@ -832,6 +932,9 @@ struct RenderMinimapSystem : System<> {
 
         raylib::EndTextureMode();
 
+        // Re-enter main render texture after minimap detour
+        raylib::BeginTextureMode(g_render_texture);
+
         // Draw minimap texture in the sidebar (bottom right)
         float sidebar_x = DEFAULT_SCREEN_WIDTH - 150.f;
         float minimap_y = DEFAULT_SCREEN_HEIGHT - MINIMAP_SIZE;
@@ -897,12 +1000,13 @@ struct RenderDebugPanelSystem : System<> {
         if (!gs || !gs->show_debug) return;
 
         auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
 
-        // Panel (bottom-left)
+        // Panel (left side, above build bar)
         float pw = 300;
-        float ph = 180;
+        float ph = 240;
         float px = 10;
-        float py = DEFAULT_SCREEN_HEIGHT - ph - 10;
+        float py = DEFAULT_SCREEN_HEIGHT - 54 - ph - 10;
 
         raylib::DrawRectangle((int) px, (int) py, (int) pw, (int) ph,
                               raylib::Color{15, 15, 25, 230});
@@ -913,9 +1017,10 @@ struct RenderDebugPanelSystem : System<> {
         raylib::DrawTextEx(get_font(), "Debug [`]", {px + 10, py + 8}, 20,
                            FONT_SPACING, raylib::Color{255, 200, 80, 255});
 
-        // Speed multiplier slider
         float sx = px + 16;
         float sw = 200;
+
+        // Agent speed multiplier slider
         gs->speed_multiplier = draw_slider("Agent Speed", sx, py + 55, sw,
                                            gs->speed_multiplier, 0.1f, 20.f);
 
@@ -931,12 +1036,28 @@ struct RenderDebugPanelSystem : System<> {
             }
         }
 
+        // Time speed slider (game-minutes per real-second)
+        if (clock) {
+            float cur_mult = clock->speed_multiplier();
+            cur_mult =
+                draw_slider("Time Speed", sx, py + 155, sw, cur_mult, 0.f, 8.f);
+            // Snap to nearest named speed or allow free values
+            if (cur_mult < 0.1f)
+                clock->speed = GameSpeed::Paused;
+            else if (cur_mult < 1.5f)
+                clock->speed = GameSpeed::OneX;
+            else if (cur_mult < 3.0f)
+                clock->speed = GameSpeed::TwoX;
+            else
+                clock->speed = GameSpeed::FourX;
+        }
+
         // Info
         int agent_count =
             (int) EntityQuery().whereHasComponent<Agent>().gen_count();
         std::string info =
             fmt::format("Agents: {}  Deaths: {}", agent_count, gs->death_count);
-        raylib::DrawTextEx(get_font(), info.c_str(), {sx, py + 140}, 16,
+        raylib::DrawTextEx(get_font(), info.c_str(), {sx, py + 200}, 16,
                            FONT_SPACING, raylib::Color{160, 160, 160, 255});
     }
 };
@@ -967,6 +1088,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
+    sm.register_render_system(std::make_unique<RenderFacilityLabelsSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
