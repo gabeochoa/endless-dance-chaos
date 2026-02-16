@@ -69,9 +69,11 @@ struct PathBuildSystem : System<> {
 
                 for (int z = min_z; z <= max_z; z++) {
                     for (int x = min_x; x <= max_x; x++) {
-                        if (grid->in_bounds(x, z)) {
-                            grid->at(x, z).type = TileType::Path;
-                        }
+                        if (!grid->in_bounds(x, z)) continue;
+                        // Only place path on grass — skip facilities, fences,
+                        // etc.
+                        if (grid->at(x, z).type != TileType::Grass) continue;
+                        grid->at(x, z).type = TileType::Path;
                     }
                 }
                 pds->is_drawing = false;
@@ -100,6 +102,8 @@ static std::pair<int, int> pick_next_tile(int cur_x, int cur_z, int goal_x,
         TileType type = grid.at(nx, nz).type;
         // Can't walk through fences
         if (type == TileType::Fence) continue;
+        // Don't move into a full tile — stay put instead
+        if (grid.at(nx, nz).agent_count >= MAX_AGENTS_PER_TILE) continue;
 
         int dist = std::abs(nx - goal_x) + std::abs(nz - goal_z);
         bool is_path = (type == TileType::Path || type == TileType::Gate);
@@ -270,6 +274,31 @@ struct AgentMovementSystem : System<Agent, Transform> {
     }
 };
 
+// Pick a random spot on the stage floor, biased toward the stage itself.
+// Returns a grid position within the watch radius.
+static std::pair<int, int> random_stage_spot() {
+    auto& rng = RandomEngine::get();
+    float scx = STAGE_X + STAGE_SIZE / 2.0f;
+    float scz = STAGE_Z + STAGE_SIZE / 2.0f;
+
+    // Bias: 60% chance to pick a spot within half the radius (close to stage)
+    float max_r = STAGE_WATCH_RADIUS;
+    if (rng.get_float(0.f, 1.f) < 0.6f) {
+        max_r = STAGE_WATCH_RADIUS * 0.5f;
+    }
+
+    // Random angle and radius
+    float angle = rng.get_float(0.f, 2.f * (float) M_PI);
+    float r = rng.get_float(0.f, max_r);
+    int gx = static_cast<int>(std::round(scx + r * std::cos(angle)));
+    int gz = static_cast<int>(std::round(scz + r * std::sin(angle)));
+
+    // Clamp to playable area
+    gx = std::clamp(gx, PLAY_MIN, PLAY_MAX);
+    gz = std::clamp(gz, PLAY_MIN, PLAY_MAX);
+    return {gx, gz};
+}
+
 // Spawn agents at the spawn point on a timer
 struct SpawnAgentSystem : System<> {
     void once(float dt) override {
@@ -281,11 +310,9 @@ struct SpawnAgentSystem : System<> {
         if (ss->timer >= ss->interval) {
             ss->timer -= ss->interval;
 
-            // Spawn agent heading toward the stage center
-            int stage_center_x = STAGE_X + STAGE_SIZE / 2;
-            int stage_center_z = STAGE_Z + STAGE_SIZE / 2;
-            make_agent(SPAWN_X, SPAWN_Z, FacilityType::Stage, stage_center_x,
-                       stage_center_z);
+            // Spawn agent heading toward a random spot near the stage
+            auto [sx, sz] = random_stage_spot();
+            make_agent(SPAWN_X, SPAWN_Z, FacilityType::Stage, sx, sz);
         }
     }
 };
@@ -407,15 +434,17 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 needs.needs_food = false;
                 needs.food_timer = 0.f;
                 agent.want = FacilityType::Stage;
-                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
-                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
+                auto [rsx, rsz] = random_stage_spot();
+                agent.target_grid_x = rsx;
+                agent.target_grid_z = rsz;
             }
         } else {
             // Default: go to stage
             if (agent.want != FacilityType::Stage) {
                 agent.want = FacilityType::Stage;
-                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
-                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
+                auto [rsx, rsz] = random_stage_spot();
+                agent.target_grid_x = rsx;
+                agent.target_grid_z = rsz;
             }
         }
     }
@@ -495,10 +524,11 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
 
                 e.removeComponent<BeingServiced>();
 
-                // Reset goal to stage
+                // Reset goal to stage (random spot near it)
                 agent.want = FacilityType::Stage;
-                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
-                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
+                auto [rsx, rsz] = random_stage_spot();
+                agent.target_grid_x = rsx;
+                agent.target_grid_z = rsz;
             }
             return;
         }

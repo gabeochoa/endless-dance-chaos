@@ -24,7 +24,16 @@ struct Transform : afterhours::BaseComponent {
 };
 
 // Tile types for the grid
-enum class TileType { Grass, Path, Fence, Gate, Stage, Bathroom, Food };
+enum class TileType {
+    Grass,
+    Path,
+    Fence,
+    Gate,
+    Stage,
+    StageFloor,
+    Bathroom,
+    Food
+};
 
 // Single tile in the grid
 struct Tile {
@@ -76,7 +85,22 @@ struct Grid : afterhours::BaseComponent {
         at(GATE_X, GATE_Z1).type = TileType::Gate;
         at(GATE_X, GATE_Z2).type = TileType::Gate;
 
-        // Stage (4x4)
+        // Stage floor (watch zone) — circular area around stage center
+        float scx = STAGE_X + STAGE_SIZE / 2.0f;
+        float scz = STAGE_Z + STAGE_SIZE / 2.0f;
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                float dx = x - scx;
+                float dz = z - scz;
+                float dist = std::sqrt(dx * dx + dz * dz);
+                if (dist <= STAGE_WATCH_RADIUS &&
+                    at(x, z).type == TileType::Grass) {
+                    at(x, z).type = TileType::StageFloor;
+                }
+            }
+        }
+
+        // Stage (4x4) — placed after floor so it overwrites the center
         for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
             for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
                 if (in_bounds(x, z)) at(x, z).type = TileType::Stage;

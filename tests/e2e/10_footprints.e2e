@@ -6,7 +6,12 @@ wait_frames 2
 # Verify stage is 4x4 at (30,25)
 assert_tile_type 30 25 stage
 assert_tile_type 33 28 stage
-assert_tile_type 34 25 grass
+
+# Just outside stage is stage floor (watch zone)
+assert_tile_type 34 25 stagefloor
+
+# Well outside watch radius is grass (stage center ~32,27, radius 8)
+assert_tile_type 42 27 grass
 
 # Verify bathroom is 2x2 at (20,20)
 assert_tile_type 20 20 bathroom

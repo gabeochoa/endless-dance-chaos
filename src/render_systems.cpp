@@ -48,6 +48,8 @@ struct RenderGridSystem : System<> {
     static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};  // #4488AA
     static constexpr raylib::Color STAGE_COLOR = {255, 217, 61,
                                                   255};  // #FFD93D warm yellow
+    static constexpr raylib::Color STAGE_FLOOR_COLOR = {
+        255, 235, 150, 255};  // lighter warm yellow
     static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192,
                                                      255};  // #7ECFC0 cyan
     static constexpr raylib::Color FOOD_COLOR = {244, 164, 164,
@@ -65,6 +67,8 @@ struct RenderGridSystem : System<> {
                 return GATE_COLOR;
             case TileType::Stage:
                 return STAGE_COLOR;
+            case TileType::StageFloor:
+                return STAGE_FLOOR_COLOR;
             case TileType::Bathroom:
                 return BATHROOM_COLOR;
             case TileType::Food:

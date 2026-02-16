@@ -46,6 +46,8 @@ inline TileType parse_tile_type(const std::string& s) {
     if (lower == "fence") return TileType::Fence;
     if (lower == "gate") return TileType::Gate;
     if (lower == "stage") return TileType::Stage;
+    if (lower == "stagefloor" || lower == "stage_floor")
+        return TileType::StageFloor;
     if (lower == "bathroom") return TileType::Bathroom;
     if (lower == "food") return TileType::Food;
     return TileType::Grass;
@@ -932,9 +934,9 @@ struct HandleDrawPathRectCommand : System<testing::PendingE2ECommand> {
 
         for (int z = min_z; z <= max_z; z++) {
             for (int x = min_x; x <= max_x; x++) {
-                if (grid->in_bounds(x, z)) {
-                    grid->at(x, z).type = TileType::Path;
-                }
+                if (!grid->in_bounds(x, z)) continue;
+                if (grid->at(x, z).type != TileType::Grass) continue;
+                grid->at(x, z).type = TileType::Path;
             }
         }
         cmd.consume();
