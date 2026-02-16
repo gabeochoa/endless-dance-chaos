@@ -132,39 +132,120 @@ struct RenderGridSystem : System<> {
     }
 };
 
-// Stage performance glow overlay
+// Stage performance glow overlay with pulsing lights and spotlights
 struct RenderStageGlowSystem : System<> {
     void once(float) const override {
         auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
-        if (!sched || sched->stage_state != StageState::Performing) return;
+        if (!sched) return;
 
-        float tile_size = TILESIZE * 0.98f;
-        raylib::Color glow = {255, 200, 0, 80};
+        float stage_cx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
+        float stage_cz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
 
-        for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++) {
-            for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++) {
-                raylib::DrawPlane({x * TILESIZE, 0.06f, z * TILESIZE},
-                                  {tile_size, tile_size}, glow);
-            }
+        // Announcing state: gentle pulse
+        if (sched->stage_state == StageState::Announcing) {
+            float t = static_cast<float>(raylib::GetTime());
+            float pulse = (std::sin(t * 3.0f) + 1.0f) * 0.5f;
+            auto alpha = static_cast<unsigned char>(40 + pulse * 40);
+            raylib::Color glow = {255, 200, 50, alpha};
+            float ts = TILESIZE * 0.98f;
+            for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
+                for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
+                    raylib::DrawPlane({x * TILESIZE, 0.06f, z * TILESIZE},
+                                      {ts, ts}, glow);
+            return;
         }
+
+        if (sched->stage_state != StageState::Performing) return;
+
+        float t = static_cast<float>(raylib::GetTime());
+        float beat_phase = std::fmod(t * (128.0f / 60.0f), 1.0f);
+        float pulse = std::pow(std::max(0.0f, 1.0f - beat_phase * 4.0f), 2.0f);
+
+        // Stage floor glow - pulsing with beat
+        auto glow_alpha = static_cast<unsigned char>(60 + pulse * 100);
+        raylib::Color glow = {255, 180, 0, glow_alpha};
+        float ts = TILESIZE * 0.98f;
+        for (int z = STAGE_Z; z < STAGE_Z + STAGE_SIZE; z++)
+            for (int x = STAGE_X; x < STAGE_X + STAGE_SIZE; x++)
+                raylib::DrawPlane({x * TILESIZE, 0.06f, z * TILESIZE}, {ts, ts},
+                                  glow);
+
+        // Spotlight beams from stage corners
+        float beam_h = 2.5f + pulse * 0.5f;
+        float beam_r = 0.06f;
+        raylib::Color beam_colors[] = {
+            {255, 50, 50, 120},   // red
+            {50, 50, 255, 120},   // blue
+            {50, 255, 50, 120},   // green
+            {255, 255, 50, 120},  // yellow
+        };
+        float corners[][2] = {
+            {STAGE_X * TILESIZE, STAGE_Z * TILESIZE},
+            {(STAGE_X + STAGE_SIZE) * TILESIZE, STAGE_Z * TILESIZE},
+            {STAGE_X * TILESIZE, (STAGE_Z + STAGE_SIZE) * TILESIZE},
+            {(STAGE_X + STAGE_SIZE) * TILESIZE,
+             (STAGE_Z + STAGE_SIZE) * TILESIZE},
+        };
+        for (int i = 0; i < 4; i++) {
+            float angle = t * 1.5f + i * 1.57f;
+            float sway_x = std::sin(angle) * 0.3f;
+            float sway_z = std::cos(angle * 0.7f) * 0.3f;
+            raylib::DrawCylinder({corners[i][0], 0.0f, corners[i][1]}, beam_r,
+                                 beam_r * 0.3f, beam_h, 4, beam_colors[i]);
+            // Sway tip indicator
+            raylib::DrawSphere(
+                {corners[i][0] + sway_x, beam_h, corners[i][1] + sway_z}, 0.08f,
+                beam_colors[i]);
+        }
+
+        // Center spotlight cone
+        auto spot_alpha = static_cast<unsigned char>(80 + pulse * 80);
+        raylib::DrawCylinder({stage_cx, 0.0f, stage_cz}, 0.1f,
+                             0.6f + pulse * 0.2f, 2.0f + pulse * 0.5f, 6,
+                             {255, 255, 200, spot_alpha});
     }
 };
 
 // Render agents as small person-shaped primitives in 3D space
 struct RenderAgentsSystem : System<Agent, Transform> {
-    static constexpr raylib::Color AGENT_COLOR = {212, 165, 116,
-                                                  255};  // warm tan
+    // Festival attendee color palette: diverse, vibrant outfits
+    static constexpr raylib::Color PALETTE[] = {
+        {212, 165, 116, 255},  // warm tan
+        {180, 120, 90, 255},   // brown
+        {240, 200, 160, 255},  // light peach
+        {100, 80, 60, 255},    // dark brown
+        {255, 180, 200, 255},  // pink top
+        {100, 200, 255, 255},  // blue top
+        {200, 255, 100, 255},  // lime top
+        {255, 220, 100, 255},  // yellow top
+    };
 
-    void for_each_with(Entity& e, Agent&, Transform& tf, float) override {
-        // Hide agents being serviced inside a facility
+    void for_each_with(Entity& e, Agent& agent, Transform& tf, float) override {
         if (!e.is_missing<BeingServiced>()) return;
 
-        // Agent position in world space (x = world x, y = world z)
         float wx = tf.position.x;
         float wz = tf.position.y;
+        raylib::Color col = PALETTE[agent.color_idx % 8];
 
-        // Simple tall cube as person shape (fast, no mesh generation)
-        raylib::DrawCube({wx, 0.2f, wz}, 0.18f, 0.4f, 0.18f, AGENT_COLOR);
+        // Bob animation when watching stage
+        float bob_y = 0.0f;
+        if (!e.is_missing<WatchingStage>()) {
+            auto& ws = e.get<WatchingStage>();
+            bob_y = std::sin(ws.watch_timer * 6.0f) * 0.03f;
+        }
+
+        // Low HP: tint red
+        if (!e.is_missing<AgentHealth>()) {
+            float hp = e.get<AgentHealth>().hp;
+            if (hp < 0.5f) {
+                float t = hp / 0.5f;
+                col.r = static_cast<unsigned char>(col.r * t + 255 * (1.f - t));
+                col.g = static_cast<unsigned char>(col.g * t);
+                col.b = static_cast<unsigned char>(col.b * t);
+            }
+        }
+
+        raylib::DrawCube({wx, 0.2f + bob_y, wz}, 0.18f, 0.4f, 0.18f, col);
     }
 };
 

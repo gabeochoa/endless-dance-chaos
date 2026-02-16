@@ -74,8 +74,10 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
     e.addComponent<Agent>(want, target_x, target_z);
     e.addComponent<AgentHealth>();
 
-    // Random need thresholds
     auto& rng = RandomEngine::get();
+
+    // Random color variety
+    e.get<Agent>().color_idx = static_cast<uint8_t>(rng.get_int(0, 7));
     e.addComponent<AgentNeeds>();
     auto& needs = e.get<AgentNeeds>();
     needs.bathroom_threshold = rng.get_float(30.f, 90.f);

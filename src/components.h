@@ -138,11 +138,13 @@ struct Agent : afterhours::BaseComponent {
     FacilityType want = FacilityType::Stage;
     int target_grid_x = -1;
     int target_grid_z = -1;
-    float speed = SPEED_PATH;  // current speed, adjusted by terrain
+    float speed = SPEED_PATH;
 
-    // Flee state: committed direction when escaping dangerous density
     int flee_target_x = -1;
     int flee_target_z = -1;
+
+    // Visual variety: color palette index (0-7)
+    uint8_t color_idx = 0;
 
     Agent() = default;
     Agent(FacilityType w) : want(w) {}
