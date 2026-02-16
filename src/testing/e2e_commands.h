@@ -1322,6 +1322,140 @@ struct HandleAssertSlotsCommand : System<testing::PendingE2ECommand> {
     }
 };
 
+// select_tool TOOL — select a build tool
+struct HandleSelectToolCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("select_tool")) return;
+        if (cmd.args.empty()) {
+            cmd.consume();
+            return;
+        }
+        auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
+        if (!bs) {
+            cmd.consume();
+            return;
+        }
+        std::string tool = cmd.args[0];
+        std::transform(tool.begin(), tool.end(), tool.begin(), ::tolower);
+        if (tool == "path")
+            bs->tool = BuildTool::Path;
+        else if (tool == "fence")
+            bs->tool = BuildTool::Fence;
+        else if (tool == "gate")
+            bs->tool = BuildTool::Gate;
+        else if (tool == "stage")
+            bs->tool = BuildTool::Stage;
+        else if (tool == "bathroom")
+            bs->tool = BuildTool::Bathroom;
+        else if (tool == "food")
+            bs->tool = BuildTool::Food;
+        else if (tool == "demolish")
+            bs->tool = BuildTool::Demolish;
+        else
+            log_warn("select_tool: unknown tool '{}'", tool);
+        cmd.consume();
+    }
+};
+
+// assert_tool TOOL
+struct HandleAssertToolCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_tool")) return;
+        if (cmd.args.empty()) {
+            cmd.consume();
+            return;
+        }
+        auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
+        if (!bs) {
+            cmd.consume();
+            return;
+        }
+        std::string expected = cmd.args[0];
+        std::transform(expected.begin(), expected.end(), expected.begin(),
+                       ::tolower);
+        static const char* names[] = {"path",     "fence", "gate",    "stage",
+                                      "bathroom", "food",  "demolish"};
+        int idx = static_cast<int>(bs->tool);
+        std::string actual = (idx >= 0 && idx < 7) ? names[idx] : "unknown";
+        if (actual == expected) {
+            log_info("assert_tool PASSED: {}", actual);
+        } else {
+            log_error("assert_tool FAILED: expected '{}', got '{}'", expected,
+                      actual);
+        }
+        cmd.consume();
+    }
+};
+
+// place_building TYPE X Z
+struct HandlePlaceBuildingCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("place_building")) return;
+        if (cmd.args.size() < 3) {
+            cmd.consume();
+            return;
+        }
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.consume();
+            return;
+        }
+        std::string type = cmd.args[0];
+        std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+        int x = std::stoi(cmd.args[1]), z = std::stoi(cmd.args[2]);
+        if (type == "gate") {
+            if (grid->in_bounds(x, z) && grid->in_bounds(x, z + 1)) {
+                grid->at(x, z).type = TileType::Gate;
+                grid->at(x, z + 1).type = TileType::Gate;
+            }
+        } else if (type == "stage") {
+            for (int dz = 0; dz < 4; dz++)
+                for (int dx = 0; dx < 4; dx++)
+                    if (grid->in_bounds(x + dx, z + dz))
+                        grid->at(x + dx, z + dz).type = TileType::Stage;
+        } else if (type == "bathroom") {
+            for (int dz = 0; dz < 2; dz++)
+                for (int dx = 0; dx < 2; dx++)
+                    if (grid->in_bounds(x + dx, z + dz))
+                        grid->at(x + dx, z + dz).type = TileType::Bathroom;
+        } else if (type == "food") {
+            for (int dz = 0; dz < 2; dz++)
+                for (int dx = 0; dx < 2; dx++)
+                    if (grid->in_bounds(x + dx, z + dz))
+                        grid->at(x + dx, z + dz).type = TileType::Food;
+        }
+        cmd.consume();
+    }
+};
+
+// demolish_at X Z
+struct HandleDemolishAtCommand : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("demolish_at")) return;
+        if (cmd.args.size() < 2) {
+            cmd.consume();
+            return;
+        }
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.consume();
+            return;
+        }
+        int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
+        if (grid->in_bounds(x, z)) {
+            auto& tile = grid->at(x, z);
+            if (tile.type != TileType::Fence && tile.type != TileType::Grass) {
+                tile.type = TileType::Grass;
+            }
+        }
+        cmd.consume();
+    }
+};
+
 // Register all custom E2E command handler systems
 void register_e2e_systems(SystemManager& sm) {
     // Register built-in handlers first
@@ -1384,6 +1518,10 @@ void register_e2e_systems(SystemManager& sm) {
     sm.register_update_system(
         std::make_unique<HandleAssertMaxAttendeesCommand>());
     sm.register_update_system(std::make_unique<HandleAssertSlotsCommand>());
+    sm.register_update_system(std::make_unique<HandleSelectToolCommand>());
+    sm.register_update_system(std::make_unique<HandleAssertToolCommand>());
+    sm.register_update_system(std::make_unique<HandlePlaceBuildingCommand>());
+    sm.register_update_system(std::make_unique<HandleDemolishAtCommand>());
 
     // Unknown handler and cleanup must be last
     testing::register_unknown_handler(sm);

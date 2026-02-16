@@ -36,6 +36,15 @@ enum class InputAction {
     PauseButton,
     ToggleUIDebug,
     ToggleUILayoutDebug,
+    // Build tool cycling
+    PrevTool,
+    NextTool,
+    ToolFence,
+    ToolGate,
+    ToolDemolish,
+    Tool5,  // Bathroom
+    Tool6,  // Food
+    Tool7,  // Demolish
     // Game state
     Restart,
     TogglePause,
@@ -177,6 +186,29 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::ToggleUILayoutDebug)] = {
         raylib::KEY_EQUAL,
+    };
+
+    // Build tool cycling
+    mapping[to_int(InputAction::PrevTool)] = {
+        raylib::KEY_LEFT_BRACKET,
+    };
+    mapping[to_int(InputAction::NextTool)] = {
+        raylib::KEY_RIGHT_BRACKET,
+    };
+    mapping[to_int(InputAction::ToolFence)] = {
+        raylib::KEY_TWO,
+    };
+    mapping[to_int(InputAction::ToolGate)] = {
+        raylib::KEY_THREE,
+    };
+    mapping[to_int(InputAction::Tool5)] = {
+        raylib::KEY_FIVE,
+    };
+    mapping[to_int(InputAction::Tool6)] = {
+        raylib::KEY_SIX,
+    };
+    mapping[to_int(InputAction::Tool7)] = {
+        raylib::KEY_SEVEN,
     };
 
     // Game state

@@ -1,0 +1,23 @@
+# Test build tool cycling and placement
+reset_game
+wait 1
+
+select_tool path
+assert_tool path
+
+select_tool fence
+assert_tool fence
+
+select_tool gate
+assert_tool gate
+
+# Place a bathroom via E2E command
+place_building bathroom 30 30
+wait 1
+assert_tile_type 30 30 bathroom
+
+# Demolish it
+demolish_at 30 30
+wait 1
+assert_tile_type 30 30 grass
+wait 1
