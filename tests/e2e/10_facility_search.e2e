@@ -1,0 +1,19 @@
+# Test facility search: agents redirect to facilities when needed
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Draw a path corridor from near-spawn to near-bathroom
+draw_path_rect 5 22 19 22
+wait_frames 2
+
+# Spawn 10 agents near the path, then force bathroom need
+spawn_agents 5 22 10 stage
+wait_frames 2
+force_need bathroom
+wait 10
+
+# Agents should have reached the bathroom area (20,20)
+assert_agent_near 20 20 4
+screenshot 10_facility_search

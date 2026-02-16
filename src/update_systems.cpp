@@ -290,31 +290,62 @@ struct SpawnAgentSystem : System<> {
     }
 };
 
-// Find the center of the nearest facility of a given type
-static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
-                                                 TileType type,
-                                                 const Grid& grid) {
-    int best_x = -1, best_z = -1;
-    int best_dist = std::numeric_limits<int>::max();
-
-    for (int z = 0; z < MAP_SIZE; z++) {
-        for (int x = 0; x < MAP_SIZE; x++) {
-            if (grid.at(x, z).type != type) continue;
-            int dist = std::abs(x - from_x) + std::abs(z - from_z);
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_x = x;
-                best_z = z;
-            }
-        }
-    }
-    return {best_x, best_z};
-}
-
 // Check if a facility tile is "full" (too many agents)
 static bool facility_is_full(int gx, int gz, const Grid& grid) {
     if (!grid.in_bounds(gx, gz)) return true;
     return grid.at(gx, gz).agent_count >= FACILITY_MAX_AGENTS;
+}
+
+// Find facilities of a given type sorted by distance, skipping full ones.
+// Returns the closest non-full facility, or the closest full one if all are
+// full (so agents still move toward it for urgent needs like bathroom).
+static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
+                                                 TileType type,
+                                                 const Grid& grid,
+                                                 bool urgent = false) {
+    struct FacEntry {
+        int x, z, dist;
+        bool full;
+    };
+    std::vector<FacEntry> found;
+
+    // Collect unique facility anchor tiles (top-left of each footprint)
+    // To avoid counting the same 2x2 facility 4 times, track seen anchors
+    std::set<std::pair<int, int>> seen;
+    for (int z = 0; z < MAP_SIZE; z++) {
+        for (int x = 0; x < MAP_SIZE; x++) {
+            if (grid.at(x, z).type != type) continue;
+            // Use this tile as a candidate (dedup via distance later)
+            auto key = std::make_pair(x, z);
+            if (seen.count(key)) continue;
+            seen.insert(key);
+
+            int dist = std::abs(x - from_x) + std::abs(z - from_z);
+            bool full = facility_is_full(x, z, grid);
+            found.push_back({x, z, dist, full});
+        }
+    }
+
+    // Sort by distance
+    std::sort(
+        found.begin(), found.end(),
+        [](const FacEntry& a, const FacEntry& b) { return a.dist < b.dist; });
+
+    // Try up to 3 closest non-full facilities
+    for (int i = 0; i < std::min((int) found.size(), 3); i++) {
+        if (!found[i].full) {
+            return {found[i].x, found[i].z};
+        }
+    }
+
+    // All full: urgent needs keep heading to closest, non-urgent gives up
+    if (urgent && !found.empty()) {
+        return {found[0].x, found[0].z};
+    }
+    if (!found.empty()) {
+        return {-1, -1};  // non-urgent: give up
+    }
+    return {-1, -1};
 }
 
 // Tick need timers and set need flags
@@ -355,24 +386,29 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
             grid->world_to_grid(tf.position.x, tf.position.y);
 
         if (needs.needs_bathroom) {
-            if (agent.want != FacilityType::Bathroom) {
-                auto [bx, bz] = find_nearest_facility(
-                    cur_gx, cur_gz, TileType::Bathroom, *grid);
-                if (bx >= 0) {
-                    agent.want = FacilityType::Bathroom;
-                    agent.target_grid_x = bx;
-                    agent.target_grid_z = bz;
-                }
+            // Bathroom is urgent — keep searching even if all are full
+            auto [bx, bz] = find_nearest_facility(
+                cur_gx, cur_gz, TileType::Bathroom, *grid, true);
+            if (bx >= 0) {
+                agent.want = FacilityType::Bathroom;
+                agent.target_grid_x = bx;
+                agent.target_grid_z = bz;
             }
         } else if (needs.needs_food) {
-            if (agent.want != FacilityType::Food) {
-                auto [fx, fz] = find_nearest_facility(cur_gx, cur_gz,
-                                                      TileType::Food, *grid);
-                if (fx >= 0) {
-                    agent.want = FacilityType::Food;
-                    agent.target_grid_x = fx;
-                    agent.target_grid_z = fz;
-                }
+            // Food is non-urgent — give up if all are full
+            auto [fx, fz] = find_nearest_facility(cur_gx, cur_gz,
+                                                  TileType::Food, *grid, false);
+            if (fx >= 0) {
+                agent.want = FacilityType::Food;
+                agent.target_grid_x = fx;
+                agent.target_grid_z = fz;
+            } else {
+                // All food facilities full — go back to stage
+                needs.needs_food = false;
+                needs.food_timer = 0.f;
+                agent.want = FacilityType::Stage;
+                agent.target_grid_x = STAGE_X + STAGE_SIZE / 2;
+                agent.target_grid_z = STAGE_Z + STAGE_SIZE / 2;
             }
         } else {
             // Default: go to stage

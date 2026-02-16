@@ -1,0 +1,21 @@
+# Test facility tile footprints
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Verify stage is 4x4 at (30,25)
+assert_tile_type 30 25 stage
+assert_tile_type 33 28 stage
+assert_tile_type 34 25 grass
+
+# Verify bathroom is 2x2 at (20,20)
+assert_tile_type 20 20 bathroom
+assert_tile_type 21 21 bathroom
+assert_tile_type 22 20 grass
+
+# Verify food is 2x2 at (20,30)
+assert_tile_type 20 30 food
+assert_tile_type 21 31 food
+assert_tile_type 22 30 grass
+
+screenshot 10_footprints

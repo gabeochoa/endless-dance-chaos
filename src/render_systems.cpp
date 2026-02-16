@@ -46,9 +46,12 @@ struct RenderGridSystem : System<> {
     static constexpr raylib::Color PATH_COLOR = {232, 221, 212, 255};
     static constexpr raylib::Color FENCE_COLOR = {85, 85, 85, 255};   // #555555
     static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};  // #4488AA
-    static constexpr raylib::Color STAGE_COLOR = {200, 130, 200, 255};
-    static constexpr raylib::Color BATHROOM_COLOR = {130, 170, 220, 255};
-    static constexpr raylib::Color FOOD_COLOR = {230, 200, 100, 255};
+    static constexpr raylib::Color STAGE_COLOR = {255, 217, 61,
+                                                  255};  // #FFD93D warm yellow
+    static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192,
+                                                     255};  // #7ECFC0 cyan
+    static constexpr raylib::Color FOOD_COLOR = {244, 164, 164,
+                                                 255};  // #F4A4A4 coral
 
     static raylib::Color tile_color(TileType type) {
         switch (type) {
