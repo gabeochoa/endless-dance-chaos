@@ -298,57 +298,112 @@ struct RenderUISystem : System<> {
         draw_text(text, x, y, size, color);
     }
 
-    void once(float) const override {
-        // Title
-        draw_text_bg("Endless Dance Chaos", 10, 10, 26, raylib::WHITE);
+    // Build tool colors and labels
+    struct ToolInfo {
+        const char* label;
+        raylib::Color color;
+    };
+    static constexpr ToolInfo TOOL_INFO[] = {
+        {"P", {184, 168, 138, 255}},   // Path - brown
+        {"F", {136, 136, 136, 255}},   // Fence - gray
+        {"G", {68, 136, 170, 255}},    // Gate - blue
+        {"S", {255, 217, 61, 255}},    // Stage - yellow
+        {"B", {126, 207, 192, 255}},   // Bathroom - cyan
+        {"Fd", {244, 164, 164, 255}},  // Food - coral
+        {"X", {255, 68, 68, 255}},     // Demolish - red
+    };
 
-        // Clock display
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+
+        // === TOP BAR (40px) ===
+        raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH, 40,
+                              raylib::Color{0, 0, 0, 170});
+        float bar_x = 12;
         if (clock) {
             std::string time_str = clock->format_time();
-            std::string phase_str = GameClock::phase_name(clock->get_phase());
-            std::string clock_text = fmt::format("{}  {}", time_str, phase_str);
-            if (clock->speed == GameSpeed::Paused) {
-                clock_text += "  PAUSED";
-            }
-            draw_text_bg(clock_text, 10, 42, 22,
-                         raylib::Color{255, 220, 100, 255});
-            auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+            draw_text(time_str, bar_x, 10, 20, raylib::WHITE);
             vtr.register_text(time_str);
+            bar_x += 80;
+            std::string phase_str = GameClock::phase_name(clock->get_phase());
+            draw_text(phase_str, bar_x, 10, 18,
+                      raylib::Color{255, 220, 100, 255});
             vtr.register_text(phase_str);
+            bar_x += 120;
             if (clock->speed == GameSpeed::Paused) {
+                draw_text("PAUSED", bar_x, 10, 18,
+                          raylib::Color{255, 100, 100, 255});
                 vtr.register_text("PAUSED");
+                bar_x += 80;
             }
         }
-
-        // Agent count
-        int agent_count =
-            (int) EntityQuery().whereHasComponent<Agent>().gen_count();
-        std::string count_text = fmt::format("Agents: {}", agent_count);
-        draw_text_bg(count_text, 10, 128, 22,
-                     raylib::Color{200, 220, 255, 255});
-
-        // Death count
-        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (gs && gs->death_count > 0) {
+        if (gs) {
             std::string death_text =
                 fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
-            draw_text_bg(death_text, 10, 156, 22,
-                         gs->death_count >= gs->max_deaths
-                             ? raylib::Color{255, 50, 50, 255}
-                             : raylib::Color{255, 180, 80, 255});
+            raylib::Color dc = gs->death_count >= 7
+                                   ? raylib::Color{255, 80, 80, 255}
+                                   : raylib::WHITE;
+            draw_text(death_text, bar_x, 10, 18, dc);
+            vtr.register_text(death_text);
+            bar_x += 160;
+            int agent_count =
+                (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+            std::string att_text = fmt::format("Attendees: {}", agent_count);
+            draw_text(att_text, bar_x, 10, 18, raylib::WHITE);
+            vtr.register_text(att_text);
+        }
+        // FPS (top-right in top bar)
+        int fps = raylib::GetFPS();
+        std::string fps_text = fmt::format("FPS: {}", fps);
+        auto fps_measure =
+            raylib::MeasureTextEx(get_font(), fps_text.c_str(), 16, 1.0f);
+        draw_text(fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10, 12,
+                  16,
+                  fps >= 55 ? raylib::Color{100, 255, 100, 255}
+                            : raylib::Color{255, 80, 80, 255});
+
+        // === BUILD BAR (50px at bottom) ===
+        float build_bar_y = DEFAULT_SCREEN_HEIGHT - 50.f;
+        raylib::DrawRectangle(0, (int) build_bar_y, DEFAULT_SCREEN_WIDTH, 50,
+                              raylib::Color{0, 0, 0, 170});
+        auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
+        if (bs) {
+            float icon_size = 32.f;
+            float gap = 4.f;
+            float total_w = 7 * icon_size + 6 * gap;
+            float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
+            for (int i = 0; i < 7; i++) {
+                float ix = start_x + i * (icon_size + gap);
+                float iy = build_bar_y + (50 - icon_size) / 2.f;
+                bool selected = (static_cast<int>(bs->tool) == i);
+                float s = selected ? icon_size * 1.2f : icon_size;
+                float ox = ix - (s - icon_size) / 2.f;
+                float oy = iy - (s - icon_size) / 2.f;
+                raylib::Color bg = TOOL_INFO[i].color;
+                if (selected) {
+                    bg.r = (uint8_t) std::min(255, bg.r + 40);
+                    bg.g = (uint8_t) std::min(255, bg.g + 40);
+                    bg.b = (uint8_t) std::min(255, bg.b + 40);
+                }
+                raylib::DrawRectangle((int) ox, (int) oy, (int) s, (int) s, bg);
+                if (selected) {
+                    raylib::DrawRectangleLines((int) ox, (int) oy, (int) s,
+                                               (int) s, raylib::WHITE);
+                }
+                auto label_m = raylib::MeasureTextEx(
+                    get_font(), TOOL_INFO[i].label, 14, 1.0f);
+                float lx = ox + (s - label_m.x) / 2.f;
+                float ly = oy + (s - label_m.y) / 2.f;
+                draw_text(TOOL_INFO[i].label, lx, ly, 14, raylib::WHITE);
+            }
         }
 
-        // Overlay indicator
-        if (gs && gs->show_data_layer) {
-            draw_text_bg("[TAB] Density Overlay ON", 10, 184, 20,
-                         raylib::Color{255, 255, 100, 255});
-        }
-
-        // Toast messages (top area, centered)
+        // Toast messages (below top bar)
         {
             auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
-            float toast_y = 42.f;
+            float toast_y = 46.f;
             for (Entity& te : toasts) {
                 auto& toast = te.get<ToastMessage>();
                 float alpha = 1.0f;
@@ -366,50 +421,27 @@ struct RenderUISystem : System<> {
                 raylib::DrawTextEx(get_font(), toast.text.c_str(),
                                    {tx, toast_y}, 18, 1.0f,
                                    raylib::Color{255, 255, 255, a});
-                auto& vtr =
-                    afterhours::testing::VisibleTextRegistry::instance();
                 vtr.register_text(toast.text);
                 toast_y += measure.y + 16;
             }
         }
 
-        // FPS (top-right)
-        int fps = raylib::GetFPS();
-        std::string fps_text = fmt::format("FPS: {}", fps);
-        auto fps_measure =
-            raylib::MeasureTextEx(get_font(), fps_text.c_str(), 24, 1.0f);
-        draw_text_bg(fps_text, DEFAULT_SCREEN_WIDTH - fps_measure.x - 14, 10,
-                     24,
-                     fps >= 55 ? raylib::Color{100, 255, 100, 255}
-                               : raylib::Color{255, 80, 80, 255});
-
-        // Build mode indicator
+        // Grid hover info (above build bar)
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
-        if (pds) {
-            if (pds->demolish_mode) {
-                draw_text_bg("DEMOLISH MODE [X]", 10, 70, 22,
-                             raylib::Color{255, 80, 80, 255});
-            } else if (pds->is_drawing) {
-                draw_text_bg(
-                    "Drawing path... (click to confirm, right-click to cancel)",
-                    10, 70, 20, raylib::Color{180, 255, 180, 255});
-            } else {
-                draw_text_bg("Build Path [click] | [X] Demolish", 10, 70, 20,
-                             raylib::Color{220, 220, 220, 255});
+        if (pds && pds->hover_valid) {
+            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+            if (grid && grid->in_bounds(pds->hover_x, pds->hover_z)) {
+                const auto& tile = grid->at(pds->hover_x, pds->hover_z);
+                std::string hover_text =
+                    fmt::format("({}, {})  Agents: {}", pds->hover_x,
+                                pds->hover_z, tile.agent_count);
+                draw_text_bg(hover_text, 10, build_bar_y - 28, 16,
+                             raylib::Color{200, 200, 200, 255});
             }
-
-            // Grid position + tile info readout
-            if (pds->hover_valid) {
-                auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-                if (grid && grid->in_bounds(pds->hover_x, pds->hover_z)) {
-                    const auto& tile = grid->at(pds->hover_x, pds->hover_z);
-                    std::string hover_text =
-                        fmt::format("Grid: ({}, {})  Agents: {}", pds->hover_x,
-                                    pds->hover_z, tile.agent_count);
-                    draw_text_bg(hover_text, 10, 98, 20,
-                                 raylib::Color{200, 200, 200, 255});
-                }
-            }
+        }
+        if (gs && gs->show_data_layer) {
+            draw_text_bg("[TAB] Density Overlay", 10, build_bar_y - 52, 16,
+                         raylib::Color{255, 255, 100, 255});
         }
 
         // Game over screen
@@ -456,7 +488,6 @@ struct RenderUISystem : System<> {
                                raylib::Color{180, 180, 180, 255});
 
             // Register text for E2E expect_text assertions
-            auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
             vtr.register_text(title);
             vtr.register_text("Press SPACE to restart");
         }

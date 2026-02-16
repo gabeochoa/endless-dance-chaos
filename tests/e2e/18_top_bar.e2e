@@ -1,0 +1,10 @@
+# Test top bar content
+reset_game
+wait 1
+
+set_time 14 34
+wait 1
+expect_text "14:34"
+expect_text "Deaths: 0/10"
+expect_text "Attendees:"
+wait 1
