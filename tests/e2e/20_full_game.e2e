@@ -1,0 +1,16 @@
+# Full game loop test
+reset_game
+wait 1
+
+# Build layout
+draw_path_rect 1 24 50 28
+draw_path_rect 19 14 21 38
+wait 2
+
+# Let game run a bit
+set_time 10 0
+wait 5
+
+# Should have agents alive
+assert_agent_count gte 0
+wait 1

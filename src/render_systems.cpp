@@ -30,51 +30,88 @@ static raylib::Font& get_font() {
     return g_font;
 }
 
+// Forward declarations for day/night system (defined below)
+static float get_day_night_t();
+static raylib::Color lerp_color(raylib::Color a, raylib::Color b, float t);
+
 struct BeginRenderSystem : System<> {
     void once(float) const override {
         // Render to texture for MCP screenshot support
         raylib::BeginTextureMode(g_render_texture);
-        raylib::ClearBackground(raylib::Color{40, 44, 52, 255});
+        float nt = get_day_night_t();
+        raylib::Color bg = lerp_color({40, 44, 52, 255}, {10, 10, 20, 255}, nt);
+        raylib::ClearBackground(bg);
 
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (cam) raylib::BeginMode3D(cam->cam.camera);
     }
 };
 
-struct RenderGridSystem : System<> {
-    static constexpr raylib::Color GRASS_COLOR = {152, 212, 168, 255};
-    static constexpr raylib::Color PATH_COLOR = {232, 221, 212, 255};
-    static constexpr raylib::Color FENCE_COLOR = {85, 85, 85, 255};   // #555555
-    static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};  // #4488AA
-    static constexpr raylib::Color STAGE_COLOR = {255, 217, 61,
-                                                  255};  // #FFD93D warm yellow
-    static constexpr raylib::Color STAGE_FLOOR_COLOR = {
-        255, 235, 150, 255};  // lighter warm yellow
-    static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192,
-                                                     255};  // #7ECFC0 cyan
-    static constexpr raylib::Color FOOD_COLOR = {244, 164, 164,
-                                                 255};  // #F4A4A4 coral
+// Day/Night color palette with smoothstep transition
+static float smoothstep(float edge0, float edge1, float x) {
+    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 
-    static raylib::Color tile_color(TileType type) {
+static raylib::Color lerp_color(raylib::Color a, raylib::Color b, float t) {
+    return raylib::Color{
+        (uint8_t) (a.r + (b.r - a.r) * t), (uint8_t) (a.g + (b.g - a.g) * t),
+        (uint8_t) (a.b + (b.b - a.b) * t), (uint8_t) (a.a + (b.a - a.a) * t)};
+}
+
+static float get_day_night_t() {
+    auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+    if (!clock) return 0.0f;
+    float gm = clock->game_time_minutes;
+    int hour = (int) (gm / 60) % 24;
+    float minute_in_hour = std::fmod(gm, 60.f);
+    if (hour == 17)
+        return smoothstep(0, 60, minute_in_hour);
+    else if (hour == 9)
+        return 1.0f - smoothstep(0, 60, minute_in_hour);
+    else if (hour >= 18 || hour < 3)
+        return 1.0f;
+    else if (hour >= 10 && hour < 17)
+        return 0.0f;
+    return 1.0f;  // Dead hours: night palette
+}
+
+struct RenderGridSystem : System<> {
+    // Day palette
+    static constexpr raylib::Color DAY_GRASS = {152, 212, 168, 255};
+    static constexpr raylib::Color DAY_PATH = {232, 221, 212, 255};
+    static constexpr raylib::Color DAY_STAGE = {255, 217, 61, 255};
+    // Night palette
+    static constexpr raylib::Color NIGHT_GRASS = {45, 74, 62, 255};
+    static constexpr raylib::Color NIGHT_PATH = {42, 42, 58, 255};
+    static constexpr raylib::Color NIGHT_STAGE = {255, 230, 0, 255};
+    // Unchanged
+    static constexpr raylib::Color FENCE_COLOR = {85, 85, 85, 255};
+    static constexpr raylib::Color GATE_COLOR = {68, 136, 170, 255};
+    static constexpr raylib::Color BATHROOM_COLOR = {126, 207, 192, 255};
+    static constexpr raylib::Color FOOD_COLOR = {244, 164, 164, 255};
+
+    static raylib::Color tile_color(TileType type, float night_t) {
         switch (type) {
             case TileType::Grass:
-                return GRASS_COLOR;
+                return lerp_color(DAY_GRASS, NIGHT_GRASS, night_t);
             case TileType::Path:
-                return PATH_COLOR;
+                return lerp_color(DAY_PATH, NIGHT_PATH, night_t);
             case TileType::Fence:
-                return FENCE_COLOR;
+                return lerp_color(FENCE_COLOR, {40, 40, 50, 255}, night_t);
             case TileType::Gate:
                 return GATE_COLOR;
             case TileType::Stage:
-                return STAGE_COLOR;
+                return lerp_color(DAY_STAGE, NIGHT_STAGE, night_t);
             case TileType::StageFloor:
-                return STAGE_FLOOR_COLOR;
+                return lerp_color({255, 235, 150, 255}, {60, 60, 40, 255},
+                                  night_t);
             case TileType::Bathroom:
-                return BATHROOM_COLOR;
+                return lerp_color(BATHROOM_COLOR, {60, 100, 90, 255}, night_t);
             case TileType::Food:
-                return FOOD_COLOR;
+                return lerp_color(FOOD_COLOR, {120, 80, 80, 255}, night_t);
         }
-        return GRASS_COLOR;
+        return DAY_GRASS;
     }
 
     void once(float) const override {
@@ -82,11 +119,12 @@ struct RenderGridSystem : System<> {
         if (!grid) return;
 
         float tile_size = TILESIZE * 0.98f;
+        float night_t = get_day_night_t();
 
         for (int z = 0; z < MAP_SIZE; z++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 const Tile& tile = grid->at(x, z);
-                raylib::Color color = tile_color(tile.type);
+                raylib::Color color = tile_color(tile.type, night_t);
 
                 raylib::DrawPlane({x * TILESIZE, 0.01f, z * TILESIZE},
                                   {tile_size, tile_size}, color);
@@ -423,6 +461,27 @@ struct RenderUISystem : System<> {
                                    raylib::Color{255, 255, 255, a});
                 vtr.register_text(toast.text);
                 toast_y += measure.y + 16;
+            }
+        }
+
+        // Compass indicator (top-right area, near sidebar)
+        {
+            auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+            if (cam) {
+                float cx = DEFAULT_SCREEN_WIDTH - 150 - 30;
+                float cy = 55;
+                raylib::DrawCircle((int) cx, (int) cy, 16,
+                                   raylib::Color{0, 0, 0, 120});
+                // Approximate rotation from camera position relative to target
+                float cam_dx =
+                    cam->cam.camera.position.x - cam->cam.camera.target.x;
+                float cam_dz =
+                    cam->cam.camera.position.z - cam->cam.camera.target.z;
+                float angle = std::atan2(cam_dz, cam_dx);
+                float nx = cx + std::cos(angle) * 12;
+                float ny = cy + std::sin(angle) * 12;
+                draw_text("N", nx - 5, ny - 7, 12,
+                          raylib::Color{255, 100, 100, 255});
             }
         }
 

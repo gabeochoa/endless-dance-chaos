@@ -1,0 +1,15 @@
+# Test day/night transition (visual verification)
+reset_game
+wait 1
+
+set_time 12 0
+wait 1
+
+set_time 17 30
+wait 1
+
+set_time 20 0
+wait 1
+
+set_time 9 30
+wait 1
