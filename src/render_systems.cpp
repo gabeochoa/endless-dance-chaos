@@ -16,15 +16,14 @@ extern raylib::RenderTexture2D g_render_texture;
 // Global font - loaded once
 static raylib::Font g_font = {0};
 static bool g_font_loaded = false;
+static constexpr float FONT_SPACING = 1.5f;
 
 static raylib::Font& get_font() {
     if (!g_font_loaded) {
-        // Load at high resolution for crisp downscaling
-        g_font = raylib::LoadFontEx(
-            "resources/fonts/Fredoka-VariableFont_wdth,wght.ttf", 128, nullptr,
-            0);
+        g_font =
+            raylib::LoadFontEx("resources/fonts/Exo2-Bold.ttf", 96, nullptr, 0);
         raylib::SetTextureFilter(g_font.texture,
-                                 raylib::TEXTURE_FILTER_TRILINEAR);
+                                 raylib::TEXTURE_FILTER_BILINEAR);
         g_font_loaded = true;
     }
     return g_font;
@@ -315,24 +314,27 @@ struct HoverTrackingSystem : System<> {
 struct RenderUISystem : System<> {
     static void draw_text(const std::string& text, float x, float y, float size,
                           raylib::Color color) {
-        raylib::DrawTextEx(get_font(), text.c_str(), {x, y}, size, 1.0f, color);
+        raylib::DrawTextEx(get_font(), text.c_str(), {x, y}, size, FONT_SPACING,
+                           color);
+    }
+
+    static raylib::Vector2 measure_text(const std::string& text, float size) {
+        return raylib::MeasureTextEx(get_font(), text.c_str(), size,
+                                     FONT_SPACING);
     }
 
     static void draw_text_bg(const std::string& text, float x, float y,
                              float size, raylib::Color color) {
-        auto measure =
-            raylib::MeasureTextEx(get_font(), text.c_str(), size, 1.0f);
-        raylib::DrawRectangle((int) x - 6, (int) y - 3, (int) measure.x + 12,
-                              (int) measure.y + 6, raylib::Color{0, 0, 0, 240});
+        auto m = measure_text(text, size);
+        raylib::DrawRectangle((int) x - 6, (int) y - 3, (int) m.x + 12,
+                              (int) m.y + 6, raylib::Color{0, 0, 0, 240});
         draw_text(text, x, y, size, color);
     }
 
-    // Draw text centered horizontally at given y
     static void draw_text_centered(const std::string& text, float y, float size,
                                    raylib::Color color) {
-        auto measure =
-            raylib::MeasureTextEx(get_font(), text.c_str(), size, 1.0f);
-        float x = (DEFAULT_SCREEN_WIDTH - measure.x) / 2.f;
+        auto m = measure_text(text, size);
+        float x = (DEFAULT_SCREEN_WIDTH - m.x) / 2.f;
         draw_text(text, x, y, size, color);
     }
 
@@ -356,25 +358,25 @@ struct RenderUISystem : System<> {
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
 
-        // === TOP BAR (40px) ===
-        raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH, 40,
-                              raylib::Color{0, 0, 0, 170});
+        // === TOP BAR (44px) ===
+        raylib::DrawRectangle(0, 0, DEFAULT_SCREEN_WIDTH, 44,
+                              raylib::Color{0, 0, 0, 180});
         float bar_x = 12;
         if (clock) {
             std::string time_str = clock->format_time();
-            draw_text(time_str, bar_x, 10, 20, raylib::WHITE);
+            draw_text(time_str, bar_x, 10, 22, raylib::WHITE);
             vtr.register_text(time_str);
-            bar_x += 80;
+            bar_x += 90;
             std::string phase_str = GameClock::phase_name(clock->get_phase());
-            draw_text(phase_str, bar_x, 10, 18,
+            draw_text(phase_str, bar_x, 11, 20,
                       raylib::Color{255, 220, 100, 255});
             vtr.register_text(phase_str);
-            bar_x += 120;
+            bar_x += 130;
             if (clock->speed == GameSpeed::Paused) {
-                draw_text("PAUSED", bar_x, 10, 18,
+                draw_text("PAUSED", bar_x, 11, 20,
                           raylib::Color{255, 100, 100, 255});
                 vtr.register_text("PAUSED");
-                bar_x += 80;
+                bar_x += 90;
             }
         }
         if (gs) {
@@ -383,40 +385,39 @@ struct RenderUISystem : System<> {
             raylib::Color dc = gs->death_count >= 7
                                    ? raylib::Color{255, 80, 80, 255}
                                    : raylib::WHITE;
-            draw_text(death_text, bar_x, 10, 18, dc);
+            draw_text(death_text, bar_x, 11, 20, dc);
             vtr.register_text(death_text);
-            bar_x += 160;
+            bar_x += 170;
             int agent_count =
                 (int) EntityQuery().whereHasComponent<Agent>().gen_count();
             std::string att_text = fmt::format("Attendees: {}", agent_count);
-            draw_text(att_text, bar_x, 10, 18, raylib::WHITE);
+            draw_text(att_text, bar_x, 11, 20, raylib::WHITE);
             vtr.register_text(att_text);
         }
         // FPS (top-right in top bar)
         int fps = raylib::GetFPS();
         std::string fps_text = fmt::format("FPS: {}", fps);
-        auto fps_measure =
-            raylib::MeasureTextEx(get_font(), fps_text.c_str(), 16, 1.0f);
+        auto fps_measure = measure_text(fps_text, 18);
         draw_text(fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10, 12,
-                  16,
+                  18,
                   fps >= 55 ? raylib::Color{100, 255, 100, 255}
                             : raylib::Color{255, 80, 80, 255});
 
-        // === BUILD BAR (50px at bottom) ===
-        float build_bar_y = DEFAULT_SCREEN_HEIGHT - 50.f;
-        raylib::DrawRectangle(0, (int) build_bar_y, DEFAULT_SCREEN_WIDTH, 50,
-                              raylib::Color{0, 0, 0, 170});
+        // === BUILD BAR (54px at bottom) ===
+        float build_bar_y = DEFAULT_SCREEN_HEIGHT - 54.f;
+        raylib::DrawRectangle(0, (int) build_bar_y, DEFAULT_SCREEN_WIDTH, 54,
+                              raylib::Color{0, 0, 0, 180});
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         if (bs) {
-            float icon_size = 32.f;
-            float gap = 4.f;
+            float icon_size = 36.f;
+            float gap = 6.f;
             float total_w = 7 * icon_size + 6 * gap;
             float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
             for (int i = 0; i < 7; i++) {
                 float ix = start_x + i * (icon_size + gap);
-                float iy = build_bar_y + (50 - icon_size) / 2.f;
+                float iy = build_bar_y + (54 - icon_size) / 2.f;
                 bool selected = (static_cast<int>(bs->tool) == i);
-                float s = selected ? icon_size * 1.2f : icon_size;
+                float s = selected ? icon_size * 1.15f : icon_size;
                 float ox = ix - (s - icon_size) / 2.f;
                 float oy = iy - (s - icon_size) / 2.f;
                 raylib::Color bg = TOOL_INFO[i].color;
@@ -430,18 +431,17 @@ struct RenderUISystem : System<> {
                     raylib::DrawRectangleLines((int) ox, (int) oy, (int) s,
                                                (int) s, raylib::WHITE);
                 }
-                auto label_m = raylib::MeasureTextEx(
-                    get_font(), TOOL_INFO[i].label, 14, 1.0f);
+                auto label_m = measure_text(TOOL_INFO[i].label, 16);
                 float lx = ox + (s - label_m.x) / 2.f;
                 float ly = oy + (s - label_m.y) / 2.f;
-                draw_text(TOOL_INFO[i].label, lx, ly, 14, raylib::WHITE);
+                draw_text(TOOL_INFO[i].label, lx, ly, 16, raylib::WHITE);
             }
         }
 
         // Toast messages (below top bar)
         {
             auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
-            float toast_y = 46.f;
+            float toast_y = 50.f;
             for (Entity& te : toasts) {
                 auto& toast = te.get<ToastMessage>();
                 float alpha = 1.0f;
@@ -450,17 +450,16 @@ struct RenderUISystem : System<> {
                         (toast.lifetime - toast.elapsed) / toast.fade_duration;
                 }
                 unsigned char a = static_cast<unsigned char>(alpha * 255);
-                auto measure = raylib::MeasureTextEx(
-                    get_font(), toast.text.c_str(), 18, 1.0f);
-                float tx = (DEFAULT_SCREEN_WIDTH - measure.x) / 2.f;
-                raylib::DrawRectangle(
-                    (int) (tx - 8), (int) (toast_y - 4), (int) (measure.x + 16),
-                    (int) (measure.y + 8), raylib::Color{30, 120, 60, a});
+                auto tm = measure_text(toast.text, 20);
+                float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
+                raylib::DrawRectangle((int) (tx - 8), (int) (toast_y - 4),
+                                      (int) (tm.x + 16), (int) (tm.y + 8),
+                                      raylib::Color{30, 120, 60, a});
                 raylib::DrawTextEx(get_font(), toast.text.c_str(),
-                                   {tx, toast_y}, 18, 1.0f,
+                                   {tx, toast_y}, 20, FONT_SPACING,
                                    raylib::Color{255, 255, 255, a});
                 vtr.register_text(toast.text);
-                toast_y += measure.y + 16;
+                toast_y += tm.y + 16;
             }
         }
 
@@ -480,7 +479,7 @@ struct RenderUISystem : System<> {
                 float angle = std::atan2(cam_dz, cam_dx);
                 float nx = cx + std::cos(angle) * 12;
                 float ny = cy + std::sin(angle) * 12;
-                draw_text("N", nx - 5, ny - 7, 12,
+                draw_text("N", nx - 6, ny - 8, 14,
                           raylib::Color{255, 100, 100, 255});
             }
         }
@@ -494,12 +493,12 @@ struct RenderUISystem : System<> {
                 std::string hover_text =
                     fmt::format("({}, {})  Agents: {}", pds->hover_x,
                                 pds->hover_z, tile.agent_count);
-                draw_text_bg(hover_text, 10, build_bar_y - 28, 16,
+                draw_text_bg(hover_text, 10, build_bar_y - 30, 18,
                              raylib::Color{200, 200, 200, 255});
             }
         }
         if (gs && gs->show_data_layer) {
-            draw_text_bg("[TAB] Density Overlay", 10, build_bar_y - 52, 16,
+            draw_text_bg("[TAB] Density Overlay", 10, build_bar_y - 56, 18,
                          raylib::Color{255, 255, 100, 255});
         }
 
@@ -521,7 +520,7 @@ struct RenderUISystem : System<> {
 
             // Title
             std::string title = "FESTIVAL SHUT DOWN";
-            draw_text_centered(title, py + 24, 32,
+            draw_text_centered(title, py + 24, 34,
                                raylib::Color{255, 80, 80, 255});
 
             // Stats
@@ -537,13 +536,13 @@ struct RenderUISystem : System<> {
                 fmt::format("Peak Attendees: {}", gs->max_attendees);
 
             float sy = py + 80;
-            draw_text_centered(stats1, sy, 20, raylib::WHITE);
-            draw_text_centered(stats2, sy + 30, 20, raylib::WHITE);
-            draw_text_centered(stats3, sy + 60, 20, raylib::WHITE);
-            draw_text_centered(stats4, sy + 90, 20, raylib::WHITE);
+            draw_text_centered(stats1, sy, 22, raylib::WHITE);
+            draw_text_centered(stats2, sy + 32, 22, raylib::WHITE);
+            draw_text_centered(stats3, sy + 64, 22, raylib::WHITE);
+            draw_text_centered(stats4, sy + 96, 22, raylib::WHITE);
 
             // Restart prompt
-            draw_text_centered("Press SPACE to restart", py + ph - 50, 18,
+            draw_text_centered("Press SPACE to restart", py + ph - 50, 20,
                                raylib::Color{180, 180, 180, 255});
 
             // Register text for E2E expect_text assertions
@@ -599,8 +598,8 @@ struct RenderTimelineSidebarSystem : System<> {
                               (int) sidebar_h, raylib::Color{15, 15, 25, 200});
 
         // Title
-        raylib::DrawTextEx(get_font(), "TIMELINE", {sidebar_x + 10, 8}, 16,
-                           1.0f, raylib::Color{255, 220, 100, 255});
+        raylib::DrawTextEx(get_font(), "TIMELINE", {sidebar_x + 10, 8}, 18,
+                           FONT_SPACING, raylib::Color{255, 220, 100, 255});
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         vtr.register_text("TIMELINE");
 
@@ -609,8 +608,8 @@ struct RenderTimelineSidebarSystem : System<> {
         raylib::DrawLine((int) sidebar_x, (int) now_y,
                          (int) (sidebar_x + sidebar_w), (int) now_y,
                          raylib::Color{255, 100, 100, 255});
-        raylib::DrawTextEx(get_font(), "NOW", {sidebar_x + 6, now_y - 14}, 12,
-                           1.0f, raylib::Color{255, 100, 100, 255});
+        raylib::DrawTextEx(get_font(), "NOW", {sidebar_x + 6, now_y - 16}, 14,
+                           FONT_SPACING, raylib::Color{255, 100, 100, 255});
 
         float now_minutes = clock->game_time_minutes;
         float px_per_minute = 2.0f;
@@ -640,7 +639,7 @@ struct RenderTimelineSidebarSystem : System<> {
             std::string label =
                 a.performing ? fmt::format("> {}", a.name) : a.name;
             raylib::DrawTextEx(get_font(), label.c_str(),
-                               {sidebar_x + 10, block_y + 4}, 13, 1.0f,
+                               {sidebar_x + 10, block_y + 4}, 15, FONT_SPACING,
                                raylib::WHITE);
 
             // Time and crowd
@@ -649,7 +648,7 @@ struct RenderTimelineSidebarSystem : System<> {
             std::string info =
                 fmt::format("{:02d}:{:02d} ~{}", h, m, a.expected_crowd);
             raylib::DrawTextEx(get_font(), info.c_str(),
-                               {sidebar_x + 10, block_y + 20}, 11, 1.0f,
+                               {sidebar_x + 10, block_y + 22}, 13, FONT_SPACING,
                                raylib::Color{180, 180, 200, 255});
         }
     }
@@ -729,13 +728,13 @@ struct RenderDebugPanelSystem : System<> {
         float knob_w = 10.f;
 
         // Label
-        raylib::DrawTextEx(get_font(), label.c_str(), {x, y - 18}, 16, 1.0f,
-                           raylib::Color{200, 200, 200, 255});
+        raylib::DrawTextEx(get_font(), label.c_str(), {x, y - 20}, 18,
+                           FONT_SPACING, raylib::Color{200, 200, 200, 255});
 
         // Value text
         std::string val_text = fmt::format("{:.2f}", val);
-        raylib::DrawTextEx(get_font(), val_text.c_str(), {x + w + 8, y - 2}, 16,
-                           1.0f, raylib::Color{255, 255, 100, 255});
+        raylib::DrawTextEx(get_font(), val_text.c_str(), {x + w + 8, y - 2}, 18,
+                           FONT_SPACING, raylib::Color{255, 255, 100, 255});
 
         // Track background
         raylib::DrawRectangle((int) x, (int) y, (int) w, (int) h,
@@ -783,8 +782,8 @@ struct RenderDebugPanelSystem : System<> {
                                    raylib::Color{100, 100, 120, 255});
 
         // Title
-        raylib::DrawTextEx(get_font(), "Debug [`]", {px + 10, py + 8}, 18, 1.0f,
-                           raylib::Color{255, 200, 80, 255});
+        raylib::DrawTextEx(get_font(), "Debug [`]", {px + 10, py + 8}, 20,
+                           FONT_SPACING, raylib::Color{255, 200, 80, 255});
 
         // Speed multiplier slider
         float sx = px + 16;
@@ -809,8 +808,8 @@ struct RenderDebugPanelSystem : System<> {
             (int) EntityQuery().whereHasComponent<Agent>().gen_count();
         std::string info =
             fmt::format("Agents: {}  Deaths: {}", agent_count, gs->death_count);
-        raylib::DrawTextEx(get_font(), info.c_str(), {sx, py + 140}, 14, 1.0f,
-                           raylib::Color{160, 160, 160, 255});
+        raylib::DrawTextEx(get_font(), info.c_str(), {sx, py + 140}, 16,
+                           FONT_SPACING, raylib::Color{160, 160, 160, 255});
     }
 };
 
