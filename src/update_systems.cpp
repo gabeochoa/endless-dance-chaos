@@ -193,9 +193,9 @@ struct UpdateArtistScheduleSystem : System<> {
             fill_schedule(*sched, now, gs->max_attendees);
         }
 
-        // Adjust spawn rate based on artist schedule
+        // Adjust spawn rate based on artist schedule (skip if debug override)
         auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
-        if (ss) {
+        if (ss && !ss->manual_override) {
             float base_rate = 1.f / DEFAULT_SPAWN_INTERVAL;
             auto* current = sched->get_current();
             auto* next = sched->get_next();
@@ -1276,6 +1276,13 @@ struct ToggleDataLayerSystem : System<> {
             if (gs) {
                 gs->show_debug = !gs->show_debug;
                 log_info("Debug panel: {}", gs->show_debug ? "ON" : "OFF");
+                // Clear manual overrides when closing debug panel
+                if (!gs->show_debug) {
+                    auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+                    if (ss) ss->manual_override = false;
+                    auto* clk = EntityHelper::get_singleton_cmp<GameClock>();
+                    if (clk) clk->debug_time_mult = 0.f;
+                }
             }
         }
         was_debug_down = debug_down;
@@ -1588,8 +1595,10 @@ struct DifficultyScalingSystem : System<> {
         }
         last_hour = hour;
 
-        // Apply spawn rate scaling
-        spawn->interval = DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult;
+        // Apply spawn rate scaling (skip if debug override)
+        if (!spawn->manual_override) {
+            spawn->interval = DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult;
+        }
     }
 };
 

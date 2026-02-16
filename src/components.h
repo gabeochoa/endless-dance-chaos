@@ -306,11 +306,13 @@ enum class GameSpeed { Paused, OneX, TwoX, FourX };
 struct GameClock : afterhours::BaseComponent {
     float game_time_minutes = 600.0f;  // Start at 10:00am
     GameSpeed speed = GameSpeed::OneX;
+    float debug_time_mult = 0.f;  // >0 = debug override active
 
     // 12 real minutes = 24 game hours = 1440 game minutes
     static constexpr float SECONDS_PER_GAME_MINUTE = 0.5f;
 
     float speed_multiplier() const {
+        if (debug_time_mult > 0.f) return debug_time_mult;
         switch (speed) {
             case GameSpeed::Paused:
                 return 0.0f;
@@ -400,6 +402,7 @@ struct SpawnState : afterhours::BaseComponent {
     float interval = DEFAULT_SPAWN_INTERVAL;  // seconds between spawns
     float timer = 0.f;
     bool enabled = true;
+    bool manual_override = false;  // debug slider active, skip auto-adjust
 };
 
 // Path drawing state - rectangle drag on grid

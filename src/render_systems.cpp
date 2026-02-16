@@ -646,6 +646,9 @@ struct RenderUISystem : System<> {
         raylib::DrawRectangle(0, (int) build_bar_y, DEFAULT_SCREEN_WIDTH, 54,
                               raylib::Color{0, 0, 0, 180});
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
+        auto mouse = input::get_mouse_position();
+        bool mouse_clicked =
+            input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT);
         if (bs) {
             float icon_size = 36.f;
             float gap = 6.f;
@@ -658,6 +661,14 @@ struct RenderUISystem : System<> {
                 float s = selected ? icon_size * 1.15f : icon_size;
                 float ox = ix - (s - icon_size) / 2.f;
                 float oy = iy - (s - icon_size) / 2.f;
+
+                // Click to select tool
+                if (mouse_clicked && mouse.x >= ox && mouse.x <= ox + s &&
+                    mouse.y >= oy && mouse.y <= oy + s) {
+                    bs->tool = static_cast<BuildTool>(i);
+                    selected = true;
+                }
+
                 raylib::Color bg = TOOL_INFO[i].color;
                 if (selected) {
                     bg.r = (uint8_t) std::min(255, bg.r + 40);
@@ -1052,30 +1063,25 @@ struct RenderDebugPanelSystem : System<> {
 
         // Spawn rate slider (agents/sec, converted to/from interval)
         if (ss) {
-            float old_interval = ss->interval;
-            float rate = 1.f / ss->interval;
+            float old_rate = 1.f / ss->interval;
+            float rate = old_rate;
             rate = draw_slider("Spawn Rate (agents/s)", sx, py + 105, sw, rate,
                                0.1f, 20.f);
-            ss->interval = 1.f / rate;
-            if (ss->interval != old_interval) {
+            if (rate != old_rate) {
+                ss->interval = 1.f / rate;
                 ss->timer = 0.f;
+                ss->manual_override = true;
             }
         }
 
-        // Time speed slider (game-minutes per real-second)
+        // Time speed slider (debug override, up to 20x)
         if (clock) {
             float cur_mult = clock->speed_multiplier();
-            cur_mult =
-                draw_slider("Time Speed", sx, py + 155, sw, cur_mult, 0.f, 8.f);
-            // Snap to nearest named speed or allow free values
-            if (cur_mult < 0.1f)
-                clock->speed = GameSpeed::Paused;
-            else if (cur_mult < 1.5f)
-                clock->speed = GameSpeed::OneX;
-            else if (cur_mult < 3.0f)
-                clock->speed = GameSpeed::TwoX;
-            else
-                clock->speed = GameSpeed::FourX;
+            float new_mult = draw_slider("Time Speed", sx, py + 155, sw,
+                                         cur_mult, 0.f, 20.f);
+            if (new_mult != cur_mult) {
+                clock->debug_time_mult = (new_mult < 0.05f) ? 0.f : new_mult;
+            }
         }
 
         // Info
