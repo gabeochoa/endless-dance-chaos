@@ -386,8 +386,16 @@ struct PathBuildSystem : System<> {
 // Forward declaration for pheromone channel mapping
 static int facility_to_channel(FacilityType type);
 
+// Check if a tile blocks pathfinding (fences + buildings)
+static bool tile_blocks_movement(TileType type) {
+    return type == TileType::Fence || type == TileType::Stage ||
+           type == TileType::Bathroom || type == TileType::Food ||
+           type == TileType::MedTent;
+}
+
 // Greedy neighbor pathfinding with pheromone weighting.
 // Pheromone reduces effective distance score, creating emergent trails.
+// When stuck behind an obstacle, takes a random lateral step to route around.
 static std::pair<int, int> pick_next_tile(
     int cur_x, int cur_z, int goal_x, int goal_z, const Grid& grid,
     FacilityType want = FacilityType::Stage) {
@@ -396,11 +404,21 @@ static std::pair<int, int> pick_next_tile(
 
     int best_x = cur_x;
     int best_z = cur_z;
-    float best_score =
+    float cur_dist =
         static_cast<float>(std::abs(cur_x - goal_x) + std::abs(cur_z - goal_z));
+    float best_score = cur_dist;
     bool best_is_path = false;
 
     int channel = facility_to_channel(want);
+
+    // Collect all walkable neighbors and their scores
+    struct Neighbor {
+        int x, z;
+        float score, dist;
+        bool is_path;
+    };
+    std::array<Neighbor, 4> walkable;
+    int walkable_count = 0;
 
     for (int i = 0; i < 4; i++) {
         int nx = cur_x + dx[i];
@@ -408,7 +426,7 @@ static std::pair<int, int> pick_next_tile(
         if (!grid.in_bounds(nx, nz)) continue;
 
         TileType type = grid.at(nx, nz).type;
-        if (type == TileType::Fence) continue;
+        if (tile_blocks_movement(type)) continue;
         if (grid.at(nx, nz).agent_count >= MAX_AGENTS_PER_TILE) continue;
 
         float dist =
@@ -419,6 +437,8 @@ static std::pair<int, int> pick_next_tile(
         bool is_path = (type == TileType::Path || type == TileType::Gate ||
                         type == TileType::StageFloor);
 
+        walkable[walkable_count++] = {nx, nz, score, dist, is_path};
+
         if (score < best_score || (std::abs(score - best_score) < 0.01f &&
                                    is_path && !best_is_path)) {
             best_x = nx;
@@ -426,6 +446,26 @@ static std::pair<int, int> pick_next_tile(
             best_score = score;
             best_is_path = is_path;
         }
+    }
+
+    // If stuck (no improving neighbor found), take a random lateral step
+    // to route around obstacles. Prefer tiles that don't increase distance
+    // much, and randomize to avoid oscillation.
+    if (best_x == cur_x && best_z == cur_z && walkable_count > 0) {
+        // Shuffle walkable neighbors
+        auto& rng = RandomEngine::get();
+        for (int k = walkable_count - 1; k > 0; k--) {
+            int j = rng.get_int(0, k);
+            std::swap(walkable[k], walkable[j]);
+        }
+        // Pick the first neighbor that doesn't go too far from the goal
+        for (int i = 0; i < walkable_count; i++) {
+            if (walkable[i].dist <= cur_dist + 2.f) {
+                return {walkable[i].x, walkable[i].z};
+            }
+        }
+        // Last resort: any walkable neighbor
+        return {walkable[0].x, walkable[0].z};
     }
 
     return {best_x, best_z};
@@ -458,7 +498,7 @@ static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
         int nz = cz + dz;
         if (!grid.in_bounds(nx, nz)) continue;
         TileType type = grid.at(nx, nz).type;
-        if (type == TileType::Fence || type == TileType::Stage) continue;
+        if (tile_blocks_movement(type)) continue;
         int count = grid.at(nx, nz).agent_count;
         if (count < cur_count) {
             candidates[n++] = {nx, nz, count};
@@ -586,26 +626,56 @@ struct AgentMovementSystem : System<Agent, Transform> {
     }
 };
 
-// Pick a random spot on the stage floor, biased toward the stage itself.
-// Returns a grid position within the watch radius.
-static std::pair<int, int> random_stage_spot() {
+// Pick a random spot on the stage floor (StageFloor tiles only).
+// Returns a grid position that agents can actually walk to.
+std::pair<int, int> random_stage_spot() {
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     auto& rng = RandomEngine::get();
     float scx = STAGE_X + STAGE_SIZE / 2.0f;
     float scz = STAGE_Z + STAGE_SIZE / 2.0f;
 
-    // Bias: 60% chance to pick a spot within half the radius (close to stage)
-    float max_r = STAGE_WATCH_RADIUS;
-    if (rng.get_float(0.f, 1.f) < 0.6f) {
-        max_r = STAGE_WATCH_RADIUS * 0.5f;
+    // Collect all StageFloor tiles as candidates
+    if (grid) {
+        int r = static_cast<int>(std::ceil(STAGE_WATCH_RADIUS));
+        int cx = static_cast<int>(scx);
+        int cz = static_cast<int>(scz);
+
+        struct Spot {
+            int x, z;
+            float dist;
+        };
+        std::vector<Spot> candidates;
+        for (int z = cz - r; z <= cz + r; z++) {
+            for (int x = cx - r; x <= cx + r; x++) {
+                if (!grid->in_bounds(x, z)) continue;
+                if (grid->at(x, z).type != TileType::StageFloor) continue;
+                float dx = x - scx;
+                float dz = z - scz;
+                float d = std::sqrt(dx * dx + dz * dz);
+                candidates.push_back({x, z, d});
+            }
+        }
+
+        if (!candidates.empty()) {
+            // Weight toward closer spots: 60% inner half, 40% outer
+            bool prefer_close = rng.get_float(0.f, 1.f) < 0.6f;
+            float half_r = STAGE_WATCH_RADIUS * 0.5f;
+
+            // Filter to preferred range
+            std::vector<Spot> preferred;
+            for (auto& s : candidates) {
+                if (prefer_close ? (s.dist <= half_r) : (s.dist > half_r))
+                    preferred.push_back(s);
+            }
+            auto& pool = preferred.empty() ? candidates : preferred;
+            int idx = rng.get_int(0, (int) pool.size() - 1);
+            return {pool[idx].x, pool[idx].z};
+        }
     }
 
-    // Random angle and radius
-    float angle = rng.get_float(0.f, 2.f * (float) M_PI);
-    float r = rng.get_float(0.f, max_r);
-    int gx = static_cast<int>(std::round(scx + r * std::cos(angle)));
-    int gz = static_cast<int>(std::round(scz + r * std::sin(angle)));
-
-    // Clamp to playable area
+    // Fallback: approximate position near stage center
+    int gx = static_cast<int>(scx) + rng.get_int(-2, 2);
+    int gz = static_cast<int>(scz) + rng.get_int(-2, 2);
     gx = std::clamp(gx, PLAY_MIN, PLAY_MAX);
     gz = std::clamp(gz, PLAY_MIN, PLAY_MAX);
     return {gx, gz};
@@ -780,7 +850,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
     }
 };
 
-// When agent reaches the stage area, start watching
+// When agent reaches their assigned stage spot, start watching
 struct StageWatchingSystem : System<Agent, Transform> {
     void for_each_with(Entity& e, Agent& agent, Transform& tf,
                        float dt) override {
@@ -794,7 +864,6 @@ struct StageWatchingSystem : System<Agent, Transform> {
             ws.watch_timer += dt;
             if (ws.watch_timer >= ws.watch_duration) {
                 e.removeComponent<WatchingStage>();
-                // Done watching, needs will drive next goal
             }
             return;
         }
@@ -805,18 +874,22 @@ struct StageWatchingSystem : System<Agent, Transform> {
         // Only start watching if heading to stage
         if (agent.want != FacilityType::Stage) return;
 
-        // Check if within watch radius of stage center
-        float stage_cx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
-        float stage_cz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
-        float dx = tf.position.x - stage_cx;
-        float dz = tf.position.y - stage_cz;
-        float dist = std::sqrt(dx * dx + dz * dz);
+        // Must be standing on a StageFloor tile
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz) ||
+            grid->at(gx, gz).type != TileType::StageFloor)
+            return;
 
-        if (dist <= STAGE_WATCH_RADIUS * TILESIZE) {
-            auto& rng = RandomEngine::get();
-            e.addComponent<WatchingStage>();
-            e.get<WatchingStage>().watch_duration = rng.get_float(30.f, 120.f);
-        }
+        // Only start watching once at or very near the target (within 2 tiles).
+        // The tolerance handles cases where the exact target is unreachable
+        // (e.g., blocked by Stage building or occupied).
+        int tdx = std::abs(gx - agent.target_grid_x);
+        int tdz = std::abs(gz - agent.target_grid_z);
+        if (tdx + tdz > 2) return;
+
+        auto& rng = RandomEngine::get();
+        e.addComponent<WatchingStage>();
+        e.get<WatchingStage>().watch_duration = rng.get_float(30.f, 120.f);
     }
 };
 

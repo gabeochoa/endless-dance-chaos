@@ -98,9 +98,18 @@ struct HandleSpawnAgentsCommand : System<testing::PendingE2ECommand> {
         int z = cmd.arg_as<int>(1);
         int count = cmd.arg_as<int>(2);
         FacilityType type = parse_facility_type(cmd.arg(3));
-        int tx = STAGE_X + STAGE_SIZE / 2;
-        int tz = STAGE_Z + STAGE_SIZE / 2;
         for (int i = 0; i < count; i++) {
+            // Use random_stage_spot for stage-type agents (same as
+            // SpawnAgentSystem)
+            int tx, tz;
+            if (type == FacilityType::Stage) {
+                auto [sx, sz] = random_stage_spot();
+                tx = sx;
+                tz = sz;
+            } else {
+                tx = STAGE_X + STAGE_SIZE / 2;
+                tz = STAGE_Z + STAGE_SIZE / 2;
+            }
             make_agent(x, z, type, tx, tz);
         }
         EntityHelper::merge_entity_arrays();
@@ -663,6 +672,53 @@ struct HandleAssertAgentWatchingCommand : System<testing::PendingE2ECommand> {
                 "assert_agent_watching failed: {} {} {} (actual: {})", count,
                 op, expected, count));
         } else {
+            cmd.consume();
+        }
+    }
+};
+
+// assert_agents_on_tiletype TYPE OP COUNT - count agents standing on a given
+// tile type
+struct HandleAssertAgentsOnTileTypeCommand
+    : System<testing::PendingE2ECommand> {
+    void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
+                       float) override {
+        if (cmd.is_consumed() || !cmd.is("assert_agents_on_tiletype")) return;
+        if (!cmd.has_args(3)) {
+            cmd.fail(
+                "assert_agents_on_tiletype requires TYPE OP COUNT arguments");
+            return;
+        }
+        TileType type = parse_tile_type(cmd.arg(0));
+        std::string op = cmd.arg(1);
+        int expected = cmd.arg_as<int>(2);
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) {
+            cmd.fail("assert_agents_on_tiletype: no grid");
+            return;
+        }
+
+        int count = 0;
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .gen();
+        for (Entity& agent : agents) {
+            auto& tf = agent.get<Transform>();
+            auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            if (grid->in_bounds(gx, gz) && grid->at(gx, gz).type == type) {
+                count++;
+            }
+        }
+
+        if (!compare_op(count, op, expected)) {
+            cmd.fail(fmt::format(
+                "assert_agents_on_tiletype {} failed: {} {} {} (actual: {})",
+                cmd.arg(0), count, op, expected, count));
+        } else {
+            log_info("[E2E] assert_agents_on_tiletype {}: {} {} {} PASSED",
+                     cmd.arg(0), count, op, expected);
             cmd.consume();
         }
     }
@@ -1564,6 +1620,8 @@ void register_e2e_systems(SystemManager& sm) {
         std::make_unique<HandleAssertAgentsAtFacilityCommand>());
     sm.register_update_system(
         std::make_unique<HandleAssertAgentWatchingCommand>());
+    sm.register_update_system(
+        std::make_unique<HandleAssertAgentsOnTileTypeCommand>());
     sm.register_update_system(std::make_unique<HandleSetTimeCommand>());
     sm.register_update_system(std::make_unique<HandleSetSpeedCommand>());
     sm.register_update_system(std::make_unique<HandleAssertPhaseCommand>());
