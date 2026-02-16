@@ -494,6 +494,35 @@ struct RenderUISystem : System<> {
     }
 };
 
+// Minimap RenderTexture management
+static raylib::RenderTexture2D g_minimap_texture = {0};
+static bool g_minimap_initialized = false;
+
+static constexpr int MINIMAP_SIZE = 150;
+static constexpr float MINIMAP_SCALE = 150.0f / 52.0f;
+
+static raylib::Color minimap_tile_color(TileType type) {
+    switch (type) {
+        case TileType::Grass:
+            return {152, 212, 168, 255};
+        case TileType::Path:
+            return {232, 221, 212, 255};
+        case TileType::Fence:
+            return {85, 85, 85, 255};
+        case TileType::Gate:
+            return {68, 136, 170, 255};
+        case TileType::Stage:
+            return {255, 217, 61, 255};
+        case TileType::StageFloor:
+            return {200, 230, 180, 255};
+        case TileType::Bathroom:
+            return {126, 207, 192, 255};
+        case TileType::Food:
+            return {244, 164, 164, 255};
+    }
+    return {152, 212, 168, 255};
+}
+
 // Timeline sidebar showing artist schedule
 struct RenderTimelineSidebarSystem : System<> {
     void once(float) const override {
@@ -564,6 +593,71 @@ struct RenderTimelineSidebarSystem : System<> {
                                {sidebar_x + 10, block_y + 20}, 11, 1.0f,
                                raylib::Color{180, 180, 200, 255});
         }
+    }
+};
+
+// Minimap rendering at bottom of sidebar
+struct RenderMinimapSystem : System<> {
+    void once(float) const override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        if (!g_minimap_initialized) {
+            g_minimap_texture =
+                raylib::LoadRenderTexture(MINIMAP_SIZE, MINIMAP_SIZE);
+            g_minimap_initialized = true;
+        }
+
+        // Render minimap to texture
+        raylib::BeginTextureMode(g_minimap_texture);
+        raylib::ClearBackground({152, 212, 168, 255});  // grass default
+
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                const auto& tile = grid->at(x, z);
+                if (tile.type == TileType::Grass) continue;
+                raylib::Color c = minimap_tile_color(tile.type);
+                float px = x * MINIMAP_SCALE;
+                float py = z * MINIMAP_SCALE;
+                float ps =
+                    MINIMAP_SCALE + 0.5f;  // slight overlap to avoid gaps
+                raylib::DrawRectangle((int) px, (int) py, (int) ps, (int) ps,
+                                      c);
+            }
+        }
+
+        // Camera viewport rectangle
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (cam) {
+            // Approximate visible area in grid coords
+            float zoom = cam->cam.camera.position.y;
+            float view_tiles = zoom * 1.5f;  // rough approximation
+            // Camera target is at position.x, position.z in world space
+            float cam_gx = cam->cam.camera.target.x / TILESIZE;
+            float cam_gz = cam->cam.camera.target.z / TILESIZE;
+            float mm_cx = cam_gx * MINIMAP_SCALE;
+            float mm_cy = cam_gz * MINIMAP_SCALE;
+            float mm_w = view_tiles * MINIMAP_SCALE;
+            float mm_h = view_tiles * MINIMAP_SCALE * 0.6f;
+            raylib::DrawRectangleLines((int) (mm_cx - mm_w / 2),
+                                       (int) (mm_cy - mm_h / 2), (int) mm_w,
+                                       (int) mm_h, raylib::WHITE);
+        }
+
+        raylib::EndTextureMode();
+
+        // Draw minimap texture in the sidebar (bottom right)
+        float sidebar_x = DEFAULT_SCREEN_WIDTH - 150.f;
+        float minimap_y = DEFAULT_SCREEN_HEIGHT - MINIMAP_SIZE;
+        raylib::DrawTextureRec(
+            g_minimap_texture.texture,
+            {0, 0, (float) MINIMAP_SIZE, -(float) MINIMAP_SIZE},
+            {sidebar_x, minimap_y}, raylib::WHITE);
+
+        // Border
+        raylib::DrawRectangleLines((int) sidebar_x, (int) minimap_y,
+                                   MINIMAP_SIZE, MINIMAP_SIZE,
+                                   raylib::Color{100, 100, 120, 255});
     }
 };
 
@@ -689,6 +783,7 @@ void register_render_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderUISystem>());
     sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
+    sm.register_render_system(std::make_unique<RenderMinimapSystem>());
     sm.register_render_system(std::make_unique<RenderDebugPanelSystem>());
     sm.register_render_system(std::make_unique<EndRenderSystem>());
 }
