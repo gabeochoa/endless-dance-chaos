@@ -1018,12 +1018,10 @@ struct StageWatchingSystem : System<Agent, Transform> {
             grid->at(gx, gz).type != TileType::StageFloor)
             return;
 
-        // Only start watching once at or very near the target (within 2 tiles).
-        // The tolerance handles cases where the exact target is unreachable
-        // (e.g., blocked by Stage building or occupied).
-        int tdx = std::abs(gx - agent.target_grid_x);
-        int tdz = std::abs(gz - agent.target_grid_z);
-        if (tdx + tdz > 2) return;
+        // Only start watching when the agent reaches their actual target tile.
+        // Previously a tolerance of 2 caused agents to freeze 1-2 tiles short,
+        // leaving their real target tiles empty and creating visible gap rows.
+        if (gx != agent.target_grid_x || gz != agent.target_grid_z) return;
 
         auto& rng = RandomEngine::get();
         e.addComponent<WatchingStage>();
