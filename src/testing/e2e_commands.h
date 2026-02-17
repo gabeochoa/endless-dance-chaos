@@ -628,8 +628,18 @@ static void cmd_set_agent_speed(testing::PendingE2ECommand& cmd) {
         cmd.fail("set_agent_speed: no GameState");
         return;
     }
-    gs->speed_multiplier = cmd.arg_as<float>(0);
-    log_info("[E2E] Agent speed multiplier set to {}", gs->speed_multiplier);
+    float mult = cmd.arg_as<float>(0);
+    gs->speed_multiplier = mult;
+
+    // Also speed up the game clock so spawning, needs, crush damage,
+    // artist timing, etc. all run faster — not just walking speed.
+    auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+    if (clock) {
+        clock->debug_time_mult = mult;
+    }
+
+    log_info("[E2E] Agent speed multiplier set to {} (game clock too)",
+             gs->speed_multiplier);
     cmd.consume();
 }
 

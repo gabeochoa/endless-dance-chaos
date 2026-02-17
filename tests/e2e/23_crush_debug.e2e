@@ -1,0 +1,41 @@
+# Debug test: reproduce crush deaths near empty tiles
+# Spawns a huge crowd directly on stage-adjacent tiles.
+# Check log output for CRUSH/FLEE FAIL/LETHAL NO FLEE diagnostics.
+
+reset_game
+set_spawn_enabled 0
+set_agent_speed 15
+wait_frames 5
+
+# Force a long artist so everyone watches
+force_artist CrushTest 200 180
+set_time 10:05
+wait_frames 5
+
+# Build paths from both sides
+draw_path_rect 1 25 29 28
+draw_path_rect 34 25 50 28
+
+# Spawn agents VERY close to stage to force crowding fast
+# Stage building is at (30-33, 25-28)
+# Spawn on adjacent StageFloor tiles
+spawn_agents 29 26 60 stage
+spawn_agents 34 26 60 stage
+spawn_agents 31 24 60 stage
+spawn_agents 31 29 60 stage
+wait_frames 5
+
+screenshot 23_crush_setup
+
+# Short waits — agents at 15x should settle quickly
+wait 3
+
+screenshot 23_crush_3s
+
+wait 3
+
+screenshot 23_crush_6s
+
+wait 3
+
+screenshot 23_crush_9s

@@ -522,7 +522,48 @@ static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
         }
     }
 
-    if (n == 0) return {cx, cz};
+    if (n == 0) {
+        // No strictly-less-crowded neighbor found.
+        // On a lethal tile, try a desperate flee to ANY walkable neighbor
+        // (even equally crowded) — moving is better than dying in place.
+        float density = cur_count / static_cast<float>(MAX_AGENTS_PER_TILE);
+        if (density >= DENSITY_CRITICAL) {
+            for (auto [dx, dz] : dirs) {
+                int nx = cx + dx;
+                int nz = cz + dz;
+                if (!grid.in_bounds(nx, nz)) continue;
+                if (tile_blocks_movement(grid.at(nx, nz).type)) continue;
+                candidates[n++] = {nx, nz, grid.at(nx, nz).agent_count};
+            }
+            if (n > 0) {
+                // Pick the least crowded among all walkable neighbors
+                int best = 0;
+                for (int i = 1; i < n; i++) {
+                    if (candidates[i].count < candidates[best].count) best = i;
+                }
+                log_warn("DESPERATE FLEE ({},{}) count={} -> ({},{}) count={}",
+                         cx, cz, cur_count, candidates[best].x,
+                         candidates[best].z, candidates[best].count);
+                return {candidates[best].x, candidates[best].z};
+            }
+            // Truly trapped — all neighbors blocked
+            log_warn("FLEE TRAPPED at ({},{}) count={} type={}:", cx, cz,
+                     cur_count, static_cast<int>(grid.at(cx, cz).type));
+            for (auto [ddx, ddz] : dirs) {
+                int nx2 = cx + ddx;
+                int nz2 = cz + ddz;
+                if (!grid.in_bounds(nx2, nz2)) {
+                    log_warn("  ({},{}) OOB", nx2, nz2);
+                } else {
+                    auto& t2 = grid.at(nx2, nz2);
+                    log_warn("  ({},{}) type={} blocks={} count={}", nx2, nz2,
+                             static_cast<int>(t2.type),
+                             tile_blocks_movement(t2.type), t2.agent_count);
+                }
+            }
+        }
+        return {cx, cz};
+    }
     if (n == 1) return {candidates[0].x, candidates[0].z};
 
     // Weight by how much emptier the neighbor is (higher weight = emptier)
@@ -571,22 +612,43 @@ struct AgentMovementSystem : System<Agent, Transform> {
 
         bool forcing = agent.is_forcing();
 
-        // Check if this tile is dangerously crowded — flee overrides everything
-        // UNLESS the agent is forcing through after being stuck.
+        // Check if this tile is dangerously crowded.
+        // Forcing agents skip flee at DANGEROUS density (they push through),
+        // but ALWAYS flee at CRITICAL density (lethal — would cause death).
         bool fleeing = false;
         int next_x = cur_gx, next_z = cur_gz;
-        if (!forcing && grid->in_bounds(cur_gx, cur_gz)) {
+        if (grid->in_bounds(cur_gx, cur_gz)) {
             float density = grid->at(cur_gx, cur_gz).agent_count /
                             static_cast<float>(MAX_AGENTS_PER_TILE);
-            if (density >= DENSITY_DANGEROUS) {
+            bool lethal = density >= DENSITY_CRITICAL;
+            bool dangerous = density >= DENSITY_DANGEROUS;
+
+            if (lethal || (dangerous && !forcing)) {
+                bool need_new_target = true;
+
                 // Already committed to a flee direction and not there yet?
                 if (agent.flee_target_x >= 0 &&
                     (cur_gx != agent.flee_target_x ||
                      cur_gz != agent.flee_target_z)) {
-                    next_x = agent.flee_target_x;
-                    next_z = agent.flee_target_z;
-                    fleeing = true;
-                } else {
+                    // Validate the flee target is still safe enough
+                    bool target_ok = true;
+                    if (grid->in_bounds(agent.flee_target_x,
+                                        agent.flee_target_z)) {
+                        float td =
+                            grid->at(agent.flee_target_x, agent.flee_target_z)
+                                .agent_count /
+                            static_cast<float>(MAX_AGENTS_PER_TILE);
+                        if (td >= DENSITY_CRITICAL) target_ok = false;
+                    }
+                    if (target_ok) {
+                        next_x = agent.flee_target_x;
+                        next_z = agent.flee_target_z;
+                        fleeing = true;
+                        need_new_target = false;
+                    }
+                }
+
+                if (need_new_target) {
                     // Pick a new flee direction
                     auto [fx, fz] = pick_flee_tile(cur_gx, cur_gz, *grid);
                     if (fx != cur_gx || fz != cur_gz) {
@@ -595,6 +657,23 @@ struct AgentMovementSystem : System<Agent, Transform> {
                         agent.flee_target_x = fx;
                         agent.flee_target_z = fz;
                         fleeing = true;
+                    } else if (lethal) {
+                        // Flee completely failed — no walkable neighbor at all.
+                        // Remove WatchingStage so agent can at least attempt
+                        // normal pathfinding to escape.
+                        if (!e.is_missing<WatchingStage>()) {
+                            e.removeComponent<WatchingStage>();
+                        }
+                        // Re-target to a less crowded stage spot
+                        auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
+                        agent.target_grid_x = rsx;
+                        agent.target_grid_z = rsz;
+                        log_warn(
+                            "LETHAL NO FLEE at ({},{}) count={} "
+                            "forcing={} stuck={:.1f}s -> retarget ({},{})",
+                            cur_gx, cur_gz,
+                            grid->at(cur_gx, cur_gz).agent_count, forcing,
+                            agent.stuck_timer, rsx, rsz);
                     }
                 }
                 if (fleeing) {
@@ -605,15 +684,11 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     if (gs) agent.speed *= gs->speed_multiplier;
                     if (event_flags::rain_active) agent.speed *= 0.5f;
                 }
-            } else {
+            } else if (!dangerous) {
                 // Safe — clear any flee commitment
                 agent.flee_target_x = -1;
                 agent.flee_target_z = -1;
             }
-        } else if (forcing) {
-            // Forcing — clear flee so we resume normal pathing toward target
-            agent.flee_target_x = -1;
-            agent.flee_target_z = -1;
         }
 
         if (!fleeing) {
@@ -633,11 +708,14 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     ? SPEED_PATH
                     : SPEED_GRASS;
 
-            // Apply density slowdown — but skip it when forcing through
+            // Apply density slowdown — skip when forcing through or on a
+            // lethal tile (agents need full speed to escape crush zones)
             if (!forcing && grid->in_bounds(cur_gx, cur_gz)) {
                 float density = grid->at(cur_gx, cur_gz).agent_count /
                                 static_cast<float>(MAX_AGENTS_PER_TILE);
-                agent.speed *= density_speed_modifier(density);
+                if (density < DENSITY_CRITICAL) {
+                    agent.speed *= density_speed_modifier(density);
+                }
             }
             if (gs) agent.speed *= gs->speed_multiplier;
             if (event_flags::rain_active) agent.speed *= 0.5f;
@@ -1214,7 +1292,9 @@ struct DecayPheromonesSystem : System<> {
 
 // Update per-tile agent density each frame
 struct UpdateTileDensitySystem : System<> {
-    void once(float) override {
+    float stage_log_timer = 0.f;
+
+    void once(float dt) override {
         if (skip_game_logic()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -1238,14 +1318,43 @@ struct UpdateTileDensitySystem : System<> {
                 grid->at(gx, gz).agent_count++;
             }
         }
+
+        // Periodic stage area summary: how many empty vs critical StageFloor
+        // tiles exist? Helps debug why agents die near empty space.
+        stage_log_timer -= dt;
+        if (stage_log_timer <= 0.f) {
+            stage_log_timer = 5.0f;
+            int empty_sf = 0, critical_sf = 0, total_sf = 0;
+            int total_sf_agents = 0;
+            for (int z = 0; z < MAP_SIZE; z++) {
+                for (int x = 0; x < MAP_SIZE; x++) {
+                    auto& t = grid->at(x, z);
+                    if (t.type != TileType::StageFloor) continue;
+                    total_sf++;
+                    total_sf_agents += t.agent_count;
+                    if (t.agent_count == 0) empty_sf++;
+                    float d =
+                        t.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
+                    if (d >= DENSITY_CRITICAL) critical_sf++;
+                }
+            }
+            if (critical_sf > 0) {
+                log_warn(
+                    "STAGE DENSITY: {}/{} StageFloor tiles empty, "
+                    "{} critical, {} total agents on stage",
+                    empty_sf, total_sf, critical_sf, total_sf_agents);
+            }
+        }
     }
 };
 
 // Apply crush damage to agents on critically dense tiles.
 // Iterates agents once (O(n)) instead of per-tile agent queries (O(tiles*n)).
 struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
-    void for_each_with(Entity& e, Agent&, Transform& tf, AgentHealth& health,
-                       float dt) override {
+    float log_cooldown = 0.f;
+
+    void for_each_with(Entity& e, Agent& agent, Transform& tf,
+                       AgentHealth& health, float dt) override {
         if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
 
@@ -1255,10 +1364,38 @@ struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
         auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
         if (!grid->in_bounds(gx, gz)) return;
 
-        float density = grid->at(gx, gz).agent_count /
-                        static_cast<float>(MAX_AGENTS_PER_TILE);
+        int count = grid->at(gx, gz).agent_count;
+        float density = count / static_cast<float>(MAX_AGENTS_PER_TILE);
         if (density >= DENSITY_CRITICAL) {
             health.hp -= CRUSH_DAMAGE_RATE * dt;
+
+            // Rate-limited diagnostic: log neighbor state when crush happens
+            log_cooldown -= dt;
+            if (log_cooldown <= 0.f) {
+                log_cooldown = 2.0f;
+                bool watching = !e.is_missing<WatchingStage>();
+                bool forcing_flag = agent.is_forcing();
+                int min_neighbor = MAX_AGENTS_PER_TILE;
+                bool has_empty_walkable = false;
+                constexpr int dirs[][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (auto [dx, dz] : dirs) {
+                    int nx = gx + dx;
+                    int nz = gz + dz;
+                    if (!grid->in_bounds(nx, nz)) continue;
+                    auto& t = grid->at(nx, nz);
+                    if (tile_blocks_movement(t.type)) continue;
+                    if (t.agent_count < min_neighbor)
+                        min_neighbor = t.agent_count;
+                    if (t.agent_count == 0) has_empty_walkable = true;
+                }
+                log_warn(
+                    "CRUSH at ({},{}) count={} hp={:.2f} "
+                    "watching={} forcing={} stuck={:.1f}s "
+                    "flee=({},{}) min_neighbor={} has_empty={}",
+                    gx, gz, count, health.hp, watching, forcing_flag,
+                    agent.stuck_timer, agent.flee_target_x, agent.flee_target_z,
+                    min_neighbor, has_empty_walkable);
+            }
         }
     }
 };
@@ -1326,6 +1463,28 @@ struct AgentDeathSystem : System<> {
                 get_audio().play_death();
                 log_info("Agent died at ({}, {}), deaths: {}/{}", gx, gz,
                          gs->death_count, gs->max_deaths);
+                // Log neighbor state at death for debugging
+                if (grid && grid->in_bounds(gx, gz)) {
+                    int cnt = grid->at(gx, gz).agent_count;
+                    constexpr int dirs[][2] = {
+                        {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                    for (auto [ddx, ddz] : dirs) {
+                        int nx = gx + ddx;
+                        int nz = gz + ddz;
+                        if (!grid->in_bounds(nx, nz)) continue;
+                        auto& t = grid->at(nx, nz);
+                        log_info(
+                            "  neighbor ({},{}) type={} count={}{}", nx, nz,
+                            static_cast<int>(t.type), t.agent_count,
+                            tile_blocks_movement(t.type) ? " BLOCKED" : "");
+                    }
+                    auto& ag = e.get<Agent>();
+                    log_info(
+                        "  self: count={} watching={} forcing={} "
+                        "stuck={:.1f}s flee=({},{})",
+                        cnt, !e.is_missing<WatchingStage>(), ag.is_forcing(),
+                        ag.stuck_timer, ag.flee_target_x, ag.flee_target_z);
+                }
             }
 
             // Track for particle merge
