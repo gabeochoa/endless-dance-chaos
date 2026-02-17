@@ -335,6 +335,16 @@ struct Agent : afterhours::BaseComponent {
     // Visual variety: color palette index (0-7)
     uint8_t color_idx = 0;
 
+    // Stuck detection: tracks time without progress toward target.
+    // When stuck_timer exceeds STUCK_FORCE_THRESHOLD, the agent forces
+    // through crowded tiles (ignoring slowdown and flee) unless lethal.
+    float stuck_timer = 0.f;
+    int last_grid_x = -1;
+    int last_grid_z = -1;
+    static constexpr float STUCK_FORCE_THRESHOLD = 3.0f;  // seconds
+
+    bool is_forcing() const { return stuck_timer >= STUCK_FORCE_THRESHOLD; }
+
     Agent() = default;
     Agent(FacilityType w) : want(w) {}
     Agent(FacilityType w, int tx, int tz)

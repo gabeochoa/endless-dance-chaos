@@ -409,6 +409,16 @@ static std::pair<int, int> pick_next_tile(
     static constexpr int dx[] = {1, -1, 0, 0};
     static constexpr int dz[] = {0, 0, 1, -1};
 
+    // Shuffle direction order to eliminate directional bias.
+    // Without this, agents always prefer right > left > down > up when
+    // scores are tied, causing them to cluster on one side of the stage.
+    auto& rng = RandomEngine::get();
+    int order[4] = {0, 1, 2, 3};
+    for (int k = 3; k > 0; k--) {
+        int j = rng.get_int(0, k);
+        std::swap(order[k], order[j]);
+    }
+
     int best_x = cur_x;
     int best_z = cur_z;
     float cur_dist =
@@ -427,7 +437,8 @@ static std::pair<int, int> pick_next_tile(
     std::array<Neighbor, 4> walkable;
     int walkable_count = 0;
 
-    for (int i = 0; i < 4; i++) {
+    for (int idx = 0; idx < 4; idx++) {
+        int i = order[idx];
         int nx = cur_x + dx[i];
         int nz = cur_z + dz[i];
         if (!grid.in_bounds(nx, nz)) continue;
@@ -459,8 +470,7 @@ static std::pair<int, int> pick_next_tile(
     // to route around obstacles. Prefer tiles that don't increase distance
     // much, and randomize to avoid oscillation.
     if (best_x == cur_x && best_z == cur_z && walkable_count > 0) {
-        // Shuffle walkable neighbors
-        auto& rng = RandomEngine::get();
+        // Shuffle walkable neighbors (rng already declared above)
         for (int k = walkable_count - 1; k > 0; k--) {
             int j = rng.get_int(0, k);
             std::swap(walkable[k], walkable[j]);
@@ -548,10 +558,24 @@ struct AgentMovementSystem : System<Agent, Transform> {
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
 
+        // --- Stuck detection ---
+        // Track whether the agent is making progress (changing grid tiles).
+        // If stuck on the same tile for too long, they'll force through.
+        if (cur_gx != agent.last_grid_x || cur_gz != agent.last_grid_z) {
+            agent.stuck_timer = 0.f;
+            agent.last_grid_x = cur_gx;
+            agent.last_grid_z = cur_gz;
+        } else {
+            agent.stuck_timer += dt;
+        }
+
+        bool forcing = agent.is_forcing();
+
         // Check if this tile is dangerously crowded — flee overrides everything
+        // UNLESS the agent is forcing through after being stuck.
         bool fleeing = false;
         int next_x = cur_gx, next_z = cur_gz;
-        if (grid->in_bounds(cur_gx, cur_gz)) {
+        if (!forcing && grid->in_bounds(cur_gx, cur_gz)) {
             float density = grid->at(cur_gx, cur_gz).agent_count /
                             static_cast<float>(MAX_AGENTS_PER_TILE);
             if (density >= DENSITY_DANGEROUS) {
@@ -586,6 +610,10 @@ struct AgentMovementSystem : System<Agent, Transform> {
                 agent.flee_target_x = -1;
                 agent.flee_target_z = -1;
             }
+        } else if (forcing) {
+            // Forcing — clear flee so we resume normal pathing toward target
+            agent.flee_target_x = -1;
+            agent.flee_target_z = -1;
         }
 
         if (!fleeing) {
@@ -605,7 +633,8 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     ? SPEED_PATH
                     : SPEED_GRASS;
 
-            if (grid->in_bounds(cur_gx, cur_gz)) {
+            // Apply density slowdown — but skip it when forcing through
+            if (!forcing && grid->in_bounds(cur_gx, cur_gz)) {
                 float density = grid->at(cur_gx, cur_gz).agent_count /
                                 static_cast<float>(MAX_AGENTS_PER_TILE);
                 agent.speed *= density_speed_modifier(density);
@@ -616,6 +645,17 @@ struct AgentMovementSystem : System<Agent, Transform> {
             auto [px, pz] =
                 pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
                                agent.target_grid_z, *grid, agent.want);
+
+            // When forcing, don't walk into a lethal tile (critical density)
+            if (forcing && grid->in_bounds(px, pz)) {
+                float next_density = grid->at(px, pz).agent_count /
+                                     static_cast<float>(MAX_AGENTS_PER_TILE);
+                if (next_density >= DENSITY_CRITICAL) {
+                    // Too dangerous — stay put rather than die
+                    return;
+                }
+            }
+
             next_x = px;
             next_z = pz;
         }
@@ -635,18 +675,28 @@ struct AgentMovementSystem : System<Agent, Transform> {
     }
 };
 
-// Pick a spot on the stage floor as close to the stage as possible
-// The agent_count at which a tile is considered "orange" (crowded) on the
-// density overlay, and agents should look for a different spot.
-static constexpr int STAGE_CROWD_LIMIT =
-    static_cast<int>(DENSITY_WARNING * MAX_AGENTS_PER_TILE);  // 20
+// Distance from tile (x,z) to the nearest edge of the stage building.
+// All tiles immediately adjacent score ~1 regardless of side, preventing
+// the center-distance bias that makes agents cluster on one side.
+static float dist_to_stage_edge(int x, int z) {
+    float dx =
+        std::max(0.f, std::max((float) (STAGE_X - x),
+                               (float) (x - (STAGE_X + STAGE_SIZE - 1))));
+    float dz =
+        std::max(0.f, std::max((float) (STAGE_Z - z),
+                               (float) (z - (STAGE_Z + STAGE_SIZE - 1))));
+    return std::sqrt(dx * dx + dz * dz);
+}
 
-// Pick the closest non-crowded StageFloor tile to the agent at (from_x,from_z).
-// "Crowded" = agent_count >= STAGE_CROWD_LIMIT (the orange threshold).
-// To prevent all agents from the same position targeting the exact same tile,
-// we collect all non-crowded candidates within a small tolerance of the
-// absolute closest distance, then pick randomly among them.
-std::pair<int, int> best_stage_spot(int from_x, int from_z) {
+// Pick the best StageFloor tile scored by:
+//   1. Closest to the stage building EDGE (equal on all sides)
+//   2. Least crowded                      (fewer agents = better)
+// score = dist_to_edge + agent_count * CROWD_PENALTY
+// Each agent on a tile is worth 1 extra tile of distance, so a tile at
+// dist 1 with 3 agents scores the same as an empty tile at dist 4.
+// This fills inside-out: inner tiles fill first, then agents spill outward.
+// Among tiles with similar scores, pick randomly for even side coverage.
+std::pair<int, int> best_stage_spot(int /*from_x*/, int /*from_z*/) {
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     auto& rng = RandomEngine::get();
     float scx = STAGE_X + STAGE_SIZE / 2.0f;
@@ -657,55 +707,34 @@ std::pair<int, int> best_stage_spot(int from_x, int from_z) {
         const auto& spots = grid->stage_floor_spots;
 
         if (!spots.empty()) {
-            constexpr int DIST_TOLERANCE = 3;  // tiles of slack
+            constexpr float CROWD_PENALTY = 2.0f;
+            constexpr float SCORE_BAND = 2.0f;
 
-            // First pass: find the minimum distance among non-crowded tiles
-            int min_dist = INT_MAX;
+            // First pass: find the best score
+            float best_score = 1e9f;
             for (const auto& s : spots) {
-                if (grid->at(s.x, s.z).agent_count < STAGE_CROWD_LIMIT) {
-                    int dist = std::abs(s.x - from_x) + std::abs(s.z - from_z);
-                    if (dist < min_dist) min_dist = dist;
-                }
+                float score = dist_to_stage_edge(s.x, s.z) +
+                              grid->at(s.x, s.z).agent_count * CROWD_PENALTY;
+                if (score < best_score) best_score = score;
             }
 
-            // Second pass: collect candidates within tolerance of best
-            if (min_dist < INT_MAX) {
-                struct Candidate {
-                    int x, z;
-                };
-                std::vector<Candidate> near;
-                near.reserve(16);
-                int limit = min_dist + DIST_TOLERANCE;
-                for (const auto& s : spots) {
-                    if (grid->at(s.x, s.z).agent_count >= STAGE_CROWD_LIMIT)
-                        continue;
-                    int dist = std::abs(s.x - from_x) + std::abs(s.z - from_z);
-                    if (dist <= limit) near.push_back({s.x, s.z});
-                }
-                if (!near.empty()) {
-                    auto& pick = near[rng.get_int(0, (int) near.size() - 1)];
-                    return {pick.x, pick.z};
-                }
+            // Second pass: collect tiles within SCORE_BAND of the best
+            struct Candidate {
+                int x, z;
+            };
+            std::vector<Candidate> band;
+            band.reserve(24);
+            float limit = best_score + SCORE_BAND;
+            for (const auto& s : spots) {
+                float score = dist_to_stage_edge(s.x, s.z) +
+                              grid->at(s.x, s.z).agent_count * CROWD_PENALTY;
+                if (score <= limit) band.push_back({s.x, s.z});
             }
 
-            // All tiles crowded — pick the least-crowded closest to agent
-            int fallback_x = spots[0].x, fallback_z = spots[0].z;
-            int fallback_crowd = grid->at(spots[0].x, spots[0].z).agent_count;
-            int fallback_dist =
-                std::abs(spots[0].x - from_x) + std::abs(spots[0].z - from_z);
-            for (size_t i = 1; i < spots.size(); i++) {
-                int crowd = grid->at(spots[i].x, spots[i].z).agent_count;
-                int dist = std::abs(spots[i].x - from_x) +
-                           std::abs(spots[i].z - from_z);
-                if (crowd < fallback_crowd ||
-                    (crowd == fallback_crowd && dist < fallback_dist)) {
-                    fallback_crowd = crowd;
-                    fallback_dist = dist;
-                    fallback_x = spots[i].x;
-                    fallback_z = spots[i].z;
-                }
+            if (!band.empty()) {
+                auto& pick = band[rng.get_int(0, (int) band.size() - 1)];
+                return {pick.x, pick.z};
             }
-            return {fallback_x, fallback_z};
         }
     }
 
@@ -834,15 +863,16 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
 
         // Already heading to the right facility with a valid target?
         if (agent.want == desired && agent.target_grid_x >= 0) {
-            // For Stage targets, re-evaluate if the target tile got crowded
-            // (orange on the density overlay). This makes agents spread out
-            // to emptier tiles instead of piling onto one spot.
+            // For Stage targets, re-evaluate when the target tile has enough
+            // agents that a better-scored tile likely exists. With the
+            // scoring (dist + crowd), even a few agents shift the balance.
             if (desired == FacilityType::Stage &&
                 grid->in_bounds(agent.target_grid_x, agent.target_grid_z)) {
+                constexpr int RETARGET_THRESHOLD = 3;
                 int target_crowd =
                     grid->at(agent.target_grid_x, agent.target_grid_z)
                         .agent_count;
-                if (target_crowd >= STAGE_CROWD_LIMIT) {
+                if (target_crowd >= RETARGET_THRESHOLD) {
                     auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
                     agent.target_grid_x = rsx;
                     agent.target_grid_z = rsz;
