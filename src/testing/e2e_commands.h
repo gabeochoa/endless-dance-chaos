@@ -62,6 +62,9 @@ inline FacilityType parse_facility_type(const std::string& s) {
     if (lower == "bathroom") return FacilityType::Bathroom;
     if (lower == "food") return FacilityType::Food;
     if (lower == "stage") return FacilityType::Stage;
+    if (lower == "exit") return FacilityType::Exit;
+    if (lower == "medtent" || lower == "med_tent" || lower == "med")
+        return FacilityType::MedTent;
     return FacilityType::Bathroom;
 }
 
@@ -1101,6 +1104,25 @@ static void cmd_demolish_at(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+static void cmd_set_all_agent_hp(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_all_agent_hp requires HP_VALUE");
+        return;
+    }
+    float hp = cmd.arg_as<float>(0);
+    auto agents = EntityQuery()
+                      .whereHasComponent<Agent>()
+                      .whereHasComponent<AgentHealth>()
+                      .gen();
+    int count = 0;
+    for (Entity& a : agents) {
+        a.get<AgentHealth>().hp = hp;
+        count++;
+    }
+    log_info("[E2E] set_all_agent_hp: set {} agents to hp={:.2f}", count, hp);
+    cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1158,6 +1180,7 @@ static void init_e2e_registry() {
     r.add("assert_tool", cmd_assert_tool);
     r.add("place_building", cmd_place_building);
     r.add("demolish_at", cmd_demolish_at);
+    r.add("set_all_agent_hp", cmd_set_all_agent_hp);
 }
 
 void register_e2e_systems(SystemManager& sm) {

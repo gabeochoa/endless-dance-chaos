@@ -1,0 +1,62 @@
+# Test that agents can walk onto facility tiles and get serviced.
+# Covers bathroom, food, and medtent facilities.
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# --- Bathroom ---
+# Build path leading to the pre-placed bathroom at (20,20)
+draw_path_rect 18 20 21 21
+wait_frames 2
+
+# Spawn agent next to bathroom, force need
+spawn_agent 18 20 stage
+wait_frames 2
+force_need bathroom
+
+# Short wait: just enough to arrive and begin service (2 tiles at 2.5 t/s)
+wait 2
+# Agent should be near or inside the bathroom
+assert_agent_near 20 20 5
+# Agent survived service
+assert_agent_count >= 1
+assert_death_count eq 0
+screenshot 25_bathroom_entry
+
+# --- Food ---
+clear_agents
+wait_frames 2
+
+# Build path to the pre-placed food at (20,30)
+draw_path_rect 18 30 21 31
+wait_frames 2
+
+spawn_agent 18 30 stage
+wait_frames 2
+force_need food
+wait 2
+
+assert_agent_near 20 30 5
+assert_agent_count >= 1
+assert_death_count eq 0
+screenshot 25_food_entry
+
+# --- MedTent ---
+clear_agents
+wait_frames 2
+
+# Build path to the pre-placed medtent at (15,25)
+draw_path_rect 14 25 16 26
+wait_frames 2
+
+# Spawn agent close to medtent, damage it to trigger medical need (hp < 0.4)
+spawn_agent 14 25 stage
+wait_frames 2
+set_all_agent_hp 0.3
+wait 2
+
+assert_agent_near 15 25 5
+assert_agent_count >= 1
+assert_death_count eq 0
+screenshot 25_medtent_entry

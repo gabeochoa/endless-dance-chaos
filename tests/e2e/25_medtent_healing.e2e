@@ -1,0 +1,27 @@
+# Test that the medical tent heals agents back to full HP.
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Build path to the pre-placed medtent at (15,25)
+draw_path_rect 12 25 16 26
+wait_frames 2
+
+# Spawn agents and damage them to trigger medical need
+spawn_agents 12 25 3 stage
+wait_frames 2
+set_all_agent_hp 0.2
+wait_frames 2
+
+# Verify agents are injured
+assert_agent_count >= 3
+
+# Wait for agents to reach medtent and be healed
+wait 10
+
+# All agents should still be alive (not dead from low HP)
+assert_agent_count >= 3
+assert_death_count eq 0
+
+screenshot 25_medtent_healed

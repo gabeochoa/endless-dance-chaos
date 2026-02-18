@@ -345,7 +345,9 @@ struct AgentMovementSystem : System<Agent, Transform> {
             }
             agent.speed =
                 (cur_type == TileType::Path || cur_type == TileType::Gate ||
-                 cur_type == TileType::StageFloor)
+                 cur_type == TileType::StageFloor ||
+                 cur_type == TileType::Bathroom || cur_type == TileType::Food ||
+                 cur_type == TileType::MedTent)
                     ? SPEED_PATH
                     : SPEED_GRASS;
 

@@ -41,7 +41,8 @@ inline void spawn_toast(const std::string& text, float lifetime = 3.0f) {
     get_audio().play_toast();
 }
 
-// Lookup table: true if tile blocks agent movement (fences + buildings).
+// Lookup table: true if tile blocks agent movement (fences + stage structure).
+// Facilities (Bathroom, Food, MedTent) are walkable so agents can enter them.
 // Indexed by TileType enum: Grass=0,Path=1,Fence=2,Gate=3,Stage=4,
 //   StageFloor=5,Bathroom=6,Food=7,MedTent=8
 inline constexpr bool TILE_BLOCKS[] = {
@@ -51,9 +52,9 @@ inline constexpr bool TILE_BLOCKS[] = {
     false,  // Gate
     true,   // Stage
     false,  // StageFloor
-    true,   // Bathroom
-    true,   // Food
-    true,   // MedTent
+    false,  // Bathroom
+    false,  // Food
+    false,  // MedTent
 };
 
 inline bool tile_blocks_movement(TileType type) {

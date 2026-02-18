@@ -1,0 +1,46 @@
+# Test that agents on MedTent tiles do NOT take crush damage.
+# Compare with 07_crush_damage.e2e which proves crush works on normal tiles.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Place a 2x2 medtent at (25,25) and fence around it so agents stay put
+place_building medtent 25 25
+set_tile 24 24 fence
+set_tile 25 24 fence
+set_tile 26 24 fence
+set_tile 27 24 fence
+set_tile 24 25 fence
+set_tile 27 25 fence
+set_tile 24 26 fence
+set_tile 27 26 fence
+set_tile 24 27 fence
+set_tile 25 27 fence
+set_tile 26 27 fence
+set_tile 27 27 fence
+wait_frames 2
+
+# Confirm medtent tiles are placed
+assert_tile_type 25 25 medtent
+assert_tile_type 26 25 medtent
+assert_tile_type 25 26 medtent
+assert_tile_type 26 26 medtent
+
+# Spawn 40 agents on the medtent tile (critical density)
+spawn_agents 25 25 40 stage
+wait_frames 2
+
+# Verify no deaths before waiting
+assert_death_count eq 0
+screenshot 25_medtent_before
+
+# Wait long enough that crush damage would kill on normal tiles
+# (1 HP / 0.2 per sec = 5 sec to kill, we wait 8)
+wait 8
+
+# No deaths should have occurred on medtent tiles
+assert_death_count eq 0
+screenshot 25_medtent_after
+
+# Sanity: agents should still be alive
+assert_agent_count >= 1

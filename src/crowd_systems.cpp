@@ -237,6 +237,8 @@ struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
         auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
         if (!grid->in_bounds(gx, gz)) return;
 
+        if (grid->at(gx, gz).type == TileType::MedTent) return;
+
         int count = grid->at(gx, gz).agent_count;
         float density = count / static_cast<float>(MAX_AGENTS_PER_TILE);
         if (density >= DENSITY_CRITICAL) {
