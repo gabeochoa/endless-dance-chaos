@@ -28,3 +28,8 @@ build-analysis.txt
 # MCP testing
 screenshot.png
 
+# Runtime data
+saves/
+screenshots/
+tests/e2e/screenshots/
+

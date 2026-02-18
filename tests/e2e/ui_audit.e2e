@@ -1,0 +1,40 @@
+# UI audit screenshots
+reset_game
+wait_frames 10
+
+# Default view with empty grid
+screenshot audit_01_default
+
+# Spawn some agents and wait for them to spread
+set_spawn_enabled 1
+set_agent_speed 3
+wait 5
+screenshot audit_02_agents_moving
+
+# Force an artist to get stage glow
+force_artist AuditAct 80 60 10 0
+set_time 9 50
+wait_frames 10
+screenshot audit_03_announcing
+
+# Jump to performance
+set_time 10 5
+wait_frames 10
+screenshot audit_04_performing
+
+# Open density overlay
+toggle_overlay
+wait_frames 5
+screenshot audit_05_density_overlay
+toggle_overlay
+wait_frames 2
+
+# Build some paths
+draw_path_rect 5 24 28 28
+wait_frames 5
+screenshot audit_06_paths_built
+
+# Game over state
+trigger_game_over
+wait_frames 10
+screenshot audit_07_game_over
