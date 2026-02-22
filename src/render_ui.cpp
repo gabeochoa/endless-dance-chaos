@@ -358,21 +358,70 @@ struct RenderUISystem : System<> {
                 auto tm = measure_text(toast.text, 20);
                 float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
 
-                raylib::Color bg = toast.is_hint
-                                       ? raylib::Color{25, 50, 100, a}
-                                       : raylib::Color{30, 120, 60, a};
                 raylib::DrawRectangle((int) (tx - 8), (int) (toast_y - 4),
-                                      (int) (tm.x + 16), (int) (tm.y + 8), bg);
-                if (toast.is_hint) {
-                    raylib::DrawRectangle((int) (tx - 8), (int) (toast_y - 4),
-                                          3, (int) (tm.y + 8),
-                                          raylib::Color{80, 160, 255, a});
-                }
+                                      (int) (tm.x + 16), (int) (tm.y + 8),
+                                      raylib::Color{30, 120, 60, a});
                 raylib::DrawTextEx(get_font(), toast.text.c_str(),
                                    {tx, toast_y}, 20, FONT_SPACING,
                                    raylib::Color{255, 255, 255, a});
                 vtr.register_text(toast.text);
                 toast_y += tm.y + 16;
+            }
+        }
+
+        // NUX banner (persistent hint with dismiss X)
+        {
+            auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+            for (Entity& ne : nuxes) {
+                auto& nux = ne.get<NuxHint>();
+                if (!nux.is_active) continue;
+
+                auto tm = measure_text(nux.text, 20);
+                float x_btn_size = 18.f;
+                float total_w = tm.x + 24 + x_btn_size + 8;
+                float bx = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
+                float by = 50.f;
+                float bh = tm.y + 12;
+
+                // Background with blue accent
+                raylib::DrawRectangle((int) bx, (int) by, (int) total_w,
+                                      (int) bh, raylib::Color{20, 40, 80, 230});
+                raylib::DrawRectangle((int) bx, (int) by, 3, (int) bh,
+                                      raylib::Color{80, 160, 255, 255});
+
+                // Text
+                draw_text(nux.text, bx + 12, by + 6, 20, raylib::WHITE);
+                vtr.register_text(nux.text);
+
+                // X dismiss button
+                float xbx = bx + total_w - x_btn_size - 6;
+                float xby = by + (bh - x_btn_size) / 2.f;
+
+                auto m = input::get_mouse_position();
+                bool hovering = m.x >= xbx && m.x <= xbx + x_btn_size &&
+                                m.y >= xby && m.y <= xby + x_btn_size;
+                raylib::Color xbg = hovering
+                                        ? raylib::Color{200, 60, 60, 255}
+                                        : raylib::Color{100, 100, 120, 200};
+                raylib::DrawRectangle((int) xbx, (int) xby, (int) x_btn_size,
+                                      (int) x_btn_size, xbg);
+
+                float cx = xbx + x_btn_size / 2.f;
+                float cy = xby + x_btn_size / 2.f;
+                float cs = 5.f;
+                raylib::DrawLine((int) (cx - cs), (int) (cy - cs),
+                                 (int) (cx + cs), (int) (cy + cs),
+                                 raylib::WHITE);
+                raylib::DrawLine((int) (cx - cs), (int) (cy + cs),
+                                 (int) (cx + cs), (int) (cy - cs),
+                                 raylib::WHITE);
+
+                if (hovering &&
+                    input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT)) {
+                    nux.was_dismissed = true;
+                }
+
+                break;
             }
         }
 

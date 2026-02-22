@@ -1,0 +1,81 @@
+# Test NUX hints trigger in order and auto-dismiss when action is completed
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# --- NUX 0: "Build paths" auto-dismiss when paths are placed ---
+assert_nux_active paths
+
+draw_path_rect 5 25 10 27
+wait_frames 10
+assert_nux_inactive
+
+# --- NUX 1: "Attendees arriving" (informational, manual dismiss) ---
+spawn_agents 0 26 3 stage
+wait_frames 10
+assert_nux_active arriving
+
+dismiss_nux
+wait_frames 5
+
+# --- NUX 2: "Needs a break" (informational, manual dismiss) ---
+force_need bathroom
+wait_frames 10
+assert_nux_active break
+
+dismiss_nux
+wait_frames 5
+
+# --- NUX 3: "Crushed" (informational, manual dismiss) ---
+# Use set_death_count to trigger without causing game over
+set_death_count 1
+wait_frames 10
+assert_nux_active crushed
+
+dismiss_nux
+wait_frames 5
+# Reset death count so game doesn't end
+set_death_count 0
+
+# --- NUX 4: "Density rising" auto-dismiss when overlay is toggled ---
+spawn_agents 15 25 25 stage
+wait_frames 10
+assert_nux_active density
+
+# Toggle overlay → should auto-dismiss
+toggle_overlay
+wait_frames 10
+assert_nux_inactive
+
+toggle_overlay
+wait_frames 2
+
+# --- NUX 5: "Night phase" (informational, manual dismiss) ---
+clear_agents
+wait_frames 5
+set_time 18 0
+wait_frames 10
+assert_nux_active Night
+
+dismiss_nux
+wait_frames 5
+
+# --- NUX 6: "Exodus" (informational, manual dismiss) ---
+set_time 0 30
+wait_frames 10
+assert_nux_active Exodus
+
+dismiss_nux
+wait_frames 5
+
+# --- NUX 7: "Slot unlocked" (informational, manual dismiss) ---
+set_max_attendees 100
+wait_frames 10
+assert_nux_active slot
+
+dismiss_nux
+wait_frames 5
+
+# All NUX hints should now be dismissed
+assert_nux_count eq 0
+wait_frames 1

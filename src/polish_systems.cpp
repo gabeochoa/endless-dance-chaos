@@ -1,4 +1,4 @@
-// Polish domain: contextual hints, bottleneck detection, death marker decay.
+// Polish domain: NUX hints, bottleneck detection, death marker decay.
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
@@ -8,125 +8,187 @@
 #include "systems.h"
 #include "update_helpers.h"
 
-// Fire contextual hints based on game state transitions
-struct HintCheckSystem : System<> {
+static bool any_path_placed() {
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid) return false;
+    for (int z = PLAY_MIN; z <= PLAY_MAX; z++)
+        for (int x = PLAY_MIN; x <= PLAY_MAX; x++)
+            if (grid->at(x, z).type == TileType::Path) return true;
+    return false;
+}
+
+static bool any_agent_has_need() {
+    auto agents = EntityQuery().whereHasComponent<AgentNeeds>().gen();
+    for (Entity& e : agents) {
+        auto& n = e.get<AgentNeeds>();
+        if (n.needs_bathroom || n.needs_food) return true;
+    }
+    return false;
+}
+
+static bool any_tile_at_density_warning() {
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid) return false;
+    int threshold = static_cast<int>(DENSITY_WARNING * MAX_AGENTS_PER_TILE);
+    for (auto& tile : grid->tiles)
+        if (tile.agent_count >= threshold) return true;
+    return false;
+}
+
+static void create_nuxes() {
+    int order = 0;
+
+    auto make_nux = [&](const char* text, std::function<bool()> trigger,
+                        std::function<bool()> complete) {
+        Entity& e = EntityHelper::createEntity();
+        e.addComponent<NuxHint>();
+        auto& nux = e.get<NuxHint>();
+        nux.text = text;
+        nux.order = order++;
+        nux.should_trigger = std::move(trigger);
+        nux.is_complete = std::move(complete);
+    };
+
+    // 1. Build paths (dismissed when player places a path)
+    make_nux(
+        "Build paths from the GATE to the STAGE so attendees can find the "
+        "music.",
+        []() { return !any_path_placed(); },
+        []() { return any_path_placed(); });
+
+    // 2. First agents (dismissed when agents exist for 5+ seconds)
+    make_nux(
+        "Attendees are arriving! They follow paths to reach facilities.",
+        []() {
+            return EntityQuery().whereHasComponent<Agent>().gen_count() > 0;
+        },
+        []() { return false; });
+
+    // 3. First need (dismissed when no agents currently have unmet needs,
+    //    i.e. they found their way to a facility)
+    make_nux(
+        "An attendee needs a break! Make sure paths connect to facilities.",
+        []() { return any_agent_has_need(); }, []() { return false; });
+
+    // 4. First death (informational)
+    make_nux(
+        "An attendee was crushed! Spread crowds with more paths and "
+        "facilities.",
+        []() {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            return gs && gs->death_count > 0;
+        },
+        []() { return false; });
+
+    // 5. Density warning (dismissed when player toggles overlay)
+    make_nux(
+        "Crowd density rising! Press TAB for the density overlay.",
+        []() { return any_tile_at_density_warning(); },
+        []() {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            return gs && gs->show_data_layer;
+        });
+
+    // 6. Night falls (informational)
+    make_nux(
+        "Night phase: bigger crowds are coming. Get ready!",
+        []() {
+            auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+            return clock && clock->get_phase() == GameClock::Phase::Night;
+        },
+        []() { return false; });
+
+    // 7. Exodus (informational)
+    make_nux(
+        "Exodus! Attendees are heading for the exits.",
+        []() {
+            auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+            return clock && clock->get_phase() == GameClock::Phase::Exodus;
+        },
+        []() { return false; });
+
+    // 8. Slot unlocked (dismissed when player places a new facility)
+    make_nux(
+        "New facility slot unlocked! Check your build bar.",
+        []() {
+            auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+            auto* fs = EntityHelper::get_singleton_cmp<FacilitySlots>();
+            if (!gs || !fs) return false;
+            return fs->get_slots_per_type(gs->max_attendees) > 1;
+        },
+        []() { return false; });
+
+    EntityHelper::merge_entity_arrays();
+}
+
+// Manage the NUX queue: one active at a time, sequential
+struct NuxSystem : System<> {
     void once(float dt) override {
         if (game_is_over()) return;
-        auto* hs = EntityHelper::get_singleton_cmp<HintState>();
-        if (!hs) return;
+        auto* nm = EntityHelper::get_singleton_cmp<NuxManager>();
+        if (!nm) return;
 
-        hs->game_elapsed += dt;
-
-        auto try_hint = [&](HintState::Hint id, const char* msg) {
-            if (hs->shown.test(id)) return;
-            hs->shown.set(id);
-            spawn_toast(msg, 6.0f, true);
-        };
-
-        // Game start: after 5 seconds, if no paths placed
-        if (!hs->shown.test(HintState::GameStart) && hs->game_elapsed >= 5.f) {
-            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-            if (grid) {
-                bool has_path = false;
-                for (int z = PLAY_MIN; z <= PLAY_MAX && !has_path; z++)
-                    for (int x = PLAY_MIN; x <= PLAY_MAX && !has_path; x++)
-                        if (grid->at(x, z).type == TileType::Path)
-                            has_path = true;
-                if (!has_path)
-                    try_hint(HintState::GameStart,
-                             "Build paths from the GATE to the STAGE so "
-                             "attendees can find the music.");
-            }
+        if (!nm->initialized) {
+            create_nuxes();
+            nm->initialized = true;
         }
 
-        // First agents
-        if (!hs->shown.test(HintState::FirstAgents)) {
-            if (EntityQuery().whereHasComponent<Agent>().gen_count() > 0)
-                try_hint(HintState::FirstAgents,
-                         "Attendees are arriving! They follow paths to "
-                         "reach facilities.");
-        }
-
-        // First need
-        if (!hs->shown.test(HintState::FirstNeed)) {
-            auto agents = EntityQuery().whereHasComponent<AgentNeeds>().gen();
-            for (Entity& e : agents) {
-                auto& n = e.get<AgentNeeds>();
-                if (n.needs_bathroom || n.needs_food) {
-                    try_hint(HintState::FirstNeed,
-                             "An attendee needs a break! Make sure paths "
-                             "connect to facilities.");
+        // Find the currently active NUX
+        Entity* active = nullptr;
+        {
+            auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+            for (Entity& e : nuxes) {
+                auto& nux = e.get<NuxHint>();
+                if (nux.is_active) {
+                    active = &e;
                     break;
                 }
             }
         }
 
-        // First death
-        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (gs && !hs->shown.test(HintState::FirstDeath)) {
-            if (gs->death_count > 0 && hs->prev_death_count == 0)
-                try_hint(HintState::FirstDeath,
-                         "An attendee was crushed! Spread crowds with "
-                         "more paths and facilities.");
-        }
-        if (gs) hs->prev_death_count = gs->death_count;
+        // Process the active NUX
+        if (active) {
+            auto& nux = active->get<NuxHint>();
+            nux.time_shown += dt;
 
-        // First density warning
-        if (!hs->shown.test(HintState::FirstDensity)) {
-            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-            if (grid) {
-                int threshold =
-                    static_cast<int>(DENSITY_WARNING * MAX_AGENTS_PER_TILE);
-                for (auto& tile : grid->tiles) {
-                    if (tile.agent_count >= threshold) {
-                        try_hint(HintState::FirstDensity,
-                                 "Crowd density rising! Press TAB for "
-                                 "the density overlay.");
-                        break;
-                    }
+            if (nux.was_dismissed || (nux.is_complete && nux.is_complete())) {
+                nux.is_active = false;
+                nux.was_dismissed = true;
+                active = nullptr;
+            }
+        }
+
+        // If nothing active, find the next eligible NUX (lowest order first)
+        if (!active) {
+            auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+            Entity* best = nullptr;
+            int best_order = 99999;
+            for (Entity& e : nuxes) {
+                auto& nux = e.get<NuxHint>();
+                if (nux.is_active || nux.was_dismissed) continue;
+                if (nux.order < best_order && nux.should_trigger &&
+                    nux.should_trigger()) {
+                    best = &e;
+                    best_order = nux.order;
                 }
             }
-        }
-
-        // Night falls / Exodus
-        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
-        if (clock) {
-            auto phase = clock->get_phase();
-            if (phase != hs->prev_phase) {
-                if (phase == GameClock::Phase::Night)
-                    try_hint(HintState::NightFalls,
-                             "Night phase: bigger crowds are coming. "
-                             "Get ready!");
-                if (phase == GameClock::Phase::Exodus)
-                    try_hint(HintState::FirstExodus,
-                             "Exodus! Attendees are heading for the exits.");
+            if (best) {
+                best->get<NuxHint>().is_active = true;
+                best->get<NuxHint>().time_shown = 0.f;
             }
-            hs->prev_phase = phase;
-        }
-
-        // Slot unlocked
-        auto* fs = EntityHelper::get_singleton_cmp<FacilitySlots>();
-        if (fs && gs) {
-            int cur = fs->get_slots_per_type(gs->max_attendees);
-            if (hs->prev_slots_per_type > 0 && cur > hs->prev_slots_per_type)
-                try_hint(HintState::SlotUnlocked,
-                         "New facility slot unlocked! Check your build bar.");
-            hs->prev_slots_per_type = cur;
         }
     }
 };
 
 // Detect overwhelmed facilities and warn the player
 struct BottleneckCheckSystem : System<> {
-    float check_timer = 0.f;
-
     void once(float dt) override {
         if (skip_game_logic()) return;
-        auto* hs = EntityHelper::get_singleton_cmp<HintState>();
+        auto* nm = EntityHelper::get_singleton_cmp<NuxManager>();
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         auto* fs = EntityHelper::get_singleton_cmp<FacilitySlots>();
-        if (!hs || !grid || !gs || !fs) return;
+        if (!nm || !grid || !gs || !fs) return;
 
         grid->ensure_caches();
 
@@ -157,12 +219,12 @@ struct BottleneckCheckSystem : System<> {
                 }
             };
 
-        check_facility(grid->bathroom_positions, hs->bathroom_overload_timer,
-                       hs->bathroom_warned, FacilityType::Bathroom, "Bathroom");
-        check_facility(grid->food_positions, hs->food_overload_timer,
-                       hs->food_warned, FacilityType::Food, "Food stall");
-        check_facility(grid->medtent_positions, hs->medtent_overload_timer,
-                       hs->medtent_warned, FacilityType::MedTent, "Med tent");
+        check_facility(grid->bathroom_positions, nm->bathroom_overload_timer,
+                       nm->bathroom_warned, FacilityType::Bathroom, "Bathroom");
+        check_facility(grid->food_positions, nm->food_overload_timer,
+                       nm->food_warned, FacilityType::Food, "Food stall");
+        check_facility(grid->medtent_positions, nm->medtent_overload_timer,
+                       nm->medtent_warned, FacilityType::MedTent, "Med tent");
     }
 };
 
@@ -176,7 +238,7 @@ struct UpdateDeathMarkersSystem : System<DeathMarker> {
 };
 
 void register_polish_systems(SystemManager& sm) {
-    sm.register_update_system(std::make_unique<HintCheckSystem>());
+    sm.register_update_system(std::make_unique<NuxSystem>());
     sm.register_update_system(std::make_unique<BottleneckCheckSystem>());
     sm.register_update_system(std::make_unique<UpdateDeathMarkersSystem>());
 }

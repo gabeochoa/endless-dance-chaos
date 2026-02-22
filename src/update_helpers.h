@@ -32,14 +32,12 @@ inline bool game_is_paused() {
 
 inline bool skip_game_logic() { return game_is_over() || game_is_paused(); }
 
-inline void spawn_toast(const std::string& text, float lifetime = 3.0f,
-                        bool is_hint = false) {
+inline void spawn_toast(const std::string& text, float lifetime = 3.0f) {
     Entity& te = EntityHelper::createEntity();
     te.addComponent<ToastMessage>();
     auto& toast = te.get<ToastMessage>();
     toast.text = text;
     toast.lifetime = lifetime;
-    toast.is_hint = is_hint;
     EntityHelper::merge_entity_arrays();
     get_audio().play_toast();
 }

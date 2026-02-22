@@ -692,6 +692,19 @@ static void cmd_get_death_count(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+static void cmd_set_death_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_death_count requires VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) {
+        gs->death_count = cmd.arg_as<int>(0);
+        log_info("[E2E] set_death_count: {}", gs->death_count);
+    }
+    cmd.consume();
+}
+
 static void cmd_assert_death_count(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(2)) {
         cmd.fail("assert_death_count requires OP VALUE");
@@ -1223,6 +1236,85 @@ static void cmd_assert_min_fps(testing::PendingE2ECommand& cmd) {
     }
 }
 
+// ── NUX hint commands ─────────────────────────────────────────────────────
+
+// assert_nux_active <substring> — assert a NUX containing the substring is
+// active
+static void cmd_assert_nux_active(testing::PendingE2ECommand& cmd) {
+    std::string needle = cmd.arg(0);
+    auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+    for (Entity& e : nuxes) {
+        auto& nux = e.get<NuxHint>();
+        if (nux.is_active && nux.text.find(needle) != std::string::npos) {
+            log_info(
+                "assert_nux_active PASSED: found active NUX containing '{}'",
+                needle);
+            cmd.consume();
+            return;
+        }
+    }
+    cmd.fail(fmt::format("No active NUX containing '{}'", needle));
+}
+
+// assert_nux_inactive — assert no NUX is currently active
+static void cmd_assert_nux_inactive(testing::PendingE2ECommand& cmd) {
+    auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+    for (Entity& e : nuxes) {
+        if (e.get<NuxHint>().is_active) {
+            cmd.fail(
+                fmt::format("NUX still active: '{}'", e.get<NuxHint>().text));
+            return;
+        }
+    }
+    log_info("assert_nux_inactive PASSED: no active NUX");
+    cmd.consume();
+}
+
+// assert_nux_count <op> <n> — assert number of remaining (non-dismissed) NUX
+// entities
+static void cmd_assert_nux_count(testing::PendingE2ECommand& cmd) {
+    std::string op = cmd.arg(0);
+    int expected = std::stoi(cmd.arg(1));
+    int count = 0;
+    {
+        auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+        for (Entity& e : nuxes) {
+            if (!e.get<NuxHint>().was_dismissed) count++;
+        }
+    }
+    bool ok = false;
+    if (op == "eq")
+        ok = (count == expected);
+    else if (op == "gte")
+        ok = (count >= expected);
+    else if (op == "lte")
+        ok = (count <= expected);
+    else if (op == "lt")
+        ok = (count < expected);
+    if (!ok) {
+        cmd.fail(fmt::format("NUX count {} not {} {}", count, op, expected));
+        return;
+    }
+    log_info("assert_nux_count PASSED: {} {} {}", count, op, expected);
+    cmd.consume();
+}
+
+// dismiss_nux — dismiss the currently active NUX (simulates clicking X)
+static void cmd_dismiss_nux(testing::PendingE2ECommand& cmd) {
+    auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+    for (Entity& e : nuxes) {
+        auto& nux = e.get<NuxHint>();
+        if (nux.is_active) {
+            nux.was_dismissed = true;
+            log_info("dismiss_nux: dismissed '{}'", nux.text);
+            cmd.consume();
+            return;
+        }
+    }
+    log_info("dismiss_nux: no active NUX to dismiss");
+    cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1260,6 +1352,7 @@ static void init_e2e_registry() {
     r.add("assert_overlay", cmd_assert_overlay);
     r.add("set_agent_speed", cmd_set_agent_speed);
     r.add("get_death_count", cmd_get_death_count);
+    r.add("set_death_count", cmd_set_death_count);
     r.add("assert_death_count", cmd_assert_death_count);
     r.add("assert_agent_hp", cmd_assert_agent_hp);
     r.add("set_time", cmd_set_time);
@@ -1285,6 +1378,10 @@ static void init_e2e_registry() {
     r.add("perf_report", cmd_perf_report);
     r.add("assert_fps", cmd_assert_fps);
     r.add("assert_min_fps", cmd_assert_min_fps);
+    r.add("assert_nux_active", cmd_assert_nux_active);
+    r.add("assert_nux_inactive", cmd_assert_nux_inactive);
+    r.add("assert_nux_count", cmd_assert_nux_count);
+    r.add("dismiss_nux", cmd_dismiss_nux);
 }
 
 void register_e2e_systems(SystemManager& sm) {

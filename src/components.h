@@ -426,7 +426,6 @@ struct ToastMessage : afterhours::BaseComponent {
     float lifetime = 3.0f;
     float elapsed = 0.f;
     float fade_duration = 0.5f;
-    bool is_hint = false;
 };
 
 // Facility slot tracking for progression
@@ -605,13 +604,22 @@ struct DeathMarker : afterhours::BaseComponent {
     float max_lifetime = 10.0f;
 };
 
-// Contextual hint tracking + bottleneck detection
-struct HintState : afterhours::BaseComponent {
-    std::bitset<8> shown;
-    float game_elapsed = 0.f;
-    int prev_death_count = 0;
-    GameClock::Phase prev_phase = GameClock::Phase::Day;
-    int prev_slots_per_type = 0;
+// NUX (New User Experience) hint — persists until dismissed or completed
+struct NuxHint : afterhours::BaseComponent {
+    std::string text;
+    bool is_active = false;
+    bool was_dismissed = false;
+    float time_shown = 0.f;
+
+    std::function<bool()> should_trigger;
+    std::function<bool()> is_complete;
+
+    int order = 0;
+};
+
+// NUX manager singleton — tracks global state for the hint queue
+struct NuxManager : afterhours::BaseComponent {
+    bool initialized = false;
 
     // Bottleneck tracking (once per facility type per run)
     bool bathroom_warned = false;
@@ -620,17 +628,6 @@ struct HintState : afterhours::BaseComponent {
     float bathroom_overload_timer = 0.f;
     float food_overload_timer = 0.f;
     float medtent_overload_timer = 0.f;
-
-    enum Hint {
-        GameStart = 0,
-        FirstAgents,
-        FirstNeed,
-        FirstDeath,
-        FirstDensity,
-        NightFalls,
-        FirstExodus,
-        SlotUnlocked,
-    };
 };
 
 // Path drawing state - rectangle drag on grid
