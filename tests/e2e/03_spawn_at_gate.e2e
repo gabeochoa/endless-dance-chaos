@@ -1,0 +1,25 @@
+# Test agents spawn at the gate location
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Build path from gate inward
+draw_path_rect 0 24 33 28
+wait_frames 2
+
+# Spawn agent at the gate spawn point
+spawn_agent 0 26 stage
+wait_frames 5
+
+# Agent should be near the gate (0, 26)
+assert_agent_near 0 26 3
+assert_agent_count eq 1
+
+# Spawn more and verify they appear near gate
+spawn_agents 0 26 5 stage
+wait_frames 5
+assert_agent_count eq 6
+
+# Wait for them to start moving inward
+wait 3
+screenshot 03_agents_entering_from_gate

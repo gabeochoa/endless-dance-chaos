@@ -1,0 +1,36 @@
+# Test cycling through all 8 build tools
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Start with Path tool
+select_tool path
+assert_tool path
+
+# Cycle through each tool
+select_tool fence
+assert_tool fence
+
+select_tool gate
+assert_tool gate
+
+select_tool stage
+assert_tool stage
+
+select_tool bathroom
+assert_tool bathroom
+
+select_tool food
+assert_tool food
+
+select_tool medtent
+assert_tool medtent
+
+select_tool demolish
+assert_tool demolish
+
+# Cycle back to path
+select_tool path
+assert_tool path
+
+screenshot 16_tool_cycling_complete

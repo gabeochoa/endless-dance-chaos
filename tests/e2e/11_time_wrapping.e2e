@@ -1,0 +1,46 @@
+# Test clock wraps correctly at midnight and through 24h cycle
+reset_game
+set_spawn_enabled 0
+wait 1
+
+# Set time to just before midnight
+set_time 23 55
+wait_frames 5
+assert_phase night
+
+# Advance past midnight — should wrap to next day
+set_time 0 5
+wait_frames 5
+assert_phase exodus
+
+# Verify time is near where we set it (allow drift from frame processing)
+assert_time_between 0 0 0 30
+
+# Continue to dead hours
+set_time 3 0
+wait_frames 5
+assert_phase dead
+
+# Continue back to day
+set_time 10 0
+wait_frames 5
+assert_phase day
+
+# Full cycle: verify all 4 phases are reachable
+set_time 14 0
+wait_frames 5
+assert_phase day
+
+set_time 20 0
+wait_frames 5
+assert_phase night
+
+set_time 1 0
+wait_frames 5
+assert_phase exodus
+
+set_time 5 0
+wait_frames 5
+assert_phase dead
+
+screenshot 11_time_wrap_complete

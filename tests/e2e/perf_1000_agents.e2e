@@ -1,0 +1,65 @@
+# Performance heavy load: 1000 agents
+# Target: >= 15 FPS average (stretch: 30 FPS)
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Build wide path network
+draw_path_rect 1 15 49 37
+draw_path_rect 10 5 15 45
+draw_path_rect 25 5 30 45
+draw_path_rect 40 5 45 45
+wait_frames 5
+
+# Spawn 1000 agents (25 per tile across 40 tiles)
+spawn_agents 5 20 25 stage
+spawn_agents 10 20 25 stage
+spawn_agents 15 20 25 stage
+spawn_agents 20 20 25 stage
+spawn_agents 25 20 25 stage
+spawn_agents 30 20 25 stage
+spawn_agents 35 20 25 stage
+spawn_agents 40 20 25 stage
+spawn_agents 45 20 25 stage
+spawn_agents 5 25 25 stage
+spawn_agents 10 25 25 stage
+spawn_agents 15 25 25 stage
+spawn_agents 20 25 25 stage
+spawn_agents 25 25 25 stage
+spawn_agents 30 25 25 stage
+spawn_agents 35 25 25 stage
+spawn_agents 40 25 25 stage
+spawn_agents 45 25 25 stage
+spawn_agents 5 30 25 stage
+spawn_agents 10 30 25 stage
+spawn_agents 15 30 25 stage
+spawn_agents 20 30 25 stage
+spawn_agents 25 30 25 stage
+spawn_agents 30 30 25 stage
+spawn_agents 35 30 25 stage
+spawn_agents 40 30 25 stage
+spawn_agents 45 30 25 stage
+spawn_agents 5 35 25 stage
+spawn_agents 10 35 25 stage
+spawn_agents 15 35 25 stage
+spawn_agents 20 35 25 stage
+spawn_agents 25 35 25 stage
+spawn_agents 30 35 25 stage
+spawn_agents 35 35 25 stage
+spawn_agents 40 35 25 stage
+spawn_agents 45 35 25 stage
+spawn_agents 5 15 25 stage
+spawn_agents 10 15 25 stage
+spawn_agents 15 15 25 stage
+spawn_agents 20 15 25 stage
+wait_frames 10
+
+assert_agent_count gte 990
+
+# Sample FPS for 5 seconds
+perf_start
+wait 5
+perf_report
+
+assert_fps gte 15
+screenshot perf_1000_agents

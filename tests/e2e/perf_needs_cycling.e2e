@@ -1,0 +1,45 @@
+# Performance test: 300 agents with active facility needs
+# Tests the overhead of goal recalculation + facility search
+reset_game
+set_spawn_enabled 0
+set_agent_speed 3
+wait_frames 5
+
+# Build path network connecting all facilities
+draw_path_rect 0 24 50 28
+draw_path_rect 19 14 22 38
+draw_path_rect 14 23 17 28
+wait_frames 5
+
+# Place extra facilities to exercise search
+place_building bathroom 10 15
+place_building food 35 30
+place_building medtent 40 20
+wait_frames 5
+
+# Spawn 300 agents
+spawn_agents 10 25 25 stage
+spawn_agents 15 25 25 stage
+spawn_agents 20 25 25 stage
+spawn_agents 25 25 25 stage
+spawn_agents 30 25 25 stage
+spawn_agents 35 25 25 stage
+spawn_agents 40 25 25 stage
+spawn_agents 10 26 25 stage
+spawn_agents 15 26 25 stage
+spawn_agents 20 26 25 stage
+spawn_agents 25 26 25 stage
+spawn_agents 30 26 25 stage
+wait_frames 10
+
+# Force needs so agents are actively searching for facilities
+force_need bathroom
+wait_frames 5
+
+# Measure FPS while agents pathfind to facilities
+perf_start
+wait 5
+perf_report
+
+assert_fps gte 30
+screenshot perf_needs_cycling

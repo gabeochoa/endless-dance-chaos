@@ -1,0 +1,24 @@
+# Test that progression slot limits control building capacity
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# At 0 max attendees: 1 slot per type
+set_max_attendees 0
+assert_slots bathroom eq 1
+assert_slots stage eq 1
+
+# At 100 max attendees: 2 slots per type
+set_max_attendees 100
+assert_slots bathroom eq 2
+assert_slots stage eq 2
+
+# At 200 max attendees: 3 slots per type
+set_max_attendees 200
+assert_slots bathroom eq 3
+
+# At 500: 6 slots
+set_max_attendees 500
+assert_slots bathroom eq 6
+
+screenshot 17_slot_scaling

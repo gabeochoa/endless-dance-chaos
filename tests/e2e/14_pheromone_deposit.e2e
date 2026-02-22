@@ -1,0 +1,26 @@
+# Test that agents leaving facilities deposit pheromone trails
+reset_game
+set_spawn_enabled 0
+set_agent_speed 3
+wait_frames 5
+
+# Build path from gate through bathroom area
+draw_path_rect 0 24 33 28
+draw_path_rect 19 18 22 28
+wait_frames 5
+
+# Clear all pheromones
+clear_pheromones
+wait_frames 2
+
+# Spawn agent on bathroom tile with target set to bathroom
+# Agent enters tile (20,21) which is a bathroom tile
+spawn_agent 20 21 bathroom 20 20
+force_need bathroom
+wait 8
+
+# Agent should have been serviced and exited at grid (19, 21)
+# Pheromone channel 0 (bathroom) should be deposited at exit tile
+wait 3
+assert_pheromone 19 21 0 gte 1
+screenshot 14_pheromone_deposit

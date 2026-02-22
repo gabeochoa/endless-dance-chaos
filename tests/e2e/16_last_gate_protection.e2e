@@ -1,0 +1,21 @@
+# Test that gates cannot be demolished
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Verify initial gate exists
+assert_tile_type 0 26 gate
+assert_tile_type 0 27 gate
+assert_gate_count gte 2
+
+# Try to demolish gate tiles — should be ignored
+demolish_at 0 26
+demolish_at 0 27
+wait_frames 2
+
+# Gate should still exist (gates are not demolishable)
+assert_tile_type 0 26 gate
+assert_tile_type 0 27 gate
+assert_gate_count gte 2
+
+screenshot 16_gate_protected

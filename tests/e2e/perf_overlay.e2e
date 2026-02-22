@@ -1,0 +1,43 @@
+# Performance test: density overlay impact
+# Compares FPS with overlay on vs off with 300 agents
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Build paths
+draw_path_rect 1 18 49 34
+wait_frames 5
+
+# Spawn 300 agents
+spawn_agents 10 25 25 stage
+spawn_agents 15 25 25 stage
+spawn_agents 20 25 25 stage
+spawn_agents 25 25 25 stage
+spawn_agents 30 25 25 stage
+spawn_agents 35 25 25 stage
+spawn_agents 40 25 25 stage
+spawn_agents 10 22 25 stage
+spawn_agents 15 22 25 stage
+spawn_agents 20 22 25 stage
+spawn_agents 25 22 25 stage
+spawn_agents 30 22 25 stage
+wait_frames 10
+
+# Measure without overlay
+perf_start
+wait 3
+perf_report
+screenshot perf_overlay_off
+
+# Turn on density overlay
+toggle_overlay
+assert_overlay on
+
+# Measure with overlay
+perf_start
+wait 3
+perf_report
+
+# Overlay should not tank FPS below playable threshold
+assert_fps gte 30
+screenshot perf_overlay_on

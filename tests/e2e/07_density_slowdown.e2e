@@ -1,0 +1,29 @@
+# Test density-based movement slowdown in dangerous zones (75-90%)
+reset_game
+set_spawn_enabled 0
+set_agent_speed 3
+wait_frames 2
+
+# Build a path corridor
+draw_path_rect 0 24 40 28
+wait_frames 2
+
+# Spawn 32 agents on one tile (80% density = dangerous zone)
+# Should cause movement slowdown but NO crush damage
+spawn_agents 20 26 32 stage
+wait_frames 2
+
+# Verify agents exist and no deaths
+assert_agent_count gte 32
+assert_death_count eq 0
+
+# Wait — agents should move slowly but spread out
+wait 5
+
+# No deaths should occur at 75-90% (only >=90% triggers damage)
+assert_death_count eq 0
+
+# Agents should have spread somewhat due to movement
+assert_density 20 26 lt 32
+
+screenshot 07_density_slowdown

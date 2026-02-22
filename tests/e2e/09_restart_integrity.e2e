@@ -1,0 +1,43 @@
+# Test that game restart resets ALL state properly
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Set up some state: spawn agents, cause deaths, advance time
+spawn_agents 25 25 45 stage
+set_time 18 0
+wait 6
+
+# Verify we have some non-default state
+assert_agent_count gte 1
+get_death_count
+screenshot 09_pre_restart_state
+
+# Now trigger game over and restart
+trigger_game_over
+wait_frames 5
+assert_game_status gameover
+
+key SPACE
+wait_frames 10
+
+# Verify full state reset
+assert_game_status running
+assert_death_count eq 0
+assert_agent_count eq 0
+assert_phase day
+
+# Verify grid is reset: perimeter fence intact, gate present
+assert_tile_type 0 0 fence
+assert_tile_type 51 51 fence
+assert_tile_type 0 26 gate
+assert_tile_type 0 27 gate
+
+# Verify pre-placed facilities are back
+assert_tile_type 30 25 stage
+assert_tile_type 20 20 bathroom
+assert_tile_type 20 30 food
+assert_tile_type 15 25 medtent
+
+screenshot 09_post_restart_clean

@@ -1,0 +1,26 @@
+# Test agents redistribute when nearest facility is full
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Build path network connecting both bathroom locations
+draw_path_rect 0 24 50 28
+draw_path_rect 19 14 22 38
+draw_path_rect 38 18 42 28
+wait_frames 2
+
+# Place a second bathroom with path access
+place_building bathroom 39 20
+wait_frames 2
+assert_tile_type 39 20 bathroom
+
+# Spawn many agents near original bathroom — more than it can hold
+spawn_agents 19 26 35 bathroom
+wait 15
+
+# Agents should have spread across both bathrooms
+# Check near second bathroom (wider radius since pathfinding varies)
+assert_agent_near 39 21 8
+
+screenshot 10_facility_overflow_spread

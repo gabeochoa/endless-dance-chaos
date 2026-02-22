@@ -1,0 +1,44 @@
+# Performance stress test: 500 agents
+# Target: >= 30 FPS average
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Build wide path network
+draw_path_rect 1 18 49 34
+draw_path_rect 15 10 22 40
+draw_path_rect 35 10 42 40
+wait_frames 5
+
+# Spawn 500 agents (25 per tile, below critical density)
+spawn_agents 5 25 25 stage
+spawn_agents 10 25 25 stage
+spawn_agents 15 25 25 stage
+spawn_agents 20 25 25 stage
+spawn_agents 25 25 25 stage
+spawn_agents 30 25 25 stage
+spawn_agents 35 25 25 stage
+spawn_agents 40 25 25 stage
+spawn_agents 45 25 25 stage
+spawn_agents 5 22 25 stage
+spawn_agents 10 22 25 stage
+spawn_agents 15 22 25 stage
+spawn_agents 20 22 25 stage
+spawn_agents 25 22 25 stage
+spawn_agents 30 22 25 stage
+spawn_agents 35 22 25 stage
+spawn_agents 40 22 25 stage
+spawn_agents 45 22 25 stage
+spawn_agents 10 28 25 stage
+spawn_agents 20 28 25 stage
+wait_frames 10
+
+assert_agent_count gte 490
+
+# Sample FPS for 5 seconds
+perf_start
+wait 5
+perf_report
+
+assert_fps gte 30
+screenshot perf_500_agents

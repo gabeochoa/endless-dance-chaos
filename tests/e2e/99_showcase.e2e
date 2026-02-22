@@ -1,0 +1,101 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# SHOWCASE: Full game loop demonstration
+# Walks through every major game feature in a single run.
+# ═══════════════════════════════════════════════════════════════════════════
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 5
+
+# ── 1: Verify initial state ─────────────────────────────────────────────
+assert_tile_type 0 0 fence
+assert_tile_type 0 26 gate
+assert_tile_type 30 25 stage
+assert_tile_type 20 20 bathroom
+assert_tile_type 20 30 food
+assert_tile_type 15 25 medtent
+assert_game_status running
+assert_death_count eq 0
+assert_phase day
+screenshot 99_01_empty_festival
+
+# ── 2: Build layout ─────────────────────────────────────────────────────
+draw_path_rect 0 24 35 28
+draw_path_rect 19 14 22 38
+draw_path_rect 14 23 17 28
+wait_frames 5
+screenshot 99_02_paths_built
+
+# ── 3: Agents arrive and watch stage ────────────────────────────────────
+spawn_agents 28 26 15 stage
+wait 3
+assert_agent_watching gte 1
+screenshot 99_03_watching_stage
+
+# ── 4: Facility needs ───────────────────────────────────────────────────
+force_need bathroom
+wait 3
+assert_agent_near 20 21 5
+screenshot 99_04_bathroom_rush
+
+# ── 5: Day/night cycle ──────────────────────────────────────────────────
+set_time 20 0
+wait_frames 10
+assert_phase night
+screenshot 99_05_night
+
+# ── 6: Density overlay ──────────────────────────────────────────────────
+spawn_agents 25 26 20 stage
+wait 1
+toggle_overlay
+wait_frames 10
+screenshot 99_06_density_overlay
+toggle_overlay
+
+# ── 7: Crush deaths ─────────────────────────────────────────────────────
+clear_agents
+wait_frames 5
+
+# 1-tile fence cage at (10,10) — same approach as 07_crush_damage.e2e
+set_tile 9 10 fence
+set_tile 11 10 fence
+set_tile 10 9 fence
+set_tile 10 11 fence
+wait_frames 2
+
+# Pack 40 agents on one tile — guaranteed critical density
+spawn_agents 10 10 40 stage
+wait 6
+assert_death_count gte 1
+screenshot 99_07_crush_deaths
+
+# ── 8: Game over + restart ──────────────────────────────────────────────
+trigger_game_over
+wait_frames 5
+assert_game_status gameover
+screenshot 99_08_game_over
+
+key SPACE
+wait_frames 10
+assert_game_status running
+assert_death_count eq 0
+screenshot 99_09_restarted
+
+# ── 9: Exodus ───────────────────────────────────────────────────────────
+draw_path_rect 0 24 35 28
+spawn_agents 25 26 10 stage
+wait 1
+set_time 0 0
+assert_phase exodus
+wait 2
+screenshot 99_10_exodus
+
+# ── 10: Progression ─────────────────────────────────────────────────────
+set_max_attendees 200
+assert_slots bathroom eq 3
+screenshot 99_11_progression
+
+# ── Final: Performance ──────────────────────────────────────────────────
+perf_start
+wait 1
+perf_report

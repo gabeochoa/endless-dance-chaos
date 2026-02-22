@@ -1,0 +1,25 @@
+# Test agents watch stage for a duration then leave
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+
+# Build path from gate to stage
+draw_path_rect 0 24 33 28
+wait_frames 2
+
+# Spawn agents wanting to watch stage
+spawn_agents 28 26 10 stage
+wait 3
+
+# After a few seconds, some should be watching
+assert_agent_watching gte 1
+screenshot 04_watching_stage
+
+# Force a need - should interrupt watching
+force_need bathroom
+wait 1
+
+# Watching count should decrease as agents leave for bathroom
+assert_agent_watching lt 10
+screenshot 04_interrupted_watching

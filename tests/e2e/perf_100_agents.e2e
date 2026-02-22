@@ -1,0 +1,27 @@
+# Performance baseline: 100 agents moving on paths
+# Target: >= 60 FPS average
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Build path network
+draw_path_rect 1 20 49 30
+draw_path_rect 19 14 22 38
+wait_frames 5
+
+# Spawn 100 agents spread across tiles
+spawn_agents 10 25 25 stage
+spawn_agents 20 25 25 stage
+spawn_agents 30 25 25 stage
+spawn_agents 40 25 25 stage
+wait_frames 10
+
+assert_agent_count gte 100
+
+# Sample FPS for 3 seconds while agents move
+perf_start
+wait 3
+perf_report
+
+assert_fps gte 55
+screenshot perf_100_agents

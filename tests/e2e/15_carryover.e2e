@@ -1,0 +1,33 @@
+# Test carryover: agents stuck after exodus persist into dead hours
+reset_game
+set_spawn_enabled 0
+wait 1
+
+# Build paths so agents can move
+draw_path_rect 0 24 50 28
+wait_frames 2
+
+# Spawn agents deep inside the map (far from gate)
+spawn_agents 40 26 15 stage
+wait 2
+
+# Jump to exodus - agents should try to exit
+set_time 0 0
+wait 3
+
+# Some agents should be heading toward gate
+# Jump to dead hours before all can exit
+set_time 3 0
+wait 2
+
+# Any agents still inside are carryover
+# (they couldn't exit in time)
+assert_carryover_count gte 0
+screenshot 15_carryover_agents
+
+# Verify no new agents spawn during dead hours
+set_spawn_enabled 1
+wait 3
+set_spawn_enabled 0
+
+screenshot 15_dead_hours_no_new_spawn

@@ -1,0 +1,40 @@
+# Test demolish tool: removing tiles and verifying they become grass
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Place a path and verify it exists
+draw_path_rect 10 10 12 12
+wait_frames 2
+assert_tile_type 10 10 path
+assert_tile_type 11 11 path
+
+# Demolish path tiles
+demolish_at 10 10
+demolish_at 11 11
+wait_frames 2
+
+# Verify they became grass
+assert_tile_type 10 10 grass
+assert_tile_type 11 11 grass
+
+# Place a building and demolish it
+place_building bathroom 10 10
+wait_frames 2
+assert_tile_type 10 10 bathroom
+assert_tile_type 11 11 bathroom
+
+demolish_at 10 10
+demolish_at 11 11
+demolish_at 10 11
+demolish_at 11 10
+wait_frames 2
+assert_tile_type 10 10 grass
+
+# Verify fence can NOT be demolished
+assert_tile_type 0 0 fence
+demolish_at 0 0
+wait_frames 2
+assert_tile_type 0 0 fence
+
+screenshot 16_demolish_result

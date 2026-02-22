@@ -75,6 +75,43 @@ inline std::optional<raylib::Vector2> grid_to_screen(int gx, int gz) {
     return raylib::GetWorldToScreen(world_pos, cam->cam.camera);
 }
 
+// ── Performance sampling (needs to be above dispatch system) ─────────────
+
+struct PerfSample {
+    float fps_sum = 0.f;
+    float fps_min = 9999.f;
+    float fps_max = 0.f;
+    int sample_count = 0;
+    bool is_sampling = false;
+
+    void reset() {
+        fps_sum = 0.f;
+        fps_min = 9999.f;
+        fps_max = 0.f;
+        sample_count = 0;
+        is_sampling = false;
+    }
+
+    void tick() {
+        if (!is_sampling) return;
+        float fps = raylib::GetFPS();
+        if (fps <= 0.f) return;
+        fps_sum += fps;
+        fps_min = std::min(fps_min, fps);
+        fps_max = std::max(fps_max, fps);
+        sample_count++;
+    }
+
+    float avg() const {
+        return (sample_count > 0) ? fps_sum / sample_count : 0.f;
+    }
+};
+
+static PerfSample& get_perf_sample() {
+    static PerfSample s;
+    return s;
+}
+
 // ── Command handler type + dispatch registry ─────────────────────────────
 
 using E2ECmdFn = void (*)(testing::PendingE2ECommand&);
@@ -91,6 +128,8 @@ static E2ERegistry& get_registry() {
 
 // Single dispatch system replaces ~40 individual handler structs
 struct E2EDispatchSystem : System<testing::PendingE2ECommand> {
+    void once(float) override { get_perf_sample().tick(); }
+
     void for_each_with(Entity&, testing::PendingE2ECommand& cmd,
                        float) override {
         if (cmd.is_consumed()) return;
@@ -1096,7 +1135,8 @@ static void cmd_demolish_at(testing::PendingE2ECommand& cmd) {
     int x = std::stoi(cmd.args[0]), z = std::stoi(cmd.args[1]);
     if (grid->in_bounds(x, z)) {
         auto& tile = grid->at(x, z);
-        if (tile.type != TileType::Fence && tile.type != TileType::Grass) {
+        if (tile.type != TileType::Fence && tile.type != TileType::Grass &&
+            tile.type != TileType::Gate) {
             tile.type = TileType::Grass;
             grid->mark_tiles_dirty();
         }
@@ -1121,6 +1161,66 @@ static void cmd_set_all_agent_hp(testing::PendingE2ECommand& cmd) {
     }
     log_info("[E2E] set_all_agent_hp: set {} agents to hp={:.2f}", count, hp);
     cmd.consume();
+}
+
+// ── Performance measurement commands ─────────────────────────────────────
+
+static void cmd_perf_start(testing::PendingE2ECommand& cmd) {
+    auto& s = get_perf_sample();
+    s.reset();
+    s.is_sampling = true;
+    log_info("[E2E] perf_start: sampling FPS every frame");
+    cmd.consume();
+}
+
+static void cmd_perf_report(testing::PendingE2ECommand& cmd) {
+    auto& s = get_perf_sample();
+    s.is_sampling = false;
+    int agent_count =
+        (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+    log_info(
+        "[PERF] agents={} fps: avg={:.1f} min={:.1f} max={:.1f} samples={}",
+        agent_count, s.avg(), s.fps_min, s.fps_max, s.sample_count);
+    cmd.consume();
+}
+
+static void cmd_assert_fps(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_fps requires OP VALUE (e.g. assert_fps gte 30)");
+        return;
+    }
+    auto& s = get_perf_sample();
+    float average = s.avg();
+    float expected = cmd.arg_as<float>(1);
+    if (!compare_op_f(average, cmd.arg(0), expected))
+        cmd.fail(fmt::format(
+            "[PERF] assert_fps FAILED: avg={:.1f} {} {:.1f} (min={:.1f} "
+            "max={:.1f} samples={})",
+            average, cmd.arg(0), expected, s.fps_min, s.fps_max,
+            s.sample_count));
+    else {
+        log_info("[PERF] assert_fps PASSED: avg={:.1f} {} {:.1f}", average,
+                 cmd.arg(0), expected);
+        cmd.consume();
+    }
+}
+
+static void cmd_assert_min_fps(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_min_fps requires OP VALUE");
+        return;
+    }
+    auto& s = get_perf_sample();
+    float expected = cmd.arg_as<float>(1);
+    if (!compare_op_f(s.fps_min, cmd.arg(0), expected))
+        cmd.fail(
+            fmt::format("[PERF] assert_min_fps FAILED: min={:.1f} {} {:.1f}",
+                        s.fps_min, cmd.arg(0), expected));
+    else {
+        log_info("[PERF] assert_min_fps PASSED: min={:.1f} {} {:.1f}",
+                 s.fps_min, cmd.arg(0), expected);
+        cmd.consume();
+    }
 }
 
 // ── Registration ─────────────────────────────────────────────────────────
@@ -1181,6 +1281,10 @@ static void init_e2e_registry() {
     r.add("place_building", cmd_place_building);
     r.add("demolish_at", cmd_demolish_at);
     r.add("set_all_agent_hp", cmd_set_all_agent_hp);
+    r.add("perf_start", cmd_perf_start);
+    r.add("perf_report", cmd_perf_report);
+    r.add("assert_fps", cmd_assert_fps);
+    r.add("assert_min_fps", cmd_assert_min_fps);
 }
 
 void register_e2e_systems(SystemManager& sm) {
