@@ -91,130 +91,130 @@ inline auto get_mapping() {
 
     // Camera movement - WASD + arrows
     mapping[to_int(InputAction::CameraForward)] = {
-        raylib::KEY_W,
-        raylib::KEY_UP,
+        KEY_W,
+        KEY_UP,
     };
     mapping[to_int(InputAction::CameraBack)] = {
-        raylib::KEY_S,
-        raylib::KEY_DOWN,
+        KEY_S,
+        KEY_DOWN,
     };
     mapping[to_int(InputAction::CameraLeft)] = {
-        raylib::KEY_A,
-        raylib::KEY_LEFT,
+        KEY_A,
+        KEY_LEFT,
     };
     mapping[to_int(InputAction::CameraRight)] = {
-        raylib::KEY_D,
-        raylib::KEY_RIGHT,
+        KEY_D,
+        KEY_RIGHT,
     };
     mapping[to_int(InputAction::CameraRotateLeft)] = {
-        raylib::KEY_Q,
+        KEY_Q,
     };
     mapping[to_int(InputAction::CameraRotateRight)] = {
-        raylib::KEY_E,
+        KEY_E,
     };
 
     // Build tools - number keys (1-8 for each tool in order)
     mapping[to_int(InputAction::ToolPath)] = {
-        raylib::KEY_ONE,
+        KEY_ONE,
     };
     mapping[to_int(InputAction::ToolFence)] = {
-        raylib::KEY_TWO,
+        KEY_TWO,
     };
     mapping[to_int(InputAction::ToolGate)] = {
-        raylib::KEY_THREE,
+        KEY_THREE,
     };
     mapping[to_int(InputAction::ToolStage)] = {
-        raylib::KEY_FOUR,
+        KEY_FOUR,
     };
 
     // Actions
     mapping[to_int(InputAction::PlaceOrConfirm)] = {
-        raylib::KEY_ENTER,
-        raylib::GAMEPAD_BUTTON_RIGHT_FACE_DOWN,
+        KEY_ENTER,
+        GAMEPAD_BUTTON_RIGHT_FACE_DOWN,
     };
     mapping[to_int(InputAction::Cancel)] = {
-        raylib::KEY_ESCAPE,
+        KEY_ESCAPE,
     };
     mapping[to_int(InputAction::ToggleDemolish)] = {
-        raylib::KEY_X,
+        KEY_X,
     };
 
     // Data layer (TAB for overlay, filters unused for now to avoid key
     // conflicts)
     mapping[to_int(InputAction::ToggleDataLayer)] = {
-        raylib::KEY_TAB,
+        KEY_TAB,
     };
 
     // Widget navigation
     mapping[to_int(InputAction::WidgetLeft)] = {
-        raylib::KEY_LEFT,
-        raylib::GAMEPAD_BUTTON_LEFT_FACE_LEFT,
+        KEY_LEFT,
+        GAMEPAD_BUTTON_LEFT_FACE_LEFT,
     };
     mapping[to_int(InputAction::WidgetRight)] = {
-        raylib::KEY_RIGHT,
-        raylib::GAMEPAD_BUTTON_LEFT_FACE_RIGHT,
+        KEY_RIGHT,
+        GAMEPAD_BUTTON_LEFT_FACE_RIGHT,
     };
     mapping[to_int(InputAction::WidgetBack)] = {
-        raylib::GAMEPAD_BUTTON_LEFT_FACE_UP,
-        raylib::KEY_UP,
+        GAMEPAD_BUTTON_LEFT_FACE_UP,
+        KEY_UP,
     };
     mapping[to_int(InputAction::WidgetNext)] = {
-        raylib::GAMEPAD_BUTTON_LEFT_FACE_DOWN,
-        raylib::KEY_DOWN,
+        GAMEPAD_BUTTON_LEFT_FACE_DOWN,
+        KEY_DOWN,
     };
     mapping[to_int(InputAction::WidgetPress)] = {
-        raylib::KEY_ENTER,
-        raylib::GAMEPAD_BUTTON_RIGHT_FACE_DOWN,
+        KEY_ENTER,
+        GAMEPAD_BUTTON_RIGHT_FACE_DOWN,
     };
     mapping[to_int(InputAction::WidgetMod)] = {
-        raylib::KEY_LEFT_SHIFT,
+        KEY_LEFT_SHIFT,
     };
     mapping[to_int(InputAction::MenuBack)] = {
-        raylib::KEY_ESCAPE,
+        KEY_ESCAPE,
     };
     mapping[to_int(InputAction::PauseButton)] = {
-        raylib::KEY_ESCAPE,
-        raylib::GAMEPAD_BUTTON_MIDDLE_RIGHT,
+        KEY_ESCAPE,
+        GAMEPAD_BUTTON_MIDDLE_RIGHT,
     };
     mapping[to_int(InputAction::ToggleUIDebug)] = {
-        raylib::KEY_GRAVE,
+        KEY_GRAVE,
     };
     mapping[to_int(InputAction::ToggleUILayoutDebug)] = {
-        raylib::KEY_EQUAL,
+        KEY_EQUAL,
     };
 
     // Build tool cycling
     mapping[to_int(InputAction::PrevTool)] = {
-        raylib::KEY_LEFT_BRACKET,
+        KEY_LEFT_BRACKET,
     };
     mapping[to_int(InputAction::NextTool)] = {
-        raylib::KEY_RIGHT_BRACKET,
+        KEY_RIGHT_BRACKET,
     };
     mapping[to_int(InputAction::Tool5)] = {
-        raylib::KEY_FIVE,
+        KEY_FIVE,
     };
     mapping[to_int(InputAction::Tool6)] = {
-        raylib::KEY_SIX,
+        KEY_SIX,
     };
     mapping[to_int(InputAction::Tool7)] = {
-        raylib::KEY_SEVEN,
+        KEY_SEVEN,
     };
     mapping[to_int(InputAction::Tool8)] = {
-        raylib::KEY_EIGHT,
+        KEY_EIGHT,
     };
     mapping[to_int(InputAction::QuickSave)] = {
-        raylib::KEY_F5,
+        KEY_F5,
     };
     mapping[to_int(InputAction::QuickLoad)] = {
-        raylib::KEY_F9,
+        KEY_F9,
     };
 
     // Game state
     mapping[to_int(InputAction::Restart)] = {
-        raylib::KEY_SPACE,
+        KEY_SPACE,
     };
     mapping[to_int(InputAction::TogglePause)] = {
-        raylib::KEY_SPACE,
+        KEY_SPACE,
     };
 
     return mapping;

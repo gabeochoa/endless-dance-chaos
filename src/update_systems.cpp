@@ -40,8 +40,8 @@ struct UpdateGameClockSystem : System<> {
         auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
         if (!clock) return;
 
+        bool pause_down = action_down(InputAction::TogglePause);
         if (!game_is_over()) {
-            bool pause_down = action_down(InputAction::TogglePause);
             if (pause_down && !was_pause_down) {
                 if (clock->speed == GameSpeed::Paused)
                     clock->speed = GameSpeed::OneX;
@@ -50,8 +50,8 @@ struct UpdateGameClockSystem : System<> {
                 log_info("Game speed: {}",
                          clock->speed == GameSpeed::Paused ? "PAUSED" : "1x");
             }
-            was_pause_down = pause_down;
         }
+        was_pause_down = pause_down;
 
         float game_dt = (dt / GameClock::SECONDS_PER_GAME_MINUTE) *
                         clock->speed_multiplier();

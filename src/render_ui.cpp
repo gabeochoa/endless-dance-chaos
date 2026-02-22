@@ -191,7 +191,7 @@ struct RenderUISystem : System<> {
             // Speed control icons
             auto mouse = input::get_mouse_position();
             bool mouse_click =
-                input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT);
+                input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
             struct SpeedIcon {
                 const char* label;
                 GameSpeed speed;
@@ -279,8 +279,7 @@ struct RenderUISystem : System<> {
                   Color{0, 0, 0, 180});
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         auto mouse = input::get_mouse_position();
-        bool mouse_clicked =
-            input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT);
+        bool mouse_clicked = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
         if (bs) {
             float icon_size = 36.f;
             float gap = 6.f;
@@ -396,7 +395,7 @@ struct RenderUISystem : System<> {
                           Color{255, 255, 255, 255});
 
                 if (hovering &&
-                    input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT)) {
+                    input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
                     nux.was_dismissed = true;
                 }
 

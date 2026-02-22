@@ -92,6 +92,55 @@ typedef raylib::Vector4 vec4;
 using raylib::Color;
 using raylib::Rectangle;
 
+// Re-export commonly used raylib constants so game code
+// doesn't need the raylib:: prefix on key/mouse/camera values.
+constexpr auto KEY_ESCAPE = raylib::KEY_ESCAPE;
+constexpr auto KEY_SPACE = raylib::KEY_SPACE;
+constexpr auto KEY_ENTER = raylib::KEY_ENTER;
+constexpr auto KEY_TAB = raylib::KEY_TAB;
+constexpr auto KEY_W = raylib::KEY_W;
+constexpr auto KEY_A = raylib::KEY_A;
+constexpr auto KEY_S = raylib::KEY_S;
+constexpr auto KEY_D = raylib::KEY_D;
+constexpr auto KEY_E = raylib::KEY_E;
+constexpr auto KEY_Q = raylib::KEY_Q;
+constexpr auto KEY_X = raylib::KEY_X;
+constexpr auto KEY_UP = raylib::KEY_UP;
+constexpr auto KEY_DOWN = raylib::KEY_DOWN;
+constexpr auto KEY_LEFT = raylib::KEY_LEFT;
+constexpr auto KEY_RIGHT = raylib::KEY_RIGHT;
+constexpr auto KEY_ONE = raylib::KEY_ONE;
+constexpr auto KEY_TWO = raylib::KEY_TWO;
+constexpr auto KEY_THREE = raylib::KEY_THREE;
+constexpr auto KEY_FOUR = raylib::KEY_FOUR;
+constexpr auto KEY_FIVE = raylib::KEY_FIVE;
+constexpr auto KEY_SIX = raylib::KEY_SIX;
+constexpr auto KEY_SEVEN = raylib::KEY_SEVEN;
+constexpr auto KEY_EIGHT = raylib::KEY_EIGHT;
+constexpr auto KEY_GRAVE = raylib::KEY_GRAVE;
+constexpr auto KEY_EQUAL = raylib::KEY_EQUAL;
+constexpr auto KEY_LEFT_BRACKET = raylib::KEY_LEFT_BRACKET;
+constexpr auto KEY_RIGHT_BRACKET = raylib::KEY_RIGHT_BRACKET;
+constexpr auto KEY_LEFT_SHIFT = raylib::KEY_LEFT_SHIFT;
+constexpr auto KEY_F5 = raylib::KEY_F5;
+constexpr auto KEY_F9 = raylib::KEY_F9;
+constexpr auto MOUSE_BUTTON_LEFT = raylib::MOUSE_BUTTON_LEFT;
+constexpr auto MOUSE_BUTTON_RIGHT = raylib::MOUSE_BUTTON_RIGHT;
+constexpr auto GAMEPAD_BUTTON_RIGHT_FACE_DOWN =
+    raylib::GAMEPAD_BUTTON_RIGHT_FACE_DOWN;
+constexpr auto GAMEPAD_BUTTON_LEFT_FACE_LEFT =
+    raylib::GAMEPAD_BUTTON_LEFT_FACE_LEFT;
+constexpr auto GAMEPAD_BUTTON_LEFT_FACE_RIGHT =
+    raylib::GAMEPAD_BUTTON_LEFT_FACE_RIGHT;
+constexpr auto GAMEPAD_BUTTON_LEFT_FACE_UP =
+    raylib::GAMEPAD_BUTTON_LEFT_FACE_UP;
+constexpr auto GAMEPAD_BUTTON_LEFT_FACE_DOWN =
+    raylib::GAMEPAD_BUTTON_LEFT_FACE_DOWN;
+constexpr auto GAMEPAD_BUTTON_MIDDLE_RIGHT =
+    raylib::GAMEPAD_BUTTON_MIDDLE_RIGHT;
+constexpr auto CAMERA_PERSPECTIVE = raylib::CAMERA_PERSPECTIVE;
+constexpr auto CAMERA_ORTHOGRAPHIC = raylib::CAMERA_ORTHOGRAPHIC;
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)

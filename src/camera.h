@@ -2,6 +2,7 @@
 #pragma once
 
 #include "game.h"
+#include "gfx3d.h"
 #include "input_mapping.h"
 #include "log.h"
 #include "rl.h"
@@ -9,7 +10,7 @@
 // RCT-style isometric camera with 90-degree rotation support
 // Uses orthographic projection for classic isometric look
 struct IsometricCamera {
-    raylib::Camera3D camera;
+    afterhours::Camera3D camera;
 
     // Camera distance and angle settings
     float distance = 30.0f;
@@ -33,7 +34,7 @@ struct IsometricCamera {
     IsometricCamera() {
         camera.up = {0.0f, 1.0f, 0.0f};
         camera.fovy = distance;  // Orthographic "zoom" level matches distance
-        camera.projection = raylib::CAMERA_ORTHOGRAPHIC;
+        camera.projection = CAMERA_ORTHOGRAPHIC;
         update_camera_position();
     }
 
@@ -125,7 +126,7 @@ struct IsometricCamera {
         }
     }
 
-    raylib::Camera3D* get_ptr() { return &camera; }
+    afterhours::Camera3D* get_ptr() { return &camera; }
 
     // Convert screen position to grid coordinates.
     // Projects 3 reference grid points to screen via GetWorldToScreen,
@@ -134,11 +135,9 @@ struct IsometricCamera {
     std::optional<std::pair<int, int>> screen_to_grid(float screen_x,
                                                       float screen_y) const {
         // Project 3 grid reference points to screen space
-        raylib::Vector2 s00 = raylib::GetWorldToScreen({0, 0, 0}, camera);
-        raylib::Vector2 s10 =
-            raylib::GetWorldToScreen({TILESIZE, 0, 0}, camera);
-        raylib::Vector2 s01 =
-            raylib::GetWorldToScreen({0, 0, TILESIZE}, camera);
+        vec2 s00 = get_world_to_screen({0, 0, 0}, camera);
+        vec2 s10 = get_world_to_screen({TILESIZE, 0, 0}, camera);
+        vec2 s01 = get_world_to_screen({0, 0, TILESIZE}, camera);
 
         // Affine: screen = A * grid_pos + s00
         float a = s10.x - s00.x;  // screen_x change per grid_x step

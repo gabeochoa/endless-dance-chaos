@@ -58,14 +58,14 @@ struct PathBuildSystem : System<> {
             bs->tool = BuildTool::Demolish;
 
         if (action_pressed(InputAction::Cancel) ||
-            input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_RIGHT)) {
+            input::is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) {
             pds->is_drawing = false;
             return;
         }
 
         if (!pds->hover_valid) return;
 
-        if (input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT)) {
+        if (input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
             int hx = pds->hover_x, hz = pds->hover_z;
 
             switch (bs->tool) {

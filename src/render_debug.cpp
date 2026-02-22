@@ -31,7 +31,7 @@ struct RenderDebugPanelSystem : System<> {
         draw_rect(knob_x, y - 2, knob_w, h + 4, Color{255, 255, 255, 255});
 
         auto mouse = input::get_mouse_position();
-        if (input::is_mouse_button_down(raylib::MOUSE_BUTTON_LEFT)) {
+        if (input::is_mouse_button_down(MOUSE_BUTTON_LEFT)) {
             if (mouse.x >= x && mouse.x <= x + w && mouse.y >= y - 6 &&
                 mouse.y <= y + h + 6) {
                 float new_t = (mouse.x - x) / w;

@@ -7,6 +7,9 @@
 #include "log.h"
 
 #include "afterhours/src/core/entity_helper.h"
+#include "afterhours/src/drawing_helpers.h"
+#include "afterhours/src/drawing_helpers_3d.h"
+#include "afterhours/src/graphics.h"
 #include "components.h"
 
 using namespace afterhours;
@@ -15,50 +18,35 @@ using namespace afterhours;
 extern raylib::RenderTexture2D g_render_texture;
 
 // ── 2D drawing helpers ──
-// Thin wrappers that keep game code backend-agnostic.
-// When the afterhours drawing_helpers are used project-wide,
-// these can be replaced with direct afterhours calls.
+// Functions with matching signatures (draw_text, draw_line, draw_circle,
+// draw_text_ex, begin/end_scissor_mode) come from afterhours via
+// `using namespace afterhours;`. Only wrappers that adapt signatures remain.
 
 inline void draw_rect(float x, float y, float w, float h, Color c) {
-    raylib::DrawRectangle((int) x, (int) y, (int) w, (int) h, c);
+    afterhours::draw_rectangle(Rectangle{x, y, w, h}, c);
 }
 
 inline void draw_rect_lines(float x, float y, float w, float h, Color c) {
-    raylib::DrawRectangleLinesEx(Rectangle{x, y, w, h}, 1.f, c);
+    afterhours::draw_rectangle_outline(Rectangle{x, y, w, h}, c, 1.f);
 }
 
-inline void draw_line(float x1, float y1, float x2, float y2, Color c) {
-    raylib::DrawLine((int) x1, (int) y1, (int) x2, (int) y2, c);
+// ── Window / frame / timing ──
+
+using afterhours::graphics::begin_drawing;
+using afterhours::graphics::end_drawing;
+using afterhours::graphics::get_frame_time;
+using afterhours::graphics::window_should_close;
+
+inline void clear_background(Color c) {
+    afterhours::graphics::clear_background(c);
 }
 
-inline void draw_circle(float cx, float cy, float r, Color c) {
-    raylib::DrawCircle((int) cx, (int) cy, r, c);
+inline int get_fps() {
+    return static_cast<int>(afterhours::graphics::get_fps());
 }
-
-inline void draw_text_ex(raylib::Font font, const char* text, vec2 pos,
-                         float size, float spacing, Color c) {
-    raylib::DrawTextEx(font, text, pos, size, spacing, c);
+inline float get_time() {
+    return static_cast<float>(afterhours::graphics::get_time());
 }
-
-inline void draw_text(const char* text, float x, float y, float size, Color c) {
-    raylib::DrawText(text, (int) x, (int) y, (int) size, c);
-}
-
-inline void begin_scissor_mode(float x, float y, float w, float h) {
-    raylib::BeginScissorMode((int) x, (int) y, (int) w, (int) h);
-}
-
-inline void end_scissor_mode() { raylib::EndScissorMode(); }
-
-inline void begin_drawing() { raylib::BeginDrawing(); }
-inline void end_drawing() { raylib::EndDrawing(); }
-
-inline void clear_background(Color c) { raylib::ClearBackground(c); }
-
-inline int get_fps() { return raylib::GetFPS(); }
-inline float get_frame_time() { return raylib::GetFrameTime(); }
-inline float get_time() { return static_cast<float>(raylib::GetTime()); }
-inline bool window_should_close() { return raylib::WindowShouldClose(); }
 
 inline vec2 measure_text_ex(raylib::Font font, const char* text, float size,
                             float spacing) {

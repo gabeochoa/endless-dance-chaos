@@ -70,11 +70,11 @@ inline FacilityType parse_facility_type(const std::string& s) {
     return FacilityType::Bathroom;
 }
 
-inline std::optional<raylib::Vector2> grid_to_screen(int gx, int gz) {
+inline std::optional<vec2> grid_to_screen(int gx, int gz) {
     auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
     if (!cam) return std::nullopt;
-    raylib::Vector3 world_pos = {gx * TILESIZE, 0.0f, gz * TILESIZE};
-    return raylib::GetWorldToScreen(world_pos, cam->cam.camera);
+    vec3 world_pos = {gx * TILESIZE, 0.0f, gz * TILESIZE};
+    return afterhours::get_world_to_screen(world_pos, cam->cam.camera);
 }
 
 // ── Performance sampling (needs to be above dispatch system) ─────────────

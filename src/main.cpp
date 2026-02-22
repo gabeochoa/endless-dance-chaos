@@ -19,6 +19,7 @@ bool g_test_mode = false;
 raylib::RenderTexture2D g_render_texture;
 
 using namespace afterhours;
+namespace gfx = afterhours::graphics;
 
 void game(const std::string& test_script, const std::string& test_dir) {
     SystemManager systems;
@@ -70,7 +71,7 @@ void game(const std::string& test_script, const std::string& test_dir) {
 
         // Check Escape BEFORE systems run (while pending tiles still exist)
         bool escape_should_quit =
-            raylib::IsKeyPressed(raylib::KEY_ESCAPE) && should_escape_quit();
+            gfx::is_key_pressed(KEY_ESCAPE) && should_escape_quit();
 
         float dt = get_frame_time();
         systems.run(dt);
@@ -106,21 +107,21 @@ int main(int argc, char* argv[]) {
 
     // In MCP mode, suppress raylib logs and redirect our logs to stderr
     if (mcp_mode) {
-        raylib::SetTraceLogLevel(raylib::LOG_NONE);
+        gfx::set_trace_log_level(raylib::LOG_NONE);
         g_log_to_stderr = true;
     }
 
     // In test mode, suppress raylib logs
     if (g_test_mode) {
-        raylib::SetTraceLogLevel(raylib::LOG_NONE);
+        gfx::set_trace_log_level(raylib::LOG_NONE);
     }
 
     log_info("Starting Endless Dance Chaos v{}", VERSION);
 
-    raylib::InitWindow(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
-                       "Endless Dance Chaos");
-    raylib::SetTargetFPS(500);
-    raylib::SetExitKey(0);  // Disable Escape from closing window
+    gfx::init_window(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
+                     "Endless Dance Chaos");
+    gfx::set_target_fps(500);
+    gfx::set_exit_key(0);
 
     // Initialize audio (skip in test mode for speed)
     raylib::InitAudioDevice();
@@ -140,7 +141,7 @@ int main(int argc, char* argv[]) {
     // Enable test mode if --test-dir given (even without explicit --test-mode)
     if (!test_dir.empty()) {
         g_test_mode = true;
-        raylib::SetTraceLogLevel(raylib::LOG_NONE);
+        gfx::set_trace_log_level(raylib::LOG_NONE);
     }
 
     game(test_script, test_dir);
@@ -149,7 +150,7 @@ int main(int argc, char* argv[]) {
     get_audio().shutdown();
     raylib::CloseAudioDevice();
     unload_render_texture(g_render_texture);
-    raylib::CloseWindow();
+    gfx::close_window();
 
     log_info("Goodbye!");
     return 0;
