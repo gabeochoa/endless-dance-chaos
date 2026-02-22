@@ -9,6 +9,7 @@
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/drawing_helpers.h"
 #include "afterhours/src/drawing_helpers_3d.h"
+#include "afterhours/src/font_helper.h"
 #include "afterhours/src/graphics.h"
 #include "components.h"
 
@@ -48,20 +49,19 @@ inline float get_time() {
     return static_cast<float>(afterhours::graphics::get_time());
 }
 
-inline vec2 measure_text_ex(raylib::Font font, const char* text, float size,
+inline vec2 measure_text_ex(afterhours::Font font, const char* text, float size,
                             float spacing) {
-    return raylib::MeasureTextEx(font, text, size, spacing);
+    return afterhours::measure_text(font, text, size, spacing);
 }
 
 static constexpr float FONT_SPACING = 1.5f;
 
-inline raylib::Font& get_font() {
-    static raylib::Font font = {0};
+inline afterhours::Font& get_font() {
+    static afterhours::Font font{};
     static bool loaded = false;
     if (!loaded) {
-        font =
-            raylib::LoadFontEx("resources/fonts/Exo2-Bold.ttf", 96, nullptr, 0);
-        raylib::SetTextureFilter(font.texture, raylib::TEXTURE_FILTER_BILINEAR);
+        font = afterhours::load_font_from_file("resources/fonts/Exo2-Bold.ttf",
+                                               96);
         loaded = true;
     }
     return font;
