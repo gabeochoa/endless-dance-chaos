@@ -23,6 +23,7 @@ void register_agent_movement_systems(SystemManager& sm);
 void register_crowd_flow_systems(SystemManager& sm);
 void register_crowd_damage_systems(SystemManager& sm);
 void register_crowd_particle_systems(SystemManager& sm);
+void register_polish_systems(SystemManager& sm);
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -217,6 +218,9 @@ void register_update_systems(SystemManager& sm) {
 
     // Schedule: difficulty scaling
     register_schedule_difficulty_systems(sm);
+
+    // Polish: hints, bottleneck detection, death markers
+    register_polish_systems(sm);
 
     // Core final
     sm.register_update_system(std::make_unique<SaveLoadSystem>());

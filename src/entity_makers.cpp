@@ -47,6 +47,9 @@ Entity& make_sophie() {
     sophie.addComponent<DifficultyState>();
     EntityHelper::registerSingleton<DifficultyState>(sophie);
 
+    sophie.addComponent<HintState>();
+    EntityHelper::registerSingleton<HintState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -99,6 +102,8 @@ void reset_game_state() {
     for (Entity& t : toasts) t.cleanup = true;
     auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
     for (Entity& ev : events) ev.cleanup = true;
+    auto markers = EntityQuery().whereHasComponent<DeathMarker>().gen();
+    for (Entity& m : markers) m.cleanup = true;
     EntityHelper::cleanup();
 
     // Reset grid
@@ -151,6 +156,22 @@ void reset_game_state() {
         sched->schedule.clear();
         sched->stage_state = StageState::Idle;
         sched->current_artist_idx = -1;
+    }
+
+    // Reset hint state
+    auto* hs = EntityHelper::get_singleton_cmp<HintState>();
+    if (hs) {
+        hs->shown.reset();
+        hs->game_elapsed = 0.f;
+        hs->prev_death_count = 0;
+        hs->prev_phase = GameClock::Phase::Day;
+        hs->prev_slots_per_type = 0;
+        hs->bathroom_warned = false;
+        hs->food_warned = false;
+        hs->medtent_warned = false;
+        hs->bathroom_overload_timer = 0.f;
+        hs->food_overload_timer = 0.f;
+        hs->medtent_overload_timer = 0.f;
     }
 
     // Reset difficulty state

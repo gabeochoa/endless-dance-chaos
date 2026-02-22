@@ -9,6 +9,7 @@
 #include "render_helpers.h"
 #include "save_system.h"
 #include "systems.h"
+#include "update_helpers.h"
 
 // Update hover grid position from mouse
 struct HoverTrackingSystem : System<> {
@@ -60,6 +61,22 @@ struct HoverTrackingSystem : System<> {
 
 // Render facility labels as 2D text projected from 3D positions.
 struct RenderFacilityLabelsSystem : System<> {
+    static raylib::Color fill_bar_color(float ratio) {
+        if (ratio < 0.50f) return {80, 200, 80, 220};
+        if (ratio < 0.75f) return {220, 200, 40, 220};
+        return {220, 60, 40, 220};
+    }
+
+    static int facility_agent_count(Grid* grid, float world_x, float world_z) {
+        auto [ax, az] = grid->world_to_grid(world_x, world_z);
+        int total = 0;
+        for (int dz = -1; dz <= 0; dz++)
+            for (int dx = -1; dx <= 0; dx++)
+                if (grid->in_bounds(ax + dx, az + dz))
+                    total += grid->at(ax + dx, az + dz).agent_count;
+        return total;
+    }
+
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -87,6 +104,30 @@ struct RenderFacilityLabelsSystem : System<> {
             raylib::Color color = {lbl.r, lbl.g, lbl.b, 255};
             raylib::DrawTextEx(get_font(), lbl.text, {tx, ty}, font_size,
                                FONT_SPACING, color);
+
+            // Fill bar for serviceable facilities (not stage/gate)
+            bool is_facility = (std::strcmp(lbl.text, "WC") == 0 ||
+                                std::strcmp(lbl.text, "FOOD") == 0 ||
+                                std::strcmp(lbl.text, "MED") == 0);
+            if (is_facility) {
+                int agents =
+                    facility_agent_count(grid, lbl.world_x, lbl.world_z);
+                if (agents > 0) {
+                    float ratio =
+                        static_cast<float>(agents) / FACILITY_MAX_AGENTS;
+                    ratio = std::min(ratio, 1.0f);
+                    float bar_w = 30.f;
+                    float bar_h = 4.f;
+                    float bx = screen.x - bar_w / 2.f;
+                    float by = ty + m.y + 5.f;
+                    raylib::DrawRectangle((int) bx, (int) by, (int) bar_w,
+                                          (int) bar_h,
+                                          raylib::Color{0, 0, 0, 140});
+                    raylib::DrawRectangle((int) bx, (int) by,
+                                          (int) (bar_w * ratio), (int) bar_h,
+                                          fill_bar_color(ratio));
+                }
+            }
         }
     }
 };
@@ -153,13 +194,49 @@ struct RenderUISystem : System<> {
             draw_text(phase_str, bar_x, 11, 20,
                       raylib::Color{255, 220, 100, 255});
             vtr.register_text(phase_str);
-            bar_x += 130;
-            if (clock->speed == GameSpeed::Paused) {
-                draw_text("PAUSED", bar_x, 11, 20,
-                          raylib::Color{255, 100, 100, 255});
-                vtr.register_text("PAUSED");
-                bar_x += 90;
+            bar_x += measure_text(phase_str, 20).x + 16;
+
+            // Speed control icons
+            auto mouse = input::get_mouse_position();
+            bool mouse_click =
+                input::is_mouse_button_pressed(raylib::MOUSE_BUTTON_LEFT);
+            struct SpeedIcon {
+                const char* label;
+                GameSpeed speed;
+            };
+            constexpr SpeedIcon SPEED_ICONS[] = {
+                {"||", GameSpeed::Paused},
+                {">", GameSpeed::OneX},
+                {">>", GameSpeed::TwoX},
+                {">>>", GameSpeed::FourX},
+            };
+            for (int i = 0; i < 4; i++) {
+                bool active = (clock->speed == SPEED_ICONS[i].speed);
+                raylib::Color col =
+                    active ? raylib::WHITE : raylib::Color{120, 120, 130, 255};
+                auto sm = measure_text(SPEED_ICONS[i].label, 18);
+                float icon_w = std::max(sm.x + 8.f, 22.f);
+                float ix = bar_x;
+                float iy = 8;
+                float ih = 28;
+
+                if (mouse_click && !game_is_over() && mouse.x >= ix &&
+                    mouse.x <= ix + icon_w && mouse.y >= iy &&
+                    mouse.y <= iy + ih) {
+                    clock->speed = SPEED_ICONS[i].speed;
+                    active = true;
+                    col = raylib::WHITE;
+                }
+
+                if (active) {
+                    raylib::DrawRectangle((int) ix, (int) (iy + ih - 2),
+                                          (int) icon_w, 2, raylib::WHITE);
+                }
+                float tx = ix + (icon_w - sm.x) / 2.f;
+                draw_text(SPEED_ICONS[i].label, tx, 12, 18, col);
+                bar_x += icon_w + 4;
             }
+            bar_x += 8;
         }
         if (gs) {
             std::string death_text =
@@ -280,9 +357,17 @@ struct RenderUISystem : System<> {
                 unsigned char a = static_cast<unsigned char>(alpha * 255);
                 auto tm = measure_text(toast.text, 20);
                 float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
+
+                raylib::Color bg = toast.is_hint
+                                       ? raylib::Color{25, 50, 100, a}
+                                       : raylib::Color{30, 120, 60, a};
                 raylib::DrawRectangle((int) (tx - 8), (int) (toast_y - 4),
-                                      (int) (tm.x + 16), (int) (tm.y + 8),
-                                      raylib::Color{30, 120, 60, a});
+                                      (int) (tm.x + 16), (int) (tm.y + 8), bg);
+                if (toast.is_hint) {
+                    raylib::DrawRectangle((int) (tx - 8), (int) (toast_y - 4),
+                                          3, (int) (tm.y + 8),
+                                          raylib::Color{80, 160, 255, a});
+                }
                 raylib::DrawTextEx(get_font(), toast.text.c_str(),
                                    {tx, toast_y}, 20, FONT_SPACING,
                                    raylib::Color{255, 255, 255, a});
@@ -311,15 +396,56 @@ struct RenderUISystem : System<> {
             }
         }
 
-        // Grid hover info
+        // Grid hover info with need breakdown
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         if (pds && pds->hover_valid) {
             auto* grid = EntityHelper::get_singleton_cmp<Grid>();
             if (grid && grid->in_bounds(pds->hover_x, pds->hover_z)) {
                 const auto& tile = grid->at(pds->hover_x, pds->hover_z);
+
                 std::string hover_text =
                     fmt::format("({}, {})  Agents: {}", pds->hover_x,
                                 pds->hover_z, tile.agent_count);
+
+                if (tile.agent_count > 0) {
+                    static int cached_hx = -1, cached_hz = -1;
+                    static int need_counts[5] = {};
+                    if (cached_hx != pds->hover_x ||
+                        cached_hz != pds->hover_z) {
+                        cached_hx = pds->hover_x;
+                        cached_hz = pds->hover_z;
+                        std::memset(need_counts, 0, sizeof(need_counts));
+                        auto agents = EntityQuery()
+                                          .whereHasComponent<Agent>()
+                                          .whereHasComponent<Transform>()
+                                          .gen();
+                        for (Entity& ae : agents) {
+                            if (!ae.is_missing<BeingServiced>()) continue;
+                            auto& atf = ae.get<Transform>();
+                            auto [agx, agz] = grid->world_to_grid(
+                                atf.position.x, atf.position.y);
+                            if (agx == cached_hx && agz == cached_hz) {
+                                int idx =
+                                    static_cast<int>(ae.get<Agent>().want);
+                                if (idx >= 0 && idx < 5) need_counts[idx]++;
+                            }
+                        }
+                    }
+
+                    const char* names[] = {"bathroom", "food", "watching",
+                                           "exiting", "medical"};
+                    std::string breakdown;
+                    for (int i = 0; i < 5; i++) {
+                        if (need_counts[i] > 0) {
+                            if (!breakdown.empty()) breakdown += ", ";
+                            breakdown +=
+                                fmt::format("{} {}", need_counts[i], names[i]);
+                        }
+                    }
+                    if (!breakdown.empty())
+                        hover_text += " \xe2\x80\x94 " + breakdown;
+                }
+
                 draw_text_bg(hover_text, 10, build_bar_y - 30, 18,
                              raylib::Color{200, 200, 200, 255});
             }
@@ -415,6 +541,14 @@ struct RenderTimelineSidebarSystem : System<> {
 
 // Minimap rendering at bottom of sidebar.
 struct RenderMinimapSystem : System<> {
+    static constexpr raylib::Color AGENT_DOT_COLORS[] = {
+        {126, 207, 192, 255},  // Bathroom
+        {244, 164, 164, 255},  // Food
+        {255, 217, 61, 255},   // Stage
+        {68, 136, 170, 255},   // Exit
+        {255, 100, 100, 255},  // MedTent
+    };
+
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -445,21 +579,6 @@ struct RenderMinimapSystem : System<> {
                 }
             }
 
-            auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-            if (cam) {
-                float zoom = cam->cam.camera.position.y;
-                float view_tiles = zoom * 1.5f;
-                float cam_gx = cam->cam.camera.target.x / TILESIZE;
-                float cam_gz = cam->cam.camera.target.z / TILESIZE;
-                float mm_cx = cam_gx * MINIMAP_SCALE;
-                float mm_cy = cam_gz * MINIMAP_SCALE;
-                float mm_w = view_tiles * MINIMAP_SCALE;
-                float mm_h = view_tiles * MINIMAP_SCALE * 0.6f;
-                raylib::DrawRectangleLines((int) (mm_cx - mm_w / 2),
-                                           (int) (mm_cy - mm_h / 2), (int) mm_w,
-                                           (int) mm_h, raylib::WHITE);
-            }
-
             raylib::EndTextureMode();
         }
 
@@ -467,10 +586,46 @@ struct RenderMinimapSystem : System<> {
 
         float sidebar_x = DEFAULT_SCREEN_WIDTH - 150.f;
         float minimap_y = DEFAULT_SCREEN_HEIGHT - MINIMAP_SIZE;
+
+        // Draw cached tile layer
         raylib::DrawTextureRec(
             g_minimap_texture.texture,
             {0, 0, (float) MINIMAP_SIZE, -(float) MINIMAP_SIZE},
             {sidebar_x, minimap_y}, raylib::WHITE);
+
+        // Draw agent dots (per-frame)
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .gen();
+        for (Entity& ae : agents) {
+            if (!ae.is_missing<BeingServiced>()) continue;
+            auto& tf = ae.get<Transform>();
+            float gx = tf.position.x / TILESIZE;
+            float gz = tf.position.y / TILESIZE;
+            float px = sidebar_x + gx * MINIMAP_SCALE;
+            float py = minimap_y + gz * MINIMAP_SCALE;
+
+            int di = static_cast<int>(ae.get<Agent>().want);
+            raylib::Color dot_col = AGENT_DOT_COLORS[di % 5];
+            raylib::DrawRectangle((int) px, (int) py, 2, 2, dot_col);
+        }
+
+        // Draw camera viewport rectangle
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (cam) {
+            float zoom = cam->cam.camera.position.y;
+            float view_tiles = zoom * 1.5f;
+            float cam_gx = cam->cam.camera.target.x / TILESIZE;
+            float cam_gz = cam->cam.camera.target.z / TILESIZE;
+            float mm_cx = sidebar_x + cam_gx * MINIMAP_SCALE;
+            float mm_cy = minimap_y + cam_gz * MINIMAP_SCALE;
+            float mm_w = view_tiles * MINIMAP_SCALE;
+            float mm_h = view_tiles * MINIMAP_SCALE * 0.6f;
+            raylib::DrawRectangleLines((int) (mm_cx - mm_w / 2),
+                                       (int) (mm_cy - mm_h / 2), (int) mm_w,
+                                       (int) mm_h, raylib::WHITE);
+        }
 
         raylib::DrawRectangleLines((int) sidebar_x, (int) minimap_y,
                                    MINIMAP_SIZE, MINIMAP_SIZE,

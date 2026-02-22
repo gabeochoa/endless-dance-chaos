@@ -426,6 +426,7 @@ struct ToastMessage : afterhours::BaseComponent {
     float lifetime = 3.0f;
     float elapsed = 0.f;
     float fade_duration = 0.5f;
+    bool is_hint = false;
 };
 
 // Facility slot tracking for progression
@@ -595,6 +596,41 @@ struct SpawnState : afterhours::BaseComponent {
     float timer = 0.f;
     bool enabled = true;
     bool manual_override = false;  // debug slider active, skip auto-adjust
+};
+
+// Death location marker (fades over time)
+struct DeathMarker : afterhours::BaseComponent {
+    vec2 position;
+    float lifetime = 10.0f;
+    float max_lifetime = 10.0f;
+};
+
+// Contextual hint tracking + bottleneck detection
+struct HintState : afterhours::BaseComponent {
+    std::bitset<8> shown;
+    float game_elapsed = 0.f;
+    int prev_death_count = 0;
+    GameClock::Phase prev_phase = GameClock::Phase::Day;
+    int prev_slots_per_type = 0;
+
+    // Bottleneck tracking (once per facility type per run)
+    bool bathroom_warned = false;
+    bool food_warned = false;
+    bool medtent_warned = false;
+    float bathroom_overload_timer = 0.f;
+    float food_overload_timer = 0.f;
+    float medtent_overload_timer = 0.f;
+
+    enum Hint {
+        GameStart = 0,
+        FirstAgents,
+        FirstNeed,
+        FirstDeath,
+        FirstDensity,
+        NightFalls,
+        FirstExodus,
+        SlotUnlocked,
+    };
 };
 
 // Path drawing state - rectangle drag on grid

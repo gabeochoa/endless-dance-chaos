@@ -372,6 +372,25 @@ struct AgentDeathSystem : System<> {
             } else {
                 spawn_death_particles(info.wx, info.wz, 6 * info.count, 0.8f);
             }
+
+            Entity& dme = EntityHelper::createEntity();
+            dme.addComponent<DeathMarker>();
+            auto& dm = dme.get<DeathMarker>();
+            dm.position = {info.wx, info.wz};
+        }
+        EntityHelper::merge_entity_arrays();
+
+        // Cap death markers at 20 by removing oldest
+        auto dm_query = EntityQuery().whereHasComponent<DeathMarker>().gen();
+        std::vector<Entity*> markers;
+        for (Entity& dme : dm_query) markers.push_back(&dme);
+        if (markers.size() > 20) {
+            std::sort(markers.begin(), markers.end(), [](Entity* a, Entity* b) {
+                return a->get<DeathMarker>().lifetime <
+                       b->get<DeathMarker>().lifetime;
+            });
+            for (size_t i = 0; i < markers.size() - 20; i++)
+                markers[i]->cleanup = true;
         }
     }
 };

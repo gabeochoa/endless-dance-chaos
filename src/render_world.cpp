@@ -266,6 +266,65 @@ struct RenderDensityOverlaySystem : System<> {
     }
 };
 
+// Always-on density warning flash for dangerous tiles (75%+)
+struct RenderDensityFlashSystem : System<> {
+    void once(float) const override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        float t = static_cast<float>(raylib::GetTime());
+        float tile_size = TILESIZE * 0.98f;
+        int danger_threshold =
+            static_cast<int>(DENSITY_DANGEROUS * MAX_AGENTS_PER_TILE);
+
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count < danger_threshold) continue;
+
+                float density =
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
+                bool critical = density >= DENSITY_CRITICAL;
+
+                float freq = critical ? 3.0f : 1.0f;
+                float pulse = (std::sin(t * freq * 6.283f) + 1.0f) * 0.5f;
+
+                unsigned char alpha;
+                raylib::Color color;
+                if (critical) {
+                    alpha = static_cast<unsigned char>(40 + pulse * 100);
+                    color = {255, 40, 40, alpha};
+                } else {
+                    alpha = static_cast<unsigned char>(pulse * 80);
+                    color = {255, 140, 0, alpha};
+                }
+
+                raylib::DrawPlane({x * TILESIZE, 0.04f, z * TILESIZE},
+                                  {tile_size, tile_size}, color);
+            }
+        }
+    }
+};
+
+// Render death location markers as red X shapes
+struct RenderDeathMarkersSystem : System<DeathMarker> {
+    void for_each_with(Entity&, DeathMarker& dm, float) override {
+        float alpha_f = 1.0f;
+        float fade_start = 3.0f;
+        if (dm.lifetime < fade_start) alpha_f = dm.lifetime / fade_start;
+
+        auto alpha = static_cast<unsigned char>(alpha_f * 255.f);
+        raylib::Color color = {255, 60, 60, alpha};
+        float s = 0.15f;
+        float y = 0.08f;
+        float wx = dm.position.x;
+        float wz = dm.position.y;
+
+        raylib::DrawLine3D({wx - s, y, wz - s}, {wx + s, y, wz + s}, color);
+        raylib::DrawLine3D({wx - s, y, wz + s}, {wx + s, y, wz - s}, color);
+    }
+};
+
 // Render death particles as small 3D cubes
 struct RenderParticlesSystem : System<Particle, Transform> {
     void for_each_with(Entity&, Particle& p, Transform& tf, float) override {
@@ -292,7 +351,9 @@ void register_render_world_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderGridSystem>());
     sm.register_render_system(std::make_unique<RenderStageGlowSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
+    sm.register_render_system(std::make_unique<RenderDensityFlashSystem>());
     sm.register_render_system(std::make_unique<RenderDensityOverlaySystem>());
+    sm.register_render_system(std::make_unique<RenderDeathMarkersSystem>());
     sm.register_render_system(std::make_unique<RenderParticlesSystem>());
     sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());
     sm.register_render_system(std::make_unique<EndMode3DSystem>());
