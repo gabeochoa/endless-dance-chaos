@@ -26,7 +26,7 @@ inline bool mouse_clicked = false;
 inline int mouse_button_clicked = 0;
 
 // Store render texture reference for screenshots
-inline raylib::RenderTexture2D* screenshot_texture = nullptr;
+inline afterhours::graphics::RenderTextureType* screenshot_texture = nullptr;
 
 inline std::vector<uint8_t> capture_screenshot() {
     if (!screenshot_texture) {
@@ -121,7 +121,8 @@ struct InjectInputSystem {
 };
 }  // namespace detail
 
-inline void set_screenshot_texture(raylib::RenderTexture2D* rt) {
+inline void set_screenshot_texture(
+    afterhours::graphics::RenderTextureType* rt) {
     detail::screenshot_texture = rt;
 }
 

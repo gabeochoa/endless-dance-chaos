@@ -1,0 +1,47 @@
+# Visual baseline for render texture migration
+# Captures screenshots at key visual states to verify nothing changes
+# when decoupling RenderTexture2D from direct raylib calls.
+
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: Empty grid — tests main render texture with just the world
+screenshot 30_rt_empty_grid
+
+# 2: Paths drawn — tests 3D geometry in render texture
+draw_path_rect 0 24 35 28
+draw_path_rect 19 14 22 38
+wait_frames 5
+screenshot 30_rt_paths
+
+# 3: Agents on screen — tests entity rendering in render texture
+spawn_agents 28 26 20 stage
+wait 2
+screenshot 30_rt_agents
+
+# 4: Density overlay — tests overlay compositing in render texture
+toggle_overlay
+wait_frames 10
+screenshot 30_rt_density_overlay
+toggle_overlay
+
+# 5: Night mode — tests day/night palette through render texture
+set_time 20 0
+wait_frames 10
+screenshot 30_rt_night
+
+# 6: Minimap visible (sidebar renders minimap render texture into main)
+set_time 8 0
+wait_frames 10
+screenshot 30_rt_minimap
+
+# 7: Game over screen — tests UI overlay on render texture
+trigger_game_over
+wait_frames 5
+screenshot 30_rt_game_over
+
+# 8: After restart — verify render texture resets cleanly
+key SPACE
+wait_frames 10
+screenshot 30_rt_post_restart

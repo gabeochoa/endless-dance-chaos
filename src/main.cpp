@@ -15,11 +15,10 @@
 bool running = true;
 bool g_test_mode = false;
 
-// Render texture for MCP screenshots
-raylib::RenderTexture2D g_render_texture;
-
 using namespace afterhours;
 namespace gfx = afterhours::graphics;
+
+gfx::RenderTextureType g_render_texture;
 
 void game(const std::string& test_script, const std::string& test_dir) {
     SystemManager systems;
@@ -35,11 +34,7 @@ void game(const std::string& test_script, const std::string& test_dir) {
         runner.set_screenshot_callback([](const std::string& name) {
             std::filesystem::create_directories("tests/e2e/screenshots");
             std::string path = "tests/e2e/screenshots/" + name + ".png";
-            raylib::Image img =
-                raylib::LoadImageFromTexture(g_render_texture.texture);
-            raylib::ImageFlipVertical(&img);
-            raylib::ExportImage(img, path.c_str());
-            raylib::UnloadImage(img);
+            capture_render_texture(g_render_texture, path);
             log_info("[E2E] Screenshot saved: {}", path);
         });
     };

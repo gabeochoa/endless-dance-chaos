@@ -483,7 +483,7 @@ struct RenderUISystem : System<> {
 };
 
 // Minimap RenderTexture management
-static raylib::RenderTexture2D g_minimap_texture = {};
+static afterhours::graphics::RenderTextureType g_minimap_texture = {};
 static bool g_minimap_initialized = false;
 static constexpr int MINIMAP_SIZE = 150;
 static constexpr float MINIMAP_SCALE = 150.0f / 52.0f;

@@ -16,7 +16,7 @@
 using namespace afterhours;
 
 // Render texture from main.cpp for MCP screenshots
-extern raylib::RenderTexture2D g_render_texture;
+extern afterhours::graphics::RenderTextureType g_render_texture;
 
 // ── 2D drawing helpers ──
 // Functions with matching signatures (draw_text, draw_line, draw_circle,
