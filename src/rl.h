@@ -59,8 +59,6 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 
 }  // namespace raylib
 
-#include <GLFW/glfw3.h>
-
 #undef MAGIC_ENUM_RANGE_MAX
 #define MAGIC_ENUM_RANGE_MAX 400
 #include <magic_enum/magic_enum.hpp>

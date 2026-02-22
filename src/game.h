@@ -4,9 +4,6 @@
 #include "rl.h"
 #include "std_include.h"
 
-// Owned by main.cpp
-extern bool running;
-
 // Window dimensions
 constexpr int DEFAULT_SCREEN_WIDTH = 1280;
 constexpr int DEFAULT_SCREEN_HEIGHT = 720;

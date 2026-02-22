@@ -3,12 +3,12 @@
 #include "rl.h"
 #include "systems.h"
 
-extern bool running;
+namespace gfx = afterhours::graphics;
 
 struct MCPUpdateSystem : System<> {
     void once(float) override {
         if (mcp_integration::exit_requested()) {
-            running = false;
+            gfx::request_quit();
         }
         mcp_integration::update();
     }
