@@ -77,20 +77,22 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 
 #define RectangleType raylib::Rectangle
 #define Vector2Type raylib::Vector2
+#define Vector3Type raylib::Vector3
 #define TextureType raylib::Texture2D
+#define ColorType raylib::Color
 #include <afterhours/ah.h>
 #include <afterhours/src/developer.h>
+#include <afterhours/src/plugins/color.h>
 #include <afterhours/src/plugins/input_system.h>
 #include <afterhours/src/plugins/texture_manager.h>
 #include <afterhours/src/plugins/window_manager.h>
 
 #include <cassert>
 
-typedef raylib::Vector2 vec2;
-typedef raylib::Vector3 vec3;
-typedef raylib::Vector4 vec4;
-using raylib::Color;
-using raylib::Rectangle;
+typedef Vector2Type vec2;
+typedef Vector3Type vec3;
+using Color = afterhours::Color;
+using Rectangle = RectangleType;
 
 // Re-export afterhours input constants into the global namespace
 // so game code can use short names (KEY_SPACE, MOUSE_BUTTON_LEFT, etc.)
