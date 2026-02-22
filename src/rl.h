@@ -75,11 +75,6 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
-#define RectangleType raylib::Rectangle
-#define Vector2Type raylib::Vector2
-#define Vector3Type raylib::Vector3
-#define TextureType raylib::Texture2D
-#define ColorType raylib::Color
 #include <afterhours/ah.h>
 #include <afterhours/src/developer.h>
 #include <afterhours/src/plugins/color.h>
