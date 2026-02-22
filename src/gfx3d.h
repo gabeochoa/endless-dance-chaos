@@ -20,6 +20,8 @@ using afterhours::get_world_to_screen;
 // Re-export afterhours render texture functions into global scope
 using afterhours::begin_texture_mode;
 using afterhours::capture_render_texture;
+using afterhours::capture_render_texture_to_memory;
+using afterhours::capture_screen_to_memory;
 using afterhours::draw_render_texture;
 using afterhours::draw_texture_rec;
 using afterhours::end_texture_mode;

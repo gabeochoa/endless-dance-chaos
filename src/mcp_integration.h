@@ -30,41 +30,9 @@ inline afterhours::graphics::RenderTextureType* screenshot_texture = nullptr;
 
 inline std::vector<uint8_t> capture_screenshot() {
     if (!screenshot_texture) {
-        // Fallback: capture the whole screen
-        raylib::Image img = raylib::LoadImageFromScreen();
-        int file_size = 0;
-        unsigned char* png_data =
-            raylib::ExportImageToMemory(img, ".png", &file_size);
-
-        std::vector<uint8_t> result;
-        if (png_data && file_size > 0) {
-            result.assign(png_data, png_data + file_size);
-            raylib::MemFree(png_data);
-        }
-
-        raylib::UnloadImage(img);
-        return result;
+        return afterhours::capture_screen_to_memory();
     }
-
-    raylib::Image img =
-        raylib::LoadImageFromTexture(screenshot_texture->texture);
-    if (img.data == nullptr) {
-        return {};  // Failed to load from texture
-    }
-    raylib::ImageFlipVertical(&img);
-
-    int file_size = 0;
-    unsigned char* png_data =
-        raylib::ExportImageToMemory(img, ".png", &file_size);
-
-    std::vector<uint8_t> result;
-    if (png_data && file_size > 0) {
-        result.assign(png_data, png_data + file_size);
-        raylib::MemFree(png_data);
-    }
-
-    raylib::UnloadImage(img);
-    return result;
+    return afterhours::capture_render_texture_to_memory(*screenshot_texture);
 }
 
 inline std::pair<int, int> get_screen_size() {
