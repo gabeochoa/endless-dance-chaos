@@ -89,6 +89,7 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 typedef raylib::Vector2 vec2;
 typedef raylib::Vector3 vec3;
 typedef raylib::Vector4 vec4;
+using raylib::Color;
 using raylib::Rectangle;
 
 #ifdef __clang__

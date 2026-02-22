@@ -68,7 +68,7 @@ inline std::vector<uint8_t> capture_screenshot() {
 }
 
 inline std::pair<int, int> get_screen_size() {
-    return {raylib::GetScreenWidth(), raylib::GetScreenHeight()};
+    return {DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT};
 }
 
 inline std::string dump_ui_tree() {

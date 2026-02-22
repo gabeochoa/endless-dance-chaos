@@ -1,4 +1,5 @@
 #include "mcp_integration.h"
+#include "render_helpers.h"
 #include "rl.h"
 #include "systems.h"
 
@@ -16,7 +17,7 @@ struct MCPUpdateSystem : System<> {
 struct MCPRenderUISystem : System<> {
     void once(float) const override {
         if (mcp_integration::is_enabled()) {
-            raylib::DrawText("[MCP Mode Active]", 10, 40, 14, raylib::LIME);
+            draw_text("[MCP Mode Active]", 10, 40, 14, Color{0, 255, 0, 255});
         }
     }
 };

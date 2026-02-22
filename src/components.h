@@ -378,7 +378,7 @@ struct Particle : afterhours::BaseComponent {
     float lifetime = 0.f;
     float max_lifetime = 0.f;
     float size = 3.f;
-    raylib::Color color = {255, 80, 80, 255};
+    Color color = {255, 80, 80, 255};
 };
 
 // Pheromone depositor: agent leaves trail after exiting facility

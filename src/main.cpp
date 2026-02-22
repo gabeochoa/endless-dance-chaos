@@ -1,13 +1,16 @@
 
 #include <argh.h>
 
-#include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
-#include "afterhours/src/plugins/e2e_testing/test_input.h"
 #include "audio.h"
 #include "entity_makers.h"
 #include "game.h"
+#include "gfx3d.h"
 #include "mcp_integration.h"
+#include "render_helpers.h"
 #include "systems.h"
+
+#include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
+#include "afterhours/src/plugins/e2e_testing/test_input.h"
 
 bool running = true;
 bool g_test_mode = false;
@@ -59,7 +62,7 @@ void game(const std::string& test_script, const std::string& test_dir) {
         afterhours::testing::test_input::detail::test_mode = true;
     }
 
-    while (running && !raylib::WindowShouldClose()) {
+    while (running && !window_should_close()) {
         // Reset per-frame test input state (manages just_pressed lifetime)
         if (g_test_mode) {
             afterhours::testing::test_input::reset_frame();
@@ -69,7 +72,7 @@ void game(const std::string& test_script, const std::string& test_dir) {
         bool escape_should_quit =
             raylib::IsKeyPressed(raylib::KEY_ESCAPE) && should_escape_quit();
 
-        float dt = raylib::GetFrameTime();
+        float dt = get_frame_time();
         systems.run(dt);
 
         // Tick E2E runner in test mode
@@ -127,7 +130,7 @@ int main(int argc, char* argv[]) {
 
     // Create render texture for MCP screenshots
     g_render_texture =
-        raylib::LoadRenderTexture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
+        load_render_texture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
 
     if (mcp_mode) {
         mcp_integration::set_screenshot_texture(&g_render_texture);
@@ -145,7 +148,7 @@ int main(int argc, char* argv[]) {
     mcp_integration::shutdown();
     get_audio().shutdown();
     raylib::CloseAudioDevice();
-    raylib::UnloadRenderTexture(g_render_texture);
+    unload_render_texture(g_render_texture);
     raylib::CloseWindow();
 
     log_info("Goodbye!");

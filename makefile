@@ -15,7 +15,7 @@ NOFLAGS = -Wno-deprecated-volatile -Wno-missing-field-initializers \
 		  -Wno-implicit-int-float-conversion
 
 INCLUDES = -Ivendor/ -Isrc/
-LIBS = -Lvendor/ $(RAYLIB_LIB)
+LIBS = -Lvendor/ $(RAYLIB_LIB) -framework OpenGL
 
 SRC_FILES := $(wildcard src/*.cpp src/**/*.cpp)
 H_FILES := $(wildcard src/*.h src/**/*.h)

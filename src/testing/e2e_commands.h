@@ -7,13 +7,15 @@
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
-#include "afterhours/src/core/entity_helper.h"
-#include "afterhours/src/core/entity_query.h"
-#include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
 #include "components.h"
 #include "entity_makers.h"
 #include "game.h"
+#include "render_helpers.h"
 #include "systems.h"
+
+#include "afterhours/src/core/entity_helper.h"
+#include "afterhours/src/core/entity_query.h"
+#include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
 
 using namespace afterhours;
 
@@ -94,7 +96,7 @@ struct PerfSample {
 
     void tick() {
         if (!is_sampling) return;
-        float fps = raylib::GetFPS();
+        float fps = get_fps();
         if (fps <= 0.f) return;
         fps_sum += fps;
         fps_min = std::min(fps_min, fps);
