@@ -107,13 +107,12 @@ int main(int argc, char* argv[]) {
 
     // In MCP mode, suppress raylib logs and redirect our logs to stderr
     if (mcp_mode) {
-        gfx::set_trace_log_level(raylib::LOG_NONE);
+        gfx::set_trace_log_level(7);  // LOG_NONE
         g_log_to_stderr = true;
     }
 
-    // In test mode, suppress raylib logs
     if (g_test_mode) {
-        gfx::set_trace_log_level(raylib::LOG_NONE);
+        gfx::set_trace_log_level(7);  // LOG_NONE
     }
 
     log_info("Starting Endless Dance Chaos v{}", VERSION);
@@ -141,7 +140,7 @@ int main(int argc, char* argv[]) {
     // Enable test mode if --test-dir given (even without explicit --test-mode)
     if (!test_dir.empty()) {
         g_test_mode = true;
-        gfx::set_trace_log_level(raylib::LOG_NONE);
+        gfx::set_trace_log_level(7);  // LOG_NONE
     }
 
     game(test_script, test_dir);

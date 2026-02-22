@@ -34,7 +34,7 @@ struct IsometricCamera {
     IsometricCamera() {
         camera.up = {0.0f, 1.0f, 0.0f};
         camera.fovy = distance;  // Orthographic "zoom" level matches distance
-        camera.projection = CAMERA_ORTHOGRAPHIC;
+        camera.projection = afterhours::camera::ORTHOGRAPHIC;
         update_camera_position();
     }
 
@@ -99,7 +99,7 @@ struct IsometricCamera {
         }
 
         // Zoom: scroll wheel
-        float wheel = raylib::GetMouseWheelMove();
+        float wheel = input::get_mouse_wheel_move();
         if (wheel != 0) {
             zoom(wheel);
         }

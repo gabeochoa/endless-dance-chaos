@@ -21,7 +21,7 @@ inline bool enabled = false;
 inline std::set<int> keys_down;
 inline std::set<int> keys_pressed_this_frame;
 inline std::set<int> keys_released_this_frame;
-inline raylib::Vector2 mouse_position = {0, 0};
+inline vec2 mouse_position = {0, 0};
 inline bool mouse_clicked = false;
 inline int mouse_button_clicked = 0;
 
@@ -168,7 +168,7 @@ inline bool is_key_pressed(int keycode) {
 }
 
 // Get current mouse position (from MCP)
-inline raylib::Vector2 get_mouse_position() { return detail::mouse_position; }
+inline vec2 get_mouse_position() { return detail::mouse_position; }
 
 // Check if mouse was clicked this frame (from MCP)
 inline bool is_mouse_clicked() { return detail::mouse_clicked; }
@@ -177,7 +177,7 @@ inline bool is_mouse_clicked() { return detail::mouse_clicked; }
 
 #else
 
-#include "rl.h"  // Need raylib::Vector2 for stub
+#include "rl.h"
 
 // Stub implementation when MCP is disabled
 namespace mcp_integration {
@@ -190,7 +190,7 @@ inline bool exit_requested() { return false; }
 inline bool is_enabled() { return false; }
 inline bool is_key_down(int) { return false; }
 inline bool is_key_pressed(int) { return false; }
-inline raylib::Vector2 get_mouse_position() { return {0, 0}; }
+inline vec2 get_mouse_position() { return {0, 0}; }
 inline bool is_mouse_clicked() { return false; }
 }  // namespace mcp_integration
 
