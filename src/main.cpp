@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
     gfx::set_exit_key(0);
 
     // Initialize audio (skip in test mode for speed)
-    raylib::InitAudioDevice();
+    afterhours::InitAudioDevice();
     if (!g_test_mode) {
         get_audio().init();
     }
@@ -142,7 +142,7 @@ int main(int argc, char* argv[]) {
 
     mcp_integration::shutdown();
     get_audio().shutdown();
-    raylib::CloseAudioDevice();
+    afterhours::CloseAudioDevice();
     unload_render_texture(g_render_texture);
     gfx::close_window();
 

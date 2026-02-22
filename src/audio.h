@@ -2,20 +2,22 @@
 
 #include "rl.h"
 
+#include <afterhours/src/plugins/audio_helpers.h>
+
 #include <cmath>
 #include <cstdlib>
 #include <vector>
 
-// Procedural audio manager for festival game
-// Generates all sounds at runtime -- no external audio files needed
+namespace ah = afterhours;
+
 struct AudioManager {
-    raylib::Sound sfx_click;
-    raylib::Sound sfx_place;
-    raylib::Sound sfx_demolish;
-    raylib::Sound sfx_toast;
-    raylib::Sound sfx_death;
-    raylib::Sound sfx_gameover;
-    raylib::Music music_beat;
+    ah::SoundType sfx_click;
+    ah::SoundType sfx_place;
+    ah::SoundType sfx_demolish;
+    ah::SoundType sfx_toast;
+    ah::SoundType sfx_death;
+    ah::SoundType sfx_gameover;
+    ah::MusicType music_beat;
 
     float master_volume = 0.6f;
     float sfx_volume = 0.5f;
@@ -23,21 +25,19 @@ struct AudioManager {
     bool music_playing = false;
     bool initialized = false;
 
-    // Generate a sine wave tone
-    static raylib::Wave gen_tone(float freq, float duration, float volume,
+    static ah::WaveType gen_tone(float freq, float duration, float volume,
                                  int sample_rate = 44100) {
         int count = static_cast<int>(sample_rate * duration);
         auto* data = static_cast<float*>(std::malloc(count * sizeof(float)));
         for (int i = 0; i < count; i++) {
             float t = static_cast<float>(i) / sample_rate;
             float env = 1.0f;
-            // Quick fade-out in last 20%
             float fade_start = duration * 0.8f;
             if (t > fade_start)
                 env = 1.0f - (t - fade_start) / (duration * 0.2f);
             data[i] = std::sin(2.0f * 3.14159265f * freq * t) * volume * env;
         }
-        raylib::Wave w = {0};
+        ah::WaveType w = {0};
         w.frameCount = static_cast<unsigned int>(count);
         w.sampleRate = static_cast<unsigned int>(sample_rate);
         w.sampleSize = 32;
@@ -46,8 +46,7 @@ struct AudioManager {
         return w;
     }
 
-    // Generate a two-tone chime (ascending)
-    static raylib::Wave gen_chime(float freq1, float freq2, float duration,
+    static ah::WaveType gen_chime(float freq1, float freq2, float duration,
                                   float volume) {
         int rate = 44100;
         int count = static_cast<int>(rate * duration);
@@ -59,7 +58,7 @@ struct AudioManager {
             float env = 1.0f - static_cast<float>(i) / count;
             data[i] = std::sin(2.0f * 3.14159265f * freq * t) * volume * env;
         }
-        raylib::Wave w = {0};
+        ah::WaveType w = {0};
         w.frameCount = static_cast<unsigned int>(count);
         w.sampleRate = static_cast<unsigned int>(rate);
         w.sampleSize = 32;
@@ -68,8 +67,7 @@ struct AudioManager {
         return w;
     }
 
-    // Generate a noise burst (for death/explosion)
-    static raylib::Wave gen_noise(float duration, float volume) {
+    static ah::WaveType gen_noise(float duration, float volume) {
         int rate = 44100;
         int count = static_cast<int>(rate * duration);
         auto* data = static_cast<float*>(std::malloc(count * sizeof(float)));
@@ -79,7 +77,7 @@ struct AudioManager {
                 (static_cast<float>(std::rand()) / RAND_MAX) * 2.0f - 1.0f;
             data[i] = noise * volume * env * env;
         }
-        raylib::Wave w = {0};
+        ah::WaveType w = {0};
         w.frameCount = static_cast<unsigned int>(count);
         w.sampleRate = static_cast<unsigned int>(rate);
         w.sampleSize = 32;
@@ -88,8 +86,7 @@ struct AudioManager {
         return w;
     }
 
-    // Generate a looping EDM-style beat pattern (kick + hi-hat)
-    static raylib::Wave gen_beat_loop(float bpm, int bars, float volume) {
+    static ah::WaveType gen_beat_loop(float bpm, int bars, float volume) {
         int rate = 44100;
         float beat_sec = 60.0f / bpm;
         float bar_sec = beat_sec * 4.0f;
@@ -102,7 +99,6 @@ struct AudioManager {
             float t = static_cast<float>(i) / rate;
             float beat_pos = std::fmod(t, beat_sec);
 
-            // Kick drum on beats 1 and 3 (every beat_sec * 2)
             float bar_t = std::fmod(t, bar_sec);
             bool is_kick =
                 (bar_t < beat_sec * 0.01f) ||
@@ -119,7 +115,6 @@ struct AudioManager {
                 }
             }
 
-            // Hi-hat on every 8th note
             float eighth = beat_sec / 2.0f;
             float eighth_pos = std::fmod(t, eighth);
             if (eighth_pos < 0.02f) {
@@ -129,7 +124,6 @@ struct AudioManager {
                 data[i] += hat_noise * hat_env * volume * 0.15f;
             }
 
-            // Sub bass on beat 1
             if (bar_t < beat_sec) {
                 float sub_env = 1.0f - bar_t / beat_sec;
                 data[i] += std::sin(2.0f * 3.14159265f * 55.0f * t) * sub_env *
@@ -139,7 +133,7 @@ struct AudioManager {
             data[i] = std::clamp(data[i], -1.0f, 1.0f);
         }
 
-        raylib::Wave w = {0};
+        ah::WaveType w = {0};
         w.frameCount = static_cast<unsigned int>(count);
         w.sampleRate = static_cast<unsigned int>(rate);
         w.sampleSize = 32;
@@ -151,42 +145,34 @@ struct AudioManager {
     void init() {
         if (initialized) return;
 
-        // UI click: short high-pitched tick
         auto w_click = gen_tone(800.0f, 0.04f, 0.3f);
-        sfx_click = raylib::LoadSoundFromWave(w_click);
-        raylib::UnloadWave(w_click);
+        sfx_click = ah::LoadSoundFromWave(w_click);
+        ah::UnloadWave(w_click);
 
-        // Place building: satisfying thunk
         auto w_place = gen_tone(300.0f, 0.08f, 0.4f);
-        sfx_place = raylib::LoadSoundFromWave(w_place);
-        raylib::UnloadWave(w_place);
+        sfx_place = ah::LoadSoundFromWave(w_place);
+        ah::UnloadWave(w_place);
 
-        // Demolish: descending tone
         auto w_demo = gen_tone(500.0f, 0.12f, 0.3f);
-        sfx_demolish = raylib::LoadSoundFromWave(w_demo);
-        raylib::UnloadWave(w_demo);
+        sfx_demolish = ah::LoadSoundFromWave(w_demo);
+        ah::UnloadWave(w_demo);
 
-        // Toast notification: ascending chime
         auto w_toast = gen_chime(523.0f, 784.0f, 0.25f, 0.25f);
-        sfx_toast = raylib::LoadSoundFromWave(w_toast);
-        raylib::UnloadWave(w_toast);
+        sfx_toast = ah::LoadSoundFromWave(w_toast);
+        ah::UnloadWave(w_toast);
 
-        // Death: noise burst
         auto w_death = gen_noise(0.15f, 0.2f);
-        sfx_death = raylib::LoadSoundFromWave(w_death);
-        raylib::UnloadWave(w_death);
+        sfx_death = ah::LoadSoundFromWave(w_death);
+        ah::UnloadWave(w_death);
 
-        // Game over: low descending tone
         auto w_go = gen_tone(200.0f, 0.5f, 0.4f);
-        sfx_gameover = raylib::LoadSoundFromWave(w_go);
-        raylib::UnloadWave(w_go);
+        sfx_gameover = ah::LoadSoundFromWave(w_go);
+        ah::UnloadWave(w_go);
 
-        // Beat loop: 128 BPM, 4 bars
         auto w_beat = gen_beat_loop(128.0f, 4, 0.5f);
-        // Save to temp file for LoadMusicStream (needs file path)
-        raylib::ExportWave(w_beat, "/tmp/edc_beat.wav");
-        raylib::UnloadWave(w_beat);
-        music_beat = raylib::LoadMusicStream("/tmp/edc_beat.wav");
+        ah::ExportWave(w_beat, "/tmp/edc_beat.wav");
+        ah::UnloadWave(w_beat);
+        music_beat = ah::LoadMusicStream("/tmp/edc_beat.wav");
         music_beat.looping = true;
 
         initialized = true;
@@ -194,57 +180,57 @@ struct AudioManager {
 
     void shutdown() {
         if (!initialized) return;
-        raylib::UnloadSound(sfx_click);
-        raylib::UnloadSound(sfx_place);
-        raylib::UnloadSound(sfx_demolish);
-        raylib::UnloadSound(sfx_toast);
-        raylib::UnloadSound(sfx_death);
-        raylib::UnloadSound(sfx_gameover);
-        raylib::UnloadMusicStream(music_beat);
+        ah::UnloadSound(sfx_click);
+        ah::UnloadSound(sfx_place);
+        ah::UnloadSound(sfx_demolish);
+        ah::UnloadSound(sfx_toast);
+        ah::UnloadSound(sfx_death);
+        ah::UnloadSound(sfx_gameover);
+        ah::UnloadMusicStream(music_beat);
         initialized = false;
     }
 
     void play_click() {
-        raylib::SetSoundVolume(sfx_click, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_click);
+        ah::SetSoundVolume(sfx_click, sfx_volume * master_volume);
+        ah::PlaySound(sfx_click);
     }
 
     void play_place() {
-        raylib::SetSoundVolume(sfx_place, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_place);
+        ah::SetSoundVolume(sfx_place, sfx_volume * master_volume);
+        ah::PlaySound(sfx_place);
     }
 
     void play_demolish() {
-        raylib::SetSoundVolume(sfx_demolish, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_demolish);
+        ah::SetSoundVolume(sfx_demolish, sfx_volume * master_volume);
+        ah::PlaySound(sfx_demolish);
     }
 
     void play_toast() {
-        raylib::SetSoundVolume(sfx_toast, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_toast);
+        ah::SetSoundVolume(sfx_toast, sfx_volume * master_volume);
+        ah::PlaySound(sfx_toast);
     }
 
     void play_death() {
-        raylib::SetSoundVolume(sfx_death, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_death);
+        ah::SetSoundVolume(sfx_death, sfx_volume * master_volume);
+        ah::PlaySound(sfx_death);
     }
 
     void play_gameover() {
-        raylib::SetSoundVolume(sfx_gameover, sfx_volume * master_volume);
-        raylib::PlaySound(sfx_gameover);
+        ah::SetSoundVolume(sfx_gameover, sfx_volume * master_volume);
+        ah::PlaySound(sfx_gameover);
     }
 
     void start_music() {
         if (!music_playing) {
-            raylib::SetMusicVolume(music_beat, music_volume * master_volume);
-            raylib::PlayMusicStream(music_beat);
+            ah::SetMusicVolume(music_beat, music_volume * master_volume);
+            ah::PlayMusicStream(music_beat);
             music_playing = true;
         }
     }
 
     void stop_music() {
         if (music_playing) {
-            raylib::StopMusicStream(music_beat);
+            ah::StopMusicStream(music_beat);
             music_playing = false;
         }
     }
@@ -256,13 +242,12 @@ struct AudioManager {
             stop_music();
         }
         if (music_playing) {
-            raylib::SetMusicVolume(music_beat, music_volume * master_volume);
-            raylib::UpdateMusicStream(music_beat);
+            ah::SetMusicVolume(music_beat, music_volume * master_volume);
+            ah::UpdateMusicStream(music_beat);
         }
     }
 };
 
-// Global audio manager instance
 inline AudioManager& get_audio() {
     static AudioManager instance;
     return instance;
