@@ -1,0 +1,46 @@
+# Test 3D rendering pipeline (clip-space, cubes, grid planes)
+# Validates that 3D geometry renders correctly after the GL-to-Metal
+# clip-space conversion fix.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: Empty 3D grid visible (ground plane should render)
+screenshot 31_3d_empty_grid
+# Grid center should have green-ish tile content, not be blank/dark
+assert_region_not_blank 200 150 500 300
+
+# 2: Place buildings that use 3D cubes
+place_building bathroom 15 15
+place_building food 35 35
+wait_frames 5
+screenshot 31_3d_buildings
+assert_region_not_blank 200 150 500 300
+
+# 3: Draw paths (3D geometry on grid)
+draw_path_rect 10 14 40 16
+draw_path_rect 15 10 17 40
+wait_frames 5
+screenshot 31_3d_paths_cross
+# Path region should not be uniform (paths add different colored tiles)
+assert_region_not_blank 300 100 300 400
+
+# 4: Camera rotation should preserve 3D geometry
+key E
+wait_frames 5
+screenshot 31_3d_rotated
+assert_region_not_blank 200 150 500 300
+
+key Q
+wait_frames 5
+
+# 5: Agents walking on 3D paths
+spawn_agents 10 15 15 stage
+wait 2
+screenshot 31_3d_agents_on_paths
+assert_region_not_blank 200 150 500 300
+
+# 6: Place a gate (fence posts are 3D cubes)
+place_gate 0 24
+wait_frames 5
+screenshot 31_3d_gate

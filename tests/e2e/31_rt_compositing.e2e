@@ -1,0 +1,43 @@
+# Test render texture compositing (minimap + main RT + overlays)
+# Validates that nested render textures and multi-pass drawing work
+# correctly after the render texture pass management fixes.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: Baseline - empty world with minimap visible in sidebar
+screenshot 31_rt_baseline
+# Main grid area should have content
+assert_region_not_blank 200 150 500 300
+# Minimap region (bottom-right) should have content
+assert_region_not_blank 1130 570 140 140
+
+# 2: Add paths and buildings - minimap should reflect them
+draw_path_rect 0 24 50 28
+draw_path_rect 19 14 22 38
+place_building bathroom 10 24
+place_building food 40 24
+wait_frames 5
+screenshot 31_rt_minimap_with_content
+# Minimap should still have content (not blanked by RT compositing)
+assert_region_not_blank 1130 570 140 140
+
+# 3: Density overlay composited on top of main RT
+toggle_overlay
+wait_frames 10
+screenshot 31_rt_overlay_composited
+assert_region_not_blank 200 150 500 300
+toggle_overlay
+wait_frames 2
+
+# 4: Night palette through render texture pipeline
+set_time 21 0
+wait_frames 10
+screenshot 31_rt_night_pipeline
+assert_region_not_blank 200 150 500 300
+
+# 5: Switch back to day
+set_time 9 0
+wait_frames 10
+screenshot 31_rt_day_restored
+assert_region_not_blank 200 150 500 300

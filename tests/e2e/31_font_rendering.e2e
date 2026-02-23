@@ -1,0 +1,39 @@
+# Test font rendering through render texture pipeline
+# Validates that text draws correctly after the fontstash flush
+# integration with render texture lifecycle.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: UI text visible on initial frame (top bar has text)
+screenshot 31_font_ui_baseline
+# Top bar region should have varied content (text + status)
+assert_region_not_blank 10 5 600 35
+
+# 2: Game over screen has large text overlay
+trigger_game_over
+wait_frames 10
+expect_text "FESTIVAL SHUT DOWN"
+screenshot 31_font_game_over_text
+# Center overlay should have text content
+assert_region_not_blank 400 180 400 100
+
+# 3: Restart and verify text renders cleanly
+key SPACE
+wait_frames 10
+assert_game_status running
+screenshot 31_font_post_restart_text
+# Top bar should still have text
+assert_region_not_blank 10 5 600 35
+
+# 4: Day/night transition doesn't break text
+set_time 21 0
+wait_frames 10
+screenshot 31_font_night_text
+assert_region_not_blank 10 5 600 35
+
+# 5: Back to day - text still clear
+set_time 9 0
+wait_frames 10
+screenshot 31_font_day_text
+assert_region_not_blank 10 5 600 35

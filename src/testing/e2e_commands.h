@@ -1317,6 +1317,131 @@ static void cmd_dismiss_nux(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// assert_pixel X Y not R G B A
+//   Samples pixel at (X,Y) from the main render texture and asserts it does
+//   NOT match the given RGBA color (within tolerance). Useful for verifying
+//   that 3D geometry or UI actually rendered (pixel is not just background).
+//
+// assert_pixel X Y is R G B A
+//   Asserts the pixel DOES match the given RGBA color.
+//
+// On Metal backend this is currently a no-op (pixel readback not available).
+static void cmd_assert_pixel(testing::PendingE2ECommand& cmd) {
+    if (cmd.args.size() < 7) {
+        cmd.fail("assert_pixel requires X Y is|not R G B A");
+        return;
+    }
+    int px = std::stoi(cmd.args[0]);
+    int py = std::stoi(cmd.args[1]);
+    std::string op = cmd.args[2];
+    int er = std::stoi(cmd.args[3]);
+    int eg = std::stoi(cmd.args[4]);
+    int eb = std::stoi(cmd.args[5]);
+    int ea = std::stoi(cmd.args[6]);
+
+#ifdef AFTER_HOURS_USE_METAL
+    log_warn("assert_pixel: skipped on Metal (no pixel readback)");
+    cmd.consume();
+    return;
+#else
+    raylib::Image img = raylib::LoadImageFromTexture(g_render_texture.texture);
+    raylib::ImageFlipVertical(&img);
+
+    if (px < 0 || px >= img.width || py < 0 || py >= img.height) {
+        raylib::UnloadImage(img);
+        cmd.fail(fmt::format("assert_pixel: ({},{}) out of bounds ({}x{})", px,
+                             py, img.width, img.height));
+        return;
+    }
+
+    raylib::Color c = raylib::GetImageColor(img, px, py);
+    raylib::UnloadImage(img);
+
+    constexpr int TOLERANCE = 15;
+    bool matches =
+        std::abs(c.r - er) <= TOLERANCE && std::abs(c.g - eg) <= TOLERANCE &&
+        std::abs(c.b - eb) <= TOLERANCE && std::abs(c.a - ea) <= TOLERANCE;
+
+    if (op == "is" && !matches) {
+        cmd.fail(fmt::format(
+            "assert_pixel ({},{}) is ({},{},{},{}) FAILED: got ({},{},{},{})",
+            px, py, er, eg, eb, ea, c.r, c.g, c.b, c.a));
+        return;
+    }
+    if (op == "not" && matches) {
+        cmd.fail(fmt::format(
+            "assert_pixel ({},{}) not ({},{},{},{}) FAILED: pixel matches", px,
+            py, er, eg, eb, ea));
+        return;
+    }
+
+    log_info(
+        "assert_pixel PASSED: ({},{}) {} ({},{},{},{}) actual=({},{},{},{})",
+        px, py, op, er, eg, eb, ea, c.r, c.g, c.b, c.a);
+    cmd.consume();
+#endif
+}
+
+// assert_region_not_blank X Y W H
+//   Samples a region and asserts not all pixels are the same color.
+//   Catches cases where 3D rendering is completely missing.
+static void cmd_assert_region_not_blank(testing::PendingE2ECommand& cmd) {
+    if (cmd.args.size() < 4) {
+        cmd.fail("assert_region_not_blank requires X Y W H");
+        return;
+    }
+    int rx = std::stoi(cmd.args[0]);
+    int ry = std::stoi(cmd.args[1]);
+    int rw = std::stoi(cmd.args[2]);
+    int rh = std::stoi(cmd.args[3]);
+
+#ifdef AFTER_HOURS_USE_METAL
+    log_warn("assert_region_not_blank: skipped on Metal (no pixel readback)");
+    cmd.consume();
+    return;
+#else
+    raylib::Image img = raylib::LoadImageFromTexture(g_render_texture.texture);
+    raylib::ImageFlipVertical(&img);
+
+    int x_end = std::min(rx + rw, img.width);
+    int y_end = std::min(ry + rh, img.height);
+    if (rx >= img.width || ry >= img.height || x_end <= rx || y_end <= ry) {
+        raylib::UnloadImage(img);
+        cmd.fail(fmt::format(
+            "assert_region_not_blank: region ({},{} {}x{}) out of bounds", rx,
+            ry, rw, rh));
+        return;
+    }
+
+    raylib::Color first = raylib::GetImageColor(img, rx, ry);
+    bool all_same = true;
+    int sample_step = std::max(1, std::min(rw, rh) / 10);
+
+    for (int y = ry; y < y_end && all_same; y += sample_step) {
+        for (int x = rx; x < x_end && all_same; x += sample_step) {
+            raylib::Color c = raylib::GetImageColor(img, x, y);
+            if (std::abs(c.r - first.r) > 5 || std::abs(c.g - first.g) > 5 ||
+                std::abs(c.b - first.b) > 5) {
+                all_same = false;
+            }
+        }
+    }
+    raylib::UnloadImage(img);
+
+    if (all_same) {
+        cmd.fail(fmt::format(
+            "assert_region_not_blank FAILED: region ({},{} {}x{}) is all "
+            "({},{},{},{})",
+            rx, ry, rw, rh, first.r, first.g, first.b, first.a));
+        return;
+    }
+
+    log_info("assert_region_not_blank PASSED: ({},{} {}x{}) has varied content",
+             rx, ry, rw, rh);
+    cmd.consume();
+#endif
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1384,6 +1509,8 @@ static void init_e2e_registry() {
     r.add("assert_nux_inactive", cmd_assert_nux_inactive);
     r.add("assert_nux_count", cmd_assert_nux_count);
     r.add("dismiss_nux", cmd_dismiss_nux);
+    r.add("assert_pixel", cmd_assert_pixel);
+    r.add("assert_region_not_blank", cmd_assert_region_not_blank);
 }
 
 void register_e2e_systems(SystemManager& sm) {

@@ -1,0 +1,46 @@
+# Test multiple begin_texture_mode calls on same render texture
+# Validates that the pass-reuse optimization works correctly:
+# calling begin_texture_mode for an already-active RT should continue
+# drawing without clearing or restarting the pass.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: Draw paths in one area
+draw_path_rect 0 24 25 28
+wait_frames 5
+screenshot 31_mp_first_draw
+assert_region_not_blank 200 150 500 300
+
+# 2: Draw more paths - both should be visible (RT not cleared between)
+draw_path_rect 25 24 50 28
+wait_frames 5
+screenshot 31_mp_second_draw
+assert_region_not_blank 200 150 500 300
+
+# 3: Add buildings - paths should still be visible
+place_building bathroom 12 24
+place_building food 38 24
+wait_frames 5
+screenshot 31_mp_buildings_added
+assert_region_not_blank 200 150 500 300
+
+# 4: Toggle overlay on/off - main RT content preserved
+toggle_overlay
+wait_frames 5
+screenshot 31_mp_overlay_on
+assert_region_not_blank 200 150 500 300
+toggle_overlay
+wait_frames 5
+screenshot 31_mp_overlay_off
+assert_region_not_blank 200 150 500 300
+
+# 5: Spawn agents - everything else preserved
+spawn_agents 0 25 20 stage
+wait 2
+screenshot 31_mp_with_agents
+assert_region_not_blank 200 150 500 300
+
+# 6: Verify paths still visible after all operations
+assert_tile_type 10 26 path
+assert_tile_type 35 26 path

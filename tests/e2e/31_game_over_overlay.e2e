@@ -1,0 +1,37 @@
+# Test game over overlay rendering on top of render texture
+# Validates that the game over UI composites correctly and that
+# restarting properly resets the render pipeline.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# 1: Normal gameplay before game over
+spawn_agents 20 25 10 stage
+wait 2
+screenshot 31_go_before
+assert_region_not_blank 200 150 500 300
+
+# 2: Trigger game over - overlay should render
+trigger_game_over
+wait_frames 10
+assert_game_status gameover
+expect_text "FESTIVAL SHUT DOWN"
+screenshot 31_go_overlay
+# Game over overlay covers center screen with a dialog box
+# The center should not be uniform black
+assert_region_not_blank 400 200 400 300
+
+# 3: Restart
+key SPACE
+wait_frames 10
+assert_game_status running
+screenshot 31_go_after_restart
+# After restart, the grid should be visible again
+assert_region_not_blank 200 150 500 300
+
+# 4: After restart, re-add content to verify RT pipeline is clean
+draw_path_rect 0 24 50 28
+spawn_agents 0 25 10 stage
+wait 2
+screenshot 31_go_post_restart_content
+assert_region_not_blank 200 150 500 300
