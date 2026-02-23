@@ -21,6 +21,13 @@
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
 
+// Backend selection: define exactly one before including this header,
+// or fall through to the default (RAYLIB).
+#if !defined(AFTER_HOURS_USE_RAYLIB) && !defined(AFTER_HOURS_USE_METAL)
+#define AFTER_HOURS_USE_RAYLIB
+#endif
+
+#ifdef AFTER_HOURS_USE_RAYLIB
 namespace raylib {
 #if defined(__has_include)
 #if __has_include(<raylib.h>)
@@ -58,6 +65,7 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 }
 
 }  // namespace raylib
+#endif  // AFTER_HOURS_USE_RAYLIB
 
 #undef MAGIC_ENUM_RANGE_MAX
 #define MAGIC_ENUM_RANGE_MAX 400
@@ -66,7 +74,6 @@ inline bool operator<(const Vector3& a, const Vector3& b) {
 #define AFTER_HOURS_ENTITY_HELPER
 #define AFTER_HOURS_ENTITY_QUERY
 #define AFTER_HOURS_SYSTEM
-#define AFTER_HOURS_USE_RAYLIB
 
 // Tell afterhours to skip its log functions - we provide our own via log.h
 // log.h must come BEFORE afterhours so our log macros are available
@@ -86,6 +93,12 @@ typedef Vector2Type vec2;
 typedef Vector3Type vec3;
 using Color = afterhours::Color;
 using Rectangle = RectangleType;
+#ifndef DEG2RAD
+using afterhours::DEG2RAD;
+#endif
+#ifndef RAD2DEG
+using afterhours::RAD2DEG;
+#endif
 
 // Re-export afterhours input constants into the global namespace
 // so game code can use short names (KEY_SPACE, MOUSE_BUTTON_LEFT, etc.)

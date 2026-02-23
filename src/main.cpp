@@ -80,7 +80,11 @@ int main(int argc, char* argv[]) {
             runner.set_screenshot_callback([](const std::string& name) {
                 std::filesystem::create_directories("tests/e2e/screenshots");
                 std::string path = "tests/e2e/screenshots/" + name + ".png";
+#ifdef AFTER_HOURS_USE_METAL
+                gfx::take_screenshot(path.c_str());
+#else
                 capture_render_texture(g_render_texture, path);
+#endif
                 log_info("[E2E] Screenshot saved: {}", path);
             });
         };

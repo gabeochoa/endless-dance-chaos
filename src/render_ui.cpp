@@ -86,8 +86,8 @@ struct RenderFacilityLabelsSystem : System<> {
         grid->ensure_caches();
 
         for (const auto& lbl : grid->facility_labels) {
-            vec2 screen = get_world_to_screen({lbl.world_x, 0.6f, lbl.world_z},
-                                              cam->cam.camera);
+            vec2 screen = get_world_to_screen(
+                vec3{lbl.world_x, 0.6f, lbl.world_z}, cam->cam.camera);
 
             if (screen.x < -50 || screen.x > DEFAULT_SCREEN_WIDTH + 50 ||
                 screen.y < -50 || screen.y > DEFAULT_SCREEN_HEIGHT + 50)

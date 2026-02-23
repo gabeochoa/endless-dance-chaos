@@ -31,7 +31,7 @@ ifdef CCACHE
     CXX := ccache $(CXX)
 endif
 
-.PHONY: all clean run format test
+.PHONY: all clean run format test metal
 .DEFAULT_GOAL := all
 
 all: format $(OUTPUT_EXE)
@@ -62,4 +62,36 @@ count:
 	git ls-files | grep "src" | grep -v "vendor" | grep -v "resources" | xargs wc -l | sort -rn
 
 -include $(OBJ_FILES:.o=.d)
+
+# ── Metal/Sokol backend ──────────────────────────────────────────────────────
+METAL_DIR := ./output_metal
+METAL_EXE := $(METAL_DIR)/dance.exe
+METAL_BACKEND_DEF := -DAFTER_HOURS_USE_METAL
+METAL_SOKOL_INCLUDES := -isystem vendor/afterhours/vendor/
+METAL_FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g \
+			  $(METAL_BACKEND_DEF) $(MCP_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
+METAL_FRAMEWORKS = -framework Metal -framework MetalKit -framework Cocoa -framework QuartzCore
+METAL_LIBS = -Lvendor/ $(METAL_FRAMEWORKS)
+
+METAL_CPP_FILES := $(wildcard src/*.cpp src/**/*.cpp)
+METAL_OBJ_FILES := $(METAL_CPP_FILES:%.cpp=$(METAL_DIR)/%.o)
+METAL_SOKOL_OBJ := $(METAL_DIR)/src/sokol_impl.o
+
+metal: $(METAL_EXE)
+
+$(METAL_EXE): $(H_FILES) $(METAL_OBJ_FILES) $(METAL_SOKOL_OBJ)
+	$(CXX) $(METAL_FLAGS) $(NOFLAGS) $(INCLUDES) $(METAL_SOKOL_INCLUDES) \
+		$(METAL_OBJ_FILES) $(METAL_SOKOL_OBJ) $(METAL_LIBS) -o $(METAL_EXE)
+
+$(METAL_DIR)/%.o: %.cpp makefile
+	@mkdir -p $(dir $@)
+	$(CXX) $(METAL_FLAGS) $(NOFLAGS) $(INCLUDES) $(METAL_SOKOL_INCLUDES) \
+		-c $< -o $@ -MMD -MF $(@:.o=.d)
+
+$(METAL_SOKOL_OBJ): src/sokol_impl.mm makefile
+	@mkdir -p $(dir $@)
+	$(CXX) -ObjC++ $(METAL_FLAGS) $(NOFLAGS) $(INCLUDES) $(METAL_SOKOL_INCLUDES) \
+		-c $< -o $@ -MMD -MF $(@:.o=.d)
+
+-include $(METAL_OBJ_FILES:.o=.d)
 

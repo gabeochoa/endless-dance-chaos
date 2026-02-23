@@ -135,9 +135,9 @@ struct IsometricCamera {
     std::optional<std::pair<int, int>> screen_to_grid(float screen_x,
                                                       float screen_y) const {
         // Project 3 grid reference points to screen space
-        vec2 s00 = get_world_to_screen({0, 0, 0}, camera);
-        vec2 s10 = get_world_to_screen({TILESIZE, 0, 0}, camera);
-        vec2 s01 = get_world_to_screen({0, 0, TILESIZE}, camera);
+        vec2 s00 = get_world_to_screen(vec3{0, 0, 0}, camera);
+        vec2 s10 = get_world_to_screen(vec3{TILESIZE, 0, 0}, camera);
+        vec2 s01 = get_world_to_screen(vec3{0, 0, TILESIZE}, camera);
 
         // Affine: screen = A * grid_pos + s00
         float a = s10.x - s00.x;  // screen_x change per grid_x step
