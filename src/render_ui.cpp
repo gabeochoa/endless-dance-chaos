@@ -128,67 +128,67 @@ struct RenderFacilityLabelsSystem : System<> {
     }
 };
 
-struct RenderUISystem : System<> {
-    static void draw_text(const std::string& text, float x, float y, float size,
-                          Color color) {
-        draw_text_ex(get_font(), text.c_str(), {x, y}, size, FONT_SPACING,
-                     color);
-    }
+// Shared UI text helpers
+static void ui_draw_text(const std::string& text, float x, float y, float size,
+                         Color color) {
+    draw_text_ex(get_font(), text.c_str(), {x, y}, size, FONT_SPACING, color);
+}
 
-    static vec2 measure_text(const std::string& text, float size) {
-        return measure_text_ex(get_font(), text.c_str(), size, FONT_SPACING);
-    }
+static vec2 ui_measure_text(const std::string& text, float size) {
+    return measure_text_ex(get_font(), text.c_str(), size, FONT_SPACING);
+}
 
-    static void draw_text_bg(const std::string& text, float x, float y,
-                             float size, Color color) {
-        auto m = measure_text(text, size);
-        draw_rect(x - 6, y - 3, m.x + 12, m.y + 6, Color{0, 0, 0, 240});
-        draw_text(text, x, y, size, color);
-    }
+static void ui_draw_text_bg(const std::string& text, float x, float y,
+                            float size, Color color) {
+    auto m = ui_measure_text(text, size);
+    draw_rect(x - 6, y - 3, m.x + 12, m.y + 6, Color{0, 0, 0, 240});
+    ui_draw_text(text, x, y, size, color);
+}
 
-    static void draw_text_centered(const std::string& text, float y, float size,
-                                   Color color) {
-        auto m = measure_text(text, size);
-        float x = (DEFAULT_SCREEN_WIDTH - m.x) / 2.f;
-        draw_text(text, x, y, size, color);
-    }
+static void ui_draw_text_centered(const std::string& text, float y, float size,
+                                  Color color) {
+    auto m = ui_measure_text(text, size);
+    float x = (DEFAULT_SCREEN_WIDTH - m.x) / 2.f;
+    ui_draw_text(text, x, y, size, color);
+}
 
-    struct ToolInfo {
-        const char* label;
-        Color color;
-        const char* full_name;
-    };
-    static constexpr ToolInfo TOOL_INFO[] = {
-        {"P", {184, 168, 138, 255}, "Path"},
-        {"F", {136, 136, 136, 255}, "Fence"},
-        {"G", {68, 136, 170, 255}, "Gate"},
-        {"S", {255, 217, 61, 255}, "Stage"},
-        {"B", {126, 207, 192, 255}, "Bathroom"},
-        {"Fd", {244, 164, 164, 255}, "Food Stall"},
-        {"M", {255, 100, 100, 255}, "Med Tent"},
-        {"X", {255, 68, 68, 255}, "Demolish"},
-    };
-    static constexpr int TOOL_COUNT = 8;
+struct ToolInfo {
+    const char* label;
+    Color color;
+    const char* full_name;
+};
+static constexpr ToolInfo TOOL_INFO[] = {
+    {"P", {184, 168, 138, 255}, "Path"},
+    {"F", {136, 136, 136, 255}, "Fence"},
+    {"G", {68, 136, 170, 255}, "Gate"},
+    {"S", {255, 217, 61, 255}, "Stage"},
+    {"B", {126, 207, 192, 255}, "Bathroom"},
+    {"Fd", {244, 164, 164, 255}, "Food Stall"},
+    {"M", {255, 100, 100, 255}, "Med Tent"},
+    {"X", {255, 68, 68, 255}, "Demolish"},
+};
+static constexpr int TOOL_COUNT = 8;
 
+static constexpr float BUILD_BAR_Y = DEFAULT_SCREEN_HEIGHT - 54.f;
+
+struct RenderTopBarSystem : System<> {
     void once(float) const override {
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
 
-        // === TOP BAR ===
         draw_rect(0, 0, DEFAULT_SCREEN_WIDTH, 44, Color{0, 0, 0, 180});
         float bar_x = 12;
         if (clock) {
             std::string time_str = clock->format_time();
-            draw_text(time_str, bar_x, 10, 22, Color{255, 255, 255, 255});
+            ui_draw_text(time_str, bar_x, 10, 22, Color{255, 255, 255, 255});
             vtr.register_text(time_str);
             bar_x += 90;
             std::string phase_str = GameClock::phase_name(clock->get_phase());
-            draw_text(phase_str, bar_x, 11, 20, Color{255, 220, 100, 255});
+            ui_draw_text(phase_str, bar_x, 11, 20, Color{255, 220, 100, 255});
             vtr.register_text(phase_str);
-            bar_x += measure_text(phase_str, 20).x + 16;
+            bar_x += ui_measure_text(phase_str, 20).x + 16;
 
-            // Speed control icons
             auto mouse = input::get_mouse_position();
             bool mouse_click =
                 input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
@@ -206,7 +206,7 @@ struct RenderUISystem : System<> {
                 bool active = (clock->speed == SPEED_ICONS[i].speed);
                 Color col = active ? Color{255, 255, 255, 255}
                                    : Color{120, 120, 130, 255};
-                auto sm = measure_text(SPEED_ICONS[i].label, 18);
+                auto sm = ui_measure_text(SPEED_ICONS[i].label, 18);
                 float icon_w = std::max(sm.x + 8.f, 22.f);
                 float ix = bar_x;
                 float iy = 8;
@@ -225,7 +225,7 @@ struct RenderUISystem : System<> {
                               Color{255, 255, 255, 255});
                 }
                 float tx = ix + (icon_w - sm.x) / 2.f;
-                draw_text(SPEED_ICONS[i].label, tx, 12, 18, col);
+                ui_draw_text(SPEED_ICONS[i].label, tx, 12, 18, col);
                 bar_x += icon_w + 4;
             }
             bar_x += 8;
@@ -235,20 +235,20 @@ struct RenderUISystem : System<> {
                 fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
             Color dc = gs->death_count >= 7 ? Color{255, 80, 80, 255}
                                             : Color{255, 255, 255, 255};
-            draw_text(death_text, bar_x, 11, 20, dc);
+            ui_draw_text(death_text, bar_x, 11, 20, dc);
             vtr.register_text(death_text);
             bar_x += 170;
             int agent_count =
                 (int) EntityQuery().whereHasComponent<Agent>().gen_count();
             std::string att_text = fmt::format("Attendees: {}", agent_count);
-            draw_text(att_text, bar_x, 11, 20, Color{255, 255, 255, 255});
+            ui_draw_text(att_text, bar_x, 11, 20, Color{255, 255, 255, 255});
             vtr.register_text(att_text);
-            bar_x += measure_text(att_text, 20).x + 20;
+            bar_x += ui_measure_text(att_text, 20).x + 20;
         }
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
         if (diff) {
             std::string day_text = fmt::format("Day {}", diff->day_number);
-            draw_text(day_text, bar_x, 11, 20, Color{180, 220, 255, 255});
+            ui_draw_text(day_text, bar_x, 11, 20, Color{180, 220, 255, 255});
             vtr.register_text(day_text);
             bar_x += 90;
         }
@@ -260,168 +260,171 @@ struct RenderUISystem : System<> {
                 float remain = ev.duration - ev.elapsed;
                 std::string ev_text =
                     fmt::format("{} ({:.0f}s)", ev.description, remain);
-                draw_text(ev_text, bar_x, 11, 16, Color{255, 200, 80, 255});
+                ui_draw_text(ev_text, bar_x, 11, 16, Color{255, 200, 80, 255});
                 vtr.register_text(ev_text);
-                bar_x += measure_text(ev_text, 16).x + 12;
+                bar_x += ui_measure_text(ev_text, 16).x + 12;
             }
         }
 
         int fps = get_fps();
         std::string fps_text = fmt::format("FPS: {}", fps);
-        auto fps_measure = measure_text(fps_text, 18);
-        draw_text(
+        auto fps_measure = ui_measure_text(fps_text, 18);
+        ui_draw_text(
             fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10, 12, 18,
             fps >= 55 ? Color{100, 255, 100, 255} : Color{255, 80, 80, 255});
+    }
+};
 
-        // === BUILD BAR ===
-        float build_bar_y = DEFAULT_SCREEN_HEIGHT - 54.f;
-        draw_rect(0, build_bar_y, DEFAULT_SCREEN_WIDTH, 54,
+struct RenderBuildBarSystem : System<> {
+    void once(float) const override {
+        draw_rect(0, BUILD_BAR_Y, DEFAULT_SCREEN_WIDTH, 54,
                   Color{0, 0, 0, 180});
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
+        if (!bs) return;
+
         auto mouse = input::get_mouse_position();
         bool mouse_clicked = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
-        if (bs) {
-            float icon_size = 36.f;
-            float gap = 6.f;
-            float total_w = TOOL_COUNT * icon_size + (TOOL_COUNT - 1) * gap;
-            float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
-            for (int i = 0; i < TOOL_COUNT; i++) {
-                float ix = start_x + i * (icon_size + gap);
-                float iy = build_bar_y + (54 - icon_size) / 2.f;
-                bool selected = (static_cast<int>(bs->tool) == i);
-                float s = selected ? icon_size * 1.15f : icon_size;
-                float ox = ix - (s - icon_size) / 2.f;
-                float oy = iy - (s - icon_size) / 2.f;
+        float icon_size = 36.f;
+        float gap = 6.f;
+        float total_w = TOOL_COUNT * icon_size + (TOOL_COUNT - 1) * gap;
+        float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
+        for (int i = 0; i < TOOL_COUNT; i++) {
+            float ix = start_x + i * (icon_size + gap);
+            float iy = BUILD_BAR_Y + (54 - icon_size) / 2.f;
+            bool selected = (static_cast<int>(bs->tool) == i);
+            float s = selected ? icon_size * 1.15f : icon_size;
+            float ox = ix - (s - icon_size) / 2.f;
+            float oy = iy - (s - icon_size) / 2.f;
 
-                if (mouse_clicked && mouse.x >= ox && mouse.x <= ox + s &&
-                    mouse.y >= oy && mouse.y <= oy + s) {
-                    bs->tool = static_cast<BuildTool>(i);
-                    selected = true;
-                }
+            if (mouse_clicked && mouse.x >= ox && mouse.x <= ox + s &&
+                mouse.y >= oy && mouse.y <= oy + s) {
+                bs->tool = static_cast<BuildTool>(i);
+                selected = true;
+            }
 
-                Color bg = TOOL_INFO[i].color;
-                if (selected) {
-                    bg.r = (uint8_t) std::min(255, bg.r + 40);
-                    bg.g = (uint8_t) std::min(255, bg.g + 40);
-                    bg.b = (uint8_t) std::min(255, bg.b + 40);
-                }
-                draw_rect(ox, oy, s, s, bg);
-                if (selected) {
-                    draw_rect_lines(ox, oy, s, s, Color{255, 255, 255, 255});
-                }
-                auto label_m = measure_text(TOOL_INFO[i].label, 16);
-                float lx = ox + (s - label_m.x) / 2.f;
-                float ly = oy + (s - label_m.y) / 2.f;
-                draw_text(TOOL_INFO[i].label, lx, ly, 16,
-                          Color{255, 255, 255, 255});
+            Color bg = TOOL_INFO[i].color;
+            if (selected) {
+                bg.r = (uint8_t) std::min(255, bg.r + 40);
+                bg.g = (uint8_t) std::min(255, bg.g + 40);
+                bg.b = (uint8_t) std::min(255, bg.b + 40);
+            }
+            draw_rect(ox, oy, s, s, bg);
+            if (selected) {
+                draw_rect_lines(ox, oy, s, s, Color{255, 255, 255, 255});
+            }
+            auto label_m = ui_measure_text(TOOL_INFO[i].label, 16);
+            float lx = ox + (s - label_m.x) / 2.f;
+            float ly = oy + (s - label_m.y) / 2.f;
+            ui_draw_text(TOOL_INFO[i].label, lx, ly, 16,
+                         Color{255, 255, 255, 255});
 
-                if (mouse.x >= ox && mouse.x <= ox + s && mouse.y >= oy &&
-                    mouse.y <= oy + s) {
-                    auto tip_m = measure_text(TOOL_INFO[i].full_name, 16);
-                    float tip_x = ox + (s - tip_m.x) / 2.f;
-                    float tip_y = oy - tip_m.y - 8.f;
-                    draw_rect(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
-                              Color{20, 20, 30, 220});
-                    draw_text(TOOL_INFO[i].full_name, tip_x, tip_y, 16,
-                              Color{255, 255, 255, 255});
-                }
+            if (mouse.x >= ox && mouse.x <= ox + s && mouse.y >= oy &&
+                mouse.y <= oy + s) {
+                auto tip_m = ui_measure_text(TOOL_INFO[i].full_name, 16);
+                float tip_x = ox + (s - tip_m.x) / 2.f;
+                float tip_y = oy - tip_m.y - 8.f;
+                draw_rect(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
+                          Color{20, 20, 30, 220});
+                ui_draw_text(TOOL_INFO[i].full_name, tip_x, tip_y, 16,
+                             Color{255, 255, 255, 255});
             }
         }
+    }
+};
 
-        // Toast messages
-        {
-            auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
-            float toast_y = 50.f;
-            for (Entity& te : toasts) {
-                auto& toast = te.get<ToastMessage>();
-                float alpha = 1.0f;
-                if (toast.elapsed > toast.lifetime - toast.fade_duration) {
-                    alpha =
-                        (toast.lifetime - toast.elapsed) / toast.fade_duration;
-                }
-                unsigned char a = static_cast<unsigned char>(alpha * 255);
-                auto tm = measure_text(toast.text, 20);
-                float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
-
-                draw_rect(tx - 8, toast_y - 4, tm.x + 16, tm.y + 8,
-                          Color{30, 120, 60, a});
-                draw_text_ex(get_font(), toast.text.c_str(), {tx, toast_y}, 20,
-                             FONT_SPACING, Color{255, 255, 255, a});
-                vtr.register_text(toast.text);
-                toast_y += tm.y + 16;
+struct RenderToastsSystem : System<> {
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+        float toast_y = 50.f;
+        for (Entity& te : toasts) {
+            auto& toast = te.get<ToastMessage>();
+            float alpha = 1.0f;
+            if (toast.elapsed > toast.lifetime - toast.fade_duration) {
+                alpha = (toast.lifetime - toast.elapsed) / toast.fade_duration;
             }
+            unsigned char a = static_cast<unsigned char>(alpha * 255);
+            auto tm = ui_measure_text(toast.text, 20);
+            float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
+
+            draw_rect(tx - 8, toast_y - 4, tm.x + 16, tm.y + 8,
+                      Color{30, 120, 60, a});
+            draw_text_ex(get_font(), toast.text.c_str(), {tx, toast_y}, 20,
+                         FONT_SPACING, Color{255, 255, 255, a});
+            vtr.register_text(toast.text);
+            toast_y += tm.y + 16;
         }
+    }
+};
 
-        // NUX banner (persistent hint with dismiss X)
-        {
-            auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
-            for (Entity& ne : nuxes) {
-                auto& nux = ne.get<NuxHint>();
-                if (!nux.is_active) continue;
+struct RenderNuxBannerSystem : System<> {
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        auto nuxes = EntityQuery().whereHasComponent<NuxHint>().gen();
+        for (Entity& ne : nuxes) {
+            auto& nux = ne.get<NuxHint>();
+            if (!nux.is_active) continue;
 
-                auto tm = measure_text(nux.text, 20);
-                float x_btn_size = 18.f;
-                float total_w = tm.x + 24 + x_btn_size + 8;
-                float bx = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
-                float by = 50.f;
-                float bh = tm.y + 12;
+            auto tm = ui_measure_text(nux.text, 20);
+            float x_btn_size = 18.f;
+            float total_w = tm.x + 24 + x_btn_size + 8;
+            float bx = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
+            float by = 50.f;
+            float bh = tm.y + 12;
 
-                // Background with blue accent
-                draw_rect(bx, by, total_w, bh, Color{20, 40, 80, 230});
-                draw_rect(bx, by, 3, bh, Color{80, 160, 255, 255});
+            draw_rect(bx, by, total_w, bh, Color{20, 40, 80, 230});
+            draw_rect(bx, by, 3, bh, Color{80, 160, 255, 255});
 
-                // Text
-                draw_text(nux.text, bx + 12, by + 6, 20,
-                          Color{255, 255, 255, 255});
-                vtr.register_text(nux.text);
+            ui_draw_text(nux.text, bx + 12, by + 6, 20,
+                         Color{255, 255, 255, 255});
+            vtr.register_text(nux.text);
 
-                // X dismiss button
-                float xbx = bx + total_w - x_btn_size - 6;
-                float xby = by + (bh - x_btn_size) / 2.f;
+            float xbx = bx + total_w - x_btn_size - 6;
+            float xby = by + (bh - x_btn_size) / 2.f;
 
-                auto m = input::get_mouse_position();
-                bool hovering = m.x >= xbx && m.x <= xbx + x_btn_size &&
-                                m.y >= xby && m.y <= xby + x_btn_size;
-                Color xbg = hovering ? Color{200, 60, 60, 255}
-                                     : Color{100, 100, 120, 200};
-                draw_rect(xbx, xby, x_btn_size, x_btn_size, xbg);
+            auto m = input::get_mouse_position();
+            bool hovering = m.x >= xbx && m.x <= xbx + x_btn_size &&
+                            m.y >= xby && m.y <= xby + x_btn_size;
+            Color xbg =
+                hovering ? Color{200, 60, 60, 255} : Color{100, 100, 120, 200};
+            draw_rect(xbx, xby, x_btn_size, x_btn_size, xbg);
 
-                float cx = xbx + x_btn_size / 2.f;
-                float cy = xby + x_btn_size / 2.f;
-                float cs = 5.f;
-                draw_line(cx - cs, cy - cs, cx + cs, cy + cs,
-                          Color{255, 255, 255, 255});
-                draw_line(cx - cs, cy + cs, cx + cs, cy - cs,
-                          Color{255, 255, 255, 255});
+            float cx = xbx + x_btn_size / 2.f;
+            float cy = xby + x_btn_size / 2.f;
+            float cs = 5.f;
+            draw_line(cx - cs, cy - cs, cx + cs, cy + cs,
+                      Color{255, 255, 255, 255});
+            draw_line(cx - cs, cy + cs, cx + cs, cy - cs,
+                      Color{255, 255, 255, 255});
 
-                if (hovering &&
-                    input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
-                    nux.was_dismissed = true;
-                }
-
-                break;
+            if (hovering && input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
+                nux.was_dismissed = true;
             }
-        }
 
-        // Compass indicator
-        {
-            auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-            if (cam) {
-                float cx = DEFAULT_SCREEN_WIDTH - 150 - 30;
-                float cy = 55;
-                draw_circle(cx, cy, 16, Color{0, 0, 0, 120});
-                float cam_dx =
-                    cam->cam.camera.position.x - cam->cam.camera.target.x;
-                float cam_dz =
-                    cam->cam.camera.position.z - cam->cam.camera.target.z;
-                float angle = std::atan2(cam_dz, cam_dx);
-                float nx = cx + std::cos(angle) * 12;
-                float ny = cy + std::sin(angle) * 12;
-                draw_text("N", nx - 6, ny - 8, 14, Color{255, 100, 100, 255});
-            }
+            break;
         }
+    }
+};
 
-        // Grid hover info with need breakdown
+struct RenderCompassSystem : System<> {
+    void once(float) const override {
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!cam) return;
+
+        float cx = DEFAULT_SCREEN_WIDTH - 150 - 30;
+        float cy = 55;
+        draw_circle(cx, cy, 16, Color{0, 0, 0, 120});
+        float cam_dx = cam->cam.camera.position.x - cam->cam.camera.target.x;
+        float cam_dz = cam->cam.camera.position.z - cam->cam.camera.target.z;
+        float angle = std::atan2(cam_dz, cam_dx);
+        float nx = cx + std::cos(angle) * 12;
+        float ny = cy + std::sin(angle) * 12;
+        ui_draw_text("N", nx - 6, ny - 8, 14, Color{255, 100, 100, 255});
+    }
+};
+
+struct RenderHoverInfoSystem : System<> {
+    void once(float) const override {
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         if (pds && pds->hover_valid) {
             auto* grid = EntityHelper::get_singleton_cmp<Grid>();
@@ -471,13 +474,14 @@ struct RenderUISystem : System<> {
                         hover_text += " \xe2\x80\x94 " + breakdown;
                 }
 
-                draw_text_bg(hover_text, 10, build_bar_y - 30, 18,
-                             Color{200, 200, 200, 255});
+                ui_draw_text_bg(hover_text, 10, BUILD_BAR_Y - 30, 18,
+                                Color{200, 200, 200, 255});
             }
         }
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (gs && gs->show_data_layer) {
-            draw_text_bg("[TAB] Density Overlay", 10, build_bar_y - 56, 18,
-                         Color{255, 255, 100, 255});
+            ui_draw_text_bg("[TAB] Density Overlay", 10, BUILD_BAR_Y - 56, 18,
+                            Color{255, 255, 100, 255});
         }
     }
 };
@@ -666,8 +670,7 @@ struct RenderGameOverSystem : System<> {
         draw_rect_lines(px, py, pw, ph, Color{255, 80, 80, 255});
 
         std::string title = "FESTIVAL SHUT DOWN";
-        RenderUISystem::draw_text_centered(title, py + 20, 34,
-                                           Color{255, 80, 80, 255});
+        ui_draw_text_centered(title, py + 20, 34, Color{255, 80, 80, 255});
 
         int minutes = static_cast<int>(gs->time_survived) / 60;
         int seconds = static_cast<int>(gs->time_survived) % 60;
@@ -681,36 +684,31 @@ struct RenderGameOverSystem : System<> {
             fmt::format("Peak Attendees: {}", gs->max_attendees);
 
         float sy = py + 66;
-        RenderUISystem::draw_text_centered(stats1, sy, 20,
-                                           Color{255, 255, 255, 255});
-        RenderUISystem::draw_text_centered(stats2, sy + 28, 20,
-                                           Color{255, 255, 255, 255});
-        RenderUISystem::draw_text_centered(stats3, sy + 56, 20,
-                                           Color{255, 255, 255, 255});
-        RenderUISystem::draw_text_centered(stats4, sy + 84, 20,
-                                           Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats1, sy, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats2, sy + 28, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats3, sy + 56, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats4, sy + 84, 20, Color{255, 255, 255, 255});
 
         save::MetaProgress meta;
         save::load_meta(meta);
         float my = sy + 124;
         draw_line(px + 20, my, px + pw - 20, my, Color{100, 100, 120, 200});
         my += 8;
-        RenderUISystem::draw_text_centered("--- All-Time Records ---", my, 16,
-                                           Color{180, 200, 255, 255});
+        ui_draw_text_centered("--- All-Time Records ---", my, 16,
+                              Color{180, 200, 255, 255});
         my += 24;
-        RenderUISystem::draw_text_centered(
+        ui_draw_text_centered(
             fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
                         meta.best_agents_served),
             my, 16, Color{160, 180, 220, 255});
         my += 22;
-        RenderUISystem::draw_text_centered(
+        ui_draw_text_centered(
             fmt::format("Peak Attendees: {}  |  Runs: {}",
                         meta.best_max_attendees, meta.total_runs),
             my, 16, Color{160, 180, 220, 255});
 
-        RenderUISystem::draw_text_centered("Press SPACE to restart",
-                                           py + ph - 40, 20,
-                                           Color{180, 180, 180, 255});
+        ui_draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
+                              Color{180, 180, 180, 255});
 
         vtr.register_text(title);
         vtr.register_text("Press SPACE to restart");
@@ -731,7 +729,12 @@ struct EndRenderSystem : System<> {
 void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderFacilityLabelsSystem>());
-    sm.register_render_system(std::make_unique<RenderUISystem>());
+    sm.register_render_system(std::make_unique<RenderTopBarSystem>());
+    sm.register_render_system(std::make_unique<RenderBuildBarSystem>());
+    sm.register_render_system(std::make_unique<RenderToastsSystem>());
+    sm.register_render_system(std::make_unique<RenderNuxBannerSystem>());
+    sm.register_render_system(std::make_unique<RenderCompassSystem>());
+    sm.register_render_system(std::make_unique<RenderHoverInfoSystem>());
     sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
     sm.register_render_system(std::make_unique<RenderGameOverSystem>());
