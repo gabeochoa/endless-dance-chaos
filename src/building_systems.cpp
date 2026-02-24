@@ -23,6 +23,33 @@ static bool can_place_at(const Grid& grid, int x, int z, int w, int h) {
     return true;
 }
 
+struct PlacementMeta {
+    TileType tile_type;
+    int width, height;
+};
+
+static const PlacementMeta* get_placement_meta(BuildTool tool) {
+    static constexpr PlacementMeta TABLE[] = {
+        {TileType::Gate, 1, 2},     {TileType::Stage, 4, 4},
+        {TileType::Bathroom, 2, 2}, {TileType::Food, 2, 2},
+        {TileType::MedTent, 2, 2},
+    };
+    switch (tool) {
+        case BuildTool::Gate:
+            return &TABLE[0];
+        case BuildTool::Stage:
+            return &TABLE[1];
+        case BuildTool::Bathroom:
+            return &TABLE[2];
+        case BuildTool::Food:
+            return &TABLE[3];
+        case BuildTool::MedTent:
+            return &TABLE[4];
+        default:
+            return nullptr;
+    }
+}
+
 // Handle all build tools: rect drag for path/fence, point for facilities
 struct PathBuildSystem : System<> {
     void once(float) override {
@@ -95,38 +122,18 @@ struct PathBuildSystem : System<> {
                     }
                     break;
                 }
-                case BuildTool::Gate: {
-                    if (can_place_at(*grid, hx, hz, 1, 2)) {
-                        grid->place_footprint(hx, hz, 1, 2, TileType::Gate);
-                        grid->rebuild_gate_cache();
-                        get_audio().play_place();
-                    }
-                    break;
-                }
-                case BuildTool::Stage: {
-                    if (can_place_at(*grid, hx, hz, 4, 4)) {
-                        grid->place_footprint(hx, hz, 4, 4, TileType::Stage);
-                        get_audio().play_place();
-                    }
-                    break;
-                }
-                case BuildTool::Bathroom: {
-                    if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        grid->place_footprint(hx, hz, 2, 2, TileType::Bathroom);
-                        get_audio().play_place();
-                    }
-                    break;
-                }
-                case BuildTool::Food: {
-                    if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        grid->place_footprint(hx, hz, 2, 2, TileType::Food);
-                        get_audio().play_place();
-                    }
-                    break;
-                }
+                case BuildTool::Gate:
+                case BuildTool::Stage:
+                case BuildTool::Bathroom:
+                case BuildTool::Food:
                 case BuildTool::MedTent: {
-                    if (can_place_at(*grid, hx, hz, 2, 2)) {
-                        grid->place_footprint(hx, hz, 2, 2, TileType::MedTent);
+                    auto* meta = get_placement_meta(bs->tool);
+                    if (meta && can_place_at(*grid, hx, hz, meta->width,
+                                             meta->height)) {
+                        grid->place_footprint(hx, hz, meta->width, meta->height,
+                                              meta->tile_type);
+                        if (meta->tile_type == TileType::Gate)
+                            grid->rebuild_gate_cache();
                         get_audio().play_place();
                     }
                     break;

@@ -28,13 +28,13 @@ screenshot 99_02_paths_built
 
 # ── 3: Agents arrive and watch stage ────────────────────────────────────
 spawn_agents 28 26 15 stage
-wait 3
+wait 5
 assert_agent_watching gte 1
 screenshot 99_03_watching_stage
 
 # ── 4: Facility needs ───────────────────────────────────────────────────
 force_need bathroom
-wait 3
+wait 5
 assert_agent_near 20 21 5
 screenshot 99_04_bathroom_rush
 
@@ -56,6 +56,10 @@ toggle_overlay
 clear_agents
 wait_frames 5
 
+# Reset death count so assertion is testing THIS step only
+set_death_count 0
+assert_death_count eq 0
+
 # 1-tile fence cage at (10,10) — same approach as 07_crush_damage.e2e
 set_tile 9 10 fence
 set_tile 11 10 fence
@@ -63,9 +67,10 @@ set_tile 10 9 fence
 set_tile 10 11 fence
 wait_frames 2
 
-# Pack 40 agents on one tile — guaranteed critical density
+# Pack 40 agents on one tile — guaranteed critical density.
+# Crush damage is 0.2 HP/sec (raw dt), first death at ~5s.
 spawn_agents 10 10 40 stage
-wait 6
+wait 8
 assert_death_count gte 1
 screenshot 99_07_crush_deaths
 

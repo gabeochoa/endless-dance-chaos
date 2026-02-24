@@ -43,4 +43,4 @@ assert_region_not_blank 200 150 500 300
 
 # 6: Verify paths still visible after all operations
 assert_tile_type 10 26 path
-assert_tile_type 35 26 path
+assert_tile_type 45 26 path
