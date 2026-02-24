@@ -94,8 +94,7 @@ struct ExodusSystem : System<> {
             auto& agent = e.get<Agent>();
             if (agent.want != FacilityType::Exit) {
                 agent.want = FacilityType::Exit;
-                agent.target_grid_x = GATE_X;
-                agent.target_grid_z = GATE_Z1;
+                agent.set_target(GATE_X, GATE_Z1);
             }
         }
     }

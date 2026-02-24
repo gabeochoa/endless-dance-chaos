@@ -335,6 +335,11 @@ struct Agent : afterhours::BaseComponent {
     // Visual variety: color palette index (0-7)
     uint8_t color_idx = 0;
 
+    // Cached pathfinding result: the next tile the agent is walking toward.
+    // Only recomputed on tile transitions or goal changes.
+    int move_target_x = -1;
+    int move_target_z = -1;
+
     // Stuck detection: tracks time without progress toward target.
     // When stuck_timer exceeds STUCK_FORCE_THRESHOLD, the agent forces
     // through crowded tiles (ignoring slowdown and flee) unless lethal.
@@ -344,6 +349,13 @@ struct Agent : afterhours::BaseComponent {
     static constexpr float STUCK_FORCE_THRESHOLD = 3.0f;  // seconds
 
     bool is_forcing() const { return stuck_timer >= STUCK_FORCE_THRESHOLD; }
+
+    void set_target(int x, int z) {
+        target_grid_x = x;
+        target_grid_z = z;
+        move_target_x = -1;
+        move_target_z = -1;
+    }
 
     Agent() = default;
     Agent(FacilityType w) : want(w) {}

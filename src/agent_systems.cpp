@@ -138,23 +138,30 @@ static std::pair<int, int> pick_flee_tile(int cx, int cz, const Grid& grid) {
                 for (int i = 1; i < n; i++) {
                     if (candidates[i].count < candidates[best].count) best = i;
                 }
-                log_warn("DESPERATE FLEE ({},{}) count={} -> ({},{}) count={}",
-                         cx, cz, cur_count, candidates[best].x,
-                         candidates[best].z, candidates[best].count);
+                static int desperate_count = 0;
+                if (++desperate_count <= 5) {
+                    log_warn(
+                        "DESPERATE FLEE ({},{}) count={} -> ({},{}) count={}",
+                        cx, cz, cur_count, candidates[best].x,
+                        candidates[best].z, candidates[best].count);
+                }
                 return {candidates[best].x, candidates[best].z};
             }
-            log_warn("FLEE TRAPPED at ({},{}) count={} type={}:", cx, cz,
-                     cur_count, static_cast<int>(grid.at(cx, cz).type));
-            for (auto [ddx, ddz] : dirs) {
-                int nx2 = cx + ddx;
-                int nz2 = cz + ddz;
-                if (!grid.in_bounds(nx2, nz2)) {
-                    log_warn("  ({},{}) OOB", nx2, nz2);
-                } else {
-                    auto& t2 = grid.at(nx2, nz2);
-                    log_warn("  ({},{}) type={} blocks={} count={}", nx2, nz2,
-                             static_cast<int>(t2.type),
-                             tile_blocks_movement(t2.type), t2.agent_count);
+            static int flee_trapped_count = 0;
+            if (++flee_trapped_count <= 5) {
+                log_warn("FLEE TRAPPED at ({},{}) count={} type={}:", cx, cz,
+                         cur_count, static_cast<int>(grid.at(cx, cz).type));
+                for (auto [ddx, ddz] : dirs) {
+                    int nx2 = cx + ddx;
+                    int nz2 = cz + ddz;
+                    if (!grid.in_bounds(nx2, nz2)) {
+                        log_warn("  ({},{}) OOB", nx2, nz2);
+                    } else {
+                        auto& t2 = grid.at(nx2, nz2);
+                        log_warn("  ({},{}) type={} blocks={} count={}", nx2,
+                                 nz2, static_cast<int>(t2.type),
+                                 tile_blocks_movement(t2.type), t2.agent_count);
+                    }
                 }
             }
         }
@@ -309,17 +316,21 @@ struct AgentMovementSystem : System<Agent, Transform> {
                             e.removeComponent<WatchingStage>();
                         }
                         auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
-                        agent.target_grid_x = rsx;
-                        agent.target_grid_z = rsz;
-                        log_warn(
-                            "LETHAL NO FLEE at ({},{}) count={} "
-                            "forcing={} stuck={:.1f}s -> retarget ({},{})",
-                            cur_gx, cur_gz,
-                            grid->at(cur_gx, cur_gz).agent_count, forcing,
-                            agent.stuck_timer, rsx, rsz);
+                        agent.set_target(rsx, rsz);
+                        static int lethal_count = 0;
+                        if (++lethal_count <= 5) {
+                            log_warn(
+                                "LETHAL NO FLEE at ({},{}) count={} "
+                                "forcing={} stuck={:.1f}s -> retarget ({},{})",
+                                cur_gx, cur_gz,
+                                grid->at(cur_gx, cur_gz).agent_count, forcing,
+                                agent.stuck_timer, rsx, rsz);
+                        }
                     }
                 }
                 if (fleeing) {
+                    agent.move_target_x = -1;
+                    agent.move_target_z = -1;
                     if (!e.is_missing<WatchingStage>()) {
                         e.removeComponent<WatchingStage>();
                     }
@@ -361,20 +372,30 @@ struct AgentMovementSystem : System<Agent, Transform> {
             if (gs) agent.speed *= gs->speed_multiplier;
             if (event_flags::rain_active) agent.speed *= 0.5f;
 
-            auto [px, pz] =
-                pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
-                               agent.target_grid_z, *grid, agent.want);
+            bool need_pathfind =
+                agent.move_target_x < 0 || (cur_gx == agent.move_target_x &&
+                                            cur_gz == agent.move_target_z);
+            if (need_pathfind) {
+                auto [px, pz] =
+                    pick_next_tile(cur_gx, cur_gz, agent.target_grid_x,
+                                   agent.target_grid_z, *grid, agent.want);
+                agent.move_target_x = px;
+                agent.move_target_z = pz;
+            }
 
-            if (forcing && grid->in_bounds(px, pz)) {
-                float next_density = grid->at(px, pz).agent_count /
-                                     static_cast<float>(MAX_AGENTS_PER_TILE);
+            if (forcing &&
+                grid->in_bounds(agent.move_target_x, agent.move_target_z)) {
+                float next_density =
+                    grid->at(agent.move_target_x, agent.move_target_z)
+                        .agent_count /
+                    static_cast<float>(MAX_AGENTS_PER_TILE);
                 if (next_density >= DENSITY_CRITICAL) {
                     return;
                 }
             }
 
-            next_x = px;
-            next_z = pz;
+            next_x = agent.move_target_x;
+            next_z = agent.move_target_z;
         }
 
         ::vec2 target_world = grid->grid_to_world(next_x, next_z);
@@ -487,8 +508,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                         .agent_count;
                 if (target_crowd >= RETARGET_THRESHOLD) {
                     auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
-                    agent.target_grid_x = rsx;
-                    agent.target_grid_z = rsz;
+                    agent.set_target(rsx, rsz);
                 }
             }
             return;
@@ -499,8 +519,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 agent.want != FacilityType::MedTent) {
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
-                agent.target_grid_x = rsx;
-                agent.target_grid_z = rsz;
+                agent.set_target(rsx, rsz);
             }
         } else {
             TileType tile_type = facility_type_to_tile(desired);
@@ -508,15 +527,13 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 find_nearest_facility(cur_gx, cur_gz, tile_type, *grid, urgent);
             if (fx >= 0) {
                 agent.want = desired;
-                agent.target_grid_x = fx;
-                agent.target_grid_z = fz;
+                agent.set_target(fx, fz);
             } else if (desired == FacilityType::Food) {
                 needs.needs_food = false;
                 needs.food_timer = 0.f;
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
-                agent.target_grid_x = rsx;
-                agent.target_grid_z = rsz;
+                agent.set_target(rsx, rsz);
             }
         }
     }
@@ -601,8 +618,7 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                 auto [fgx, fgz] =
                     grid->world_to_grid(tf.position.x, tf.position.y);
                 auto [rsx, rsz] = best_stage_spot(fgx, fgz);
-                agent.target_grid_x = rsx;
-                agent.target_grid_z = rsz;
+                agent.set_target(rsx, rsz);
             }
             return;
         }
