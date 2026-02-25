@@ -1,15 +1,22 @@
 # Test exodus: agents exit through gates
 reset_game
-wait 1
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 5
 
-# Spawn agents inside
-spawn_agents 25 26 10 stage
+# Build path from near gate to inside the map
+draw_path_rect 0 24 20 28
+wait_frames 5
+
+# Spawn agents close to gate so they can exit quickly
+spawn_agents 5 26 10 stage
 wait 2
 
 # Jump to exodus
 set_time 0 0
-wait 5
+assert_phase exodus
+wait 10
 
-# Agents should be heading toward gates; some may have exited
-assert_agents_exited gte 0
-wait 1
+# Agents should actually exit through the gate
+assert_agents_exited gte 1
+assert_agent_count lt 10

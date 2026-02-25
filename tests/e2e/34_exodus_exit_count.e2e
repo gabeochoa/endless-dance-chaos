@@ -1,0 +1,25 @@
+# Test that agents actually exit through gates during exodus
+# and the exit counter increments.
+reset_game
+set_spawn_enabled 0
+set_agent_speed 8
+wait_frames 5
+
+# Build path from gate inward
+draw_path_rect 0 24 15 28
+wait_frames 5
+
+# Spawn agents close to the gate
+spawn_agents 3 26 10 stage
+wait 2
+
+# Trigger exodus
+set_time 0 0
+assert_phase exodus
+
+# At 8x speed agents cover ~4 tiles/sec, gate is 3 tiles away
+wait 8
+
+# Agents should have walked to gate and exited
+assert_agents_exited gte 5
+assert_agent_count lt 6

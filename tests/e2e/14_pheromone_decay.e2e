@@ -1,8 +1,14 @@
-# Test pheromone set and verify
+# Test pheromone decay: values decrease over time
 reset_game
-wait 1
+set_spawn_enabled 0
+wait_frames 5
 
-# Set strong pheromone and immediately verify
+# Set a strong pheromone value
 set_pheromone 25 25 0 200
 assert_pheromone 25 25 0 gte 190
-wait 1
+
+# Decay runs every 1.5s, decrements by 1 each tick.
+# After 8 seconds (~5 decay ticks), value should drop by ~5.
+wait 8
+assert_pheromone 25 25 0 lt 196
+assert_pheromone 25 25 0 gte 1

@@ -1,16 +1,18 @@
-# Full game loop test
+# Full game loop test: spawning, pathing, agent activity
 reset_game
+set_agent_speed 5
 wait 1
 
-# Build layout
+# Build layout connecting gate to stage and facilities
 draw_path_rect 1 24 50 28
 draw_path_rect 19 14 21 38
 wait 2
 
-# Let game run a bit
+# Let natural spawning run during daytime
 set_time 10 0
-wait 5
+wait 8
 
-# Should have agents alive
-assert_agent_count gte 0
-wait 1
+# Agents should have spawned and be alive
+assert_agent_count gte 3
+assert_death_count eq 0
+screenshot 20_full_game

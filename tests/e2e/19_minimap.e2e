@@ -1,12 +1,18 @@
-# Test minimap renders (visual verification via screenshots)
+# Test minimap renders correctly
 reset_game
-wait 1
+set_spawn_enabled 0
+wait_frames 5
 
-# Place some buildings
+# Minimap should be visible in the sidebar
+assert_region_not_blank 1130 570 140 140
+screenshot 19_minimap_empty
+
+# Place some buildings and paths
 place_building bathroom 15 15
 place_building food 35 35
-wait 1
-
-# Draw paths
 draw_path_rect 1 24 50 28
-wait 1
+wait_frames 5
+
+# Minimap should reflect the new content
+assert_region_not_blank 1130 570 140 140
+screenshot 19_minimap_with_content

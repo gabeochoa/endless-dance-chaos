@@ -3,22 +3,26 @@ reset_game
 wait_frames 5
 
 # Force a known artist starting at 10:00 with 45min duration
-# Then immediately set time to just before announce window
 force_artist TestAct 50 45 10 0
 wait_frames 5
 
-# Set time to announce window (9:45 = 15 min before 10:00)
-# Clock runs at 1x = 60 game-min/real-sec, so 1 frame ~= 0.12 min at 500fps
-# Must assert quickly before time passes the window
+# Before announce window - should be idle
+set_time 9 30
+wait_frames 5
+assert_stage_state idle
+
+# Announce window (15 min before start = 9:45)
 set_time 9 45
-wait_frames 2
+wait_frames 5
 assert_stage_state announcing
 
-# Jump to performance time (10:05)
+# Performance time
 set_time 10 5
-wait_frames 2
+wait_frames 5
 assert_stage_state performing
 
-# Jump past end of set (10:00 + 45min = 10:45, so 10:50 should be done)
+# After set ends (10:00 + 45min = 10:45), state returns to idle
+# (Clearing is a single-frame transition state)
 set_time 10 50
-wait_frames 2
+wait_frames 5
+assert_stage_state idle

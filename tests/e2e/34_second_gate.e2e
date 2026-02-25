@@ -1,0 +1,18 @@
+# Test placing a second gate and verifying it works
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Verify initial gate count
+assert_gate_count gte 2
+
+# Place a second gate on the right side of the map
+place_gate 51 26
+wait_frames 5
+
+# Verify new gate tiles exist
+assert_tile_type 51 26 gate
+assert_tile_type 51 27 gate
+assert_gate_count gte 4
+
+screenshot 34_second_gate

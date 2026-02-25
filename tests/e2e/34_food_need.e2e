@@ -1,0 +1,21 @@
+# Test food need: agents navigate to the food stall when hungry
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 5
+
+# Build path connecting spawn area to food stall at (20,30)
+draw_path_rect 5 24 22 32
+wait_frames 5
+
+# Spawn agents on the path
+spawn_agents 5 26 8 stage
+wait_frames 5
+
+# Force food need on all agents
+force_need food
+wait 10
+
+# Agents should be near the food stall (20,30)
+assert_agent_near 20 30 5
+screenshot 34_food_routing

@@ -1,22 +1,26 @@
-# Test facility service: agent arrives, gets absorbed, reappears
+# Test facility service: agents with bathroom need reach the bathroom
 reset_game
 set_spawn_enabled 0
-wait_frames 2
+set_agent_speed 5
+wait_frames 5
 
-# Build a path to the bathroom
-draw_path_rect 18 20 21 20
-wait_frames 2
+# Build paths connecting stage area to bathroom
+draw_path_rect 0 24 33 28
+draw_path_rect 19 19 22 31
+wait_frames 5
 
-# Spawn agent near bathroom with bathroom need
-spawn_agent 18 20 bathroom
-wait_frames 2
+# Spawn agents near the stage, let them settle briefly
+spawn_agents 30 26 5 stage
+wait 1
 
-# Force the need so it starts heading there
+# Force bathroom need - agents should leave stage and walk to bathroom
 force_need bathroom
 wait 8
 
-# Agent should have been serviced by now
-screenshot 04_after_service
+# Agents should be near the bathroom (20,20)
+assert_agent_near 20 21 4
 
-# Verify agent still exists (reappeared after service)
-assert_agent_count >= 1
+# All agents should survive the trip
+assert_agent_count gte 5
+assert_death_count eq 0
+screenshot 04_facility_service

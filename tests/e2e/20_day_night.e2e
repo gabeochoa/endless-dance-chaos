@@ -1,15 +1,28 @@
-# Test day/night transition (visual verification)
+# Test day/night transition with phase assertions
 reset_game
-wait 1
+set_spawn_enabled 0
+wait_frames 5
 
+# Noon - should be day (day = 10:00-17:59)
 set_time 12 0
-wait 1
+wait_frames 5
+assert_phase day
+screenshot 20_day
 
+# Late afternoon - still day
 set_time 17 30
-wait 1
+wait_frames 5
+assert_phase day
+screenshot 20_late_afternoon
 
+# Night (18:00+)
 set_time 20 0
-wait 1
+wait_frames 5
+assert_phase night
+screenshot 20_night
 
-set_time 9 30
-wait 1
+# Morning - day starts at 10:00, 9:30 is still dead hours
+set_time 10 30
+wait_frames 5
+assert_phase day
+screenshot 20_morning
