@@ -1,0 +1,50 @@
+# LOD blob transition test: opacity fades in as you zoom out
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+draw_path_rect 1 20 49 32
+draw_path_rect 10 15 40 38
+wait_frames 5
+
+# Dense stage crowd for visible blobs
+spawn_agents 20 30 25 stage
+spawn_agents 20 31 25 stage
+spawn_agents 20 32 25 stage
+spawn_agents 20 33 25 stage
+spawn_agents 20 30 26 stage
+spawn_agents 20 31 26 stage
+spawn_agents 20 32 26 stage
+spawn_agents 20 33 26 stage
+spawn_agents 20 22 24 bathroom
+spawn_agents 20 23 24 bathroom
+spawn_agents 20 24 24 bathroom
+spawn_agents 20 28 30 food
+spawn_agents 20 29 30 food
+spawn_agents 20 30 30 food
+wait_frames 10
+
+# Close zoom - no blobs (fovy=10, opacity ~11%)
+set_zoom 10
+wait_frames 5
+screenshot 32_lod_z10
+
+# Medium zoom - subtle blobs (fovy=25, opacity ~44%)
+set_zoom 25
+wait_frames 5
+screenshot 32_lod_z25
+
+# Medium zoom - more visible (fovy=30, opacity ~56%)
+set_zoom 30
+wait_frames 5
+screenshot 32_lod_z30
+
+# Far zoom - strong blobs (fovy=40, opacity ~78%)
+set_zoom 40
+wait_frames 5
+screenshot 32_lod_z40
+
+# Max zoom - full opacity (fovy=50, opacity 100%)
+set_zoom 50
+wait_frames 5
+screenshot 32_lod_z50

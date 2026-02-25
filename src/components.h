@@ -41,6 +41,11 @@ struct Tile {
     TileType type = TileType::Grass;
     int agent_count = 0;
 
+    // Per-desire agent counts (indexed by FacilityType enum).
+    // Updated each frame by UpdateTileDensitySystem alongside agent_count.
+    static constexpr int NUM_DESIRES = 5;
+    std::array<int, NUM_DESIRES> desire_counts = {0, 0, 0, 0, 0};
+
     // 5 pheromone channels: Bathroom, Food, Stage, Exit, MedTent
     std::array<uint8_t, 5> pheromone = {0, 0, 0, 0, 0};
 
@@ -640,6 +645,17 @@ struct NuxManager : afterhours::BaseComponent {
     float bathroom_overload_timer = 0.f;
     float food_overload_timer = 0.f;
     float medtent_overload_timer = 0.f;
+};
+
+// LOD level for agent rendering based on camera zoom
+enum class LODLevel { Close, Medium, Far };
+
+// Visible tile region computed once per frame for culling + LOD
+struct VisibleRegion : afterhours::BaseComponent {
+    int min_x = 0, max_x = MAP_SIZE - 1;
+    int min_z = 0, max_z = MAP_SIZE - 1;
+    LODLevel lod = LODLevel::Close;
+    float fovy = 5.0f;
 };
 
 // Path drawing state - rectangle drag on grid

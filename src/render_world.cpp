@@ -9,6 +9,9 @@
 #include "render_helpers.h"
 #include "systems.h"
 
+static constexpr float LOD_CLOSE_MAX = 25.0f;
+static constexpr float LOD_MEDIUM_MAX = 38.0f;
+
 struct BeginRenderSystem : System<> {
     void once(float) const override {
         begin_texture_mode(g_render_texture);
@@ -18,6 +21,56 @@ struct BeginRenderSystem : System<> {
 
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         if (cam) begin_3d(cam->cam.camera);
+
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        if (!cam || !vr) return;
+
+        float fovy = cam->cam.camera.fovy;
+        vr->fovy = fovy;
+        if (fovy < LOD_CLOSE_MAX)
+            vr->lod = LODLevel::Close;
+        else if (fovy < LOD_MEDIUM_MAX)
+            vr->lod = LODLevel::Medium;
+        else
+            vr->lod = LODLevel::Far;
+
+        auto& iso = cam->cam;
+        constexpr int MARGIN = 2;
+        float sw = static_cast<float>(DEFAULT_SCREEN_WIDTH);
+        float sh = static_cast<float>(DEFAULT_SCREEN_HEIGHT);
+        vec2 corners[] = {{0, 0}, {sw, 0}, {0, sh}, {sw, sh}};
+
+        bool any_valid = false;
+        int gx_min = 0, gx_max = MAP_SIZE - 1;
+        int gz_min = 0, gz_max = MAP_SIZE - 1;
+
+        for (auto& c : corners) {
+            auto result = iso.screen_to_grid(c.x, c.y);
+            if (!result) continue;
+            auto [gx, gz] = *result;
+            if (!any_valid) {
+                gx_min = gx_max = gx;
+                gz_min = gz_max = gz;
+                any_valid = true;
+            } else {
+                gx_min = std::min(gx_min, gx);
+                gx_max = std::max(gx_max, gx);
+                gz_min = std::min(gz_min, gz);
+                gz_max = std::max(gz_max, gz);
+            }
+        }
+
+        if (any_valid) {
+            vr->min_x = std::clamp(gx_min - MARGIN, 0, MAP_SIZE - 1);
+            vr->max_x = std::clamp(gx_max + MARGIN, 0, MAP_SIZE - 1);
+            vr->min_z = std::clamp(gz_min - MARGIN, 0, MAP_SIZE - 1);
+            vr->max_z = std::clamp(gz_max + MARGIN, 0, MAP_SIZE - 1);
+        } else {
+            vr->min_x = 0;
+            vr->max_x = MAP_SIZE - 1;
+            vr->min_z = 0;
+            vr->max_z = MAP_SIZE - 1;
+        }
     }
 };
 
@@ -26,11 +79,17 @@ struct RenderGridSystem : System<> {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        int x0 = vr ? vr->min_x : 0;
+        int x1 = vr ? vr->max_x : MAP_SIZE - 1;
+        int z0 = vr ? vr->min_z : 0;
+        int z1 = vr ? vr->max_z : MAP_SIZE - 1;
+
         float tile_size = TILESIZE * 0.98f;
         float night_t = get_day_night_t();
 
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
+        for (int z = z0; z <= z1; z++) {
+            for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
                 Color color = ::tile_color(tile.type, night_t);
                 draw_plane({x * TILESIZE, 0.01f, z * TILESIZE},
@@ -40,7 +99,6 @@ struct RenderGridSystem : System<> {
     }
 };
 
-// Stage performance glow overlay with pulsing lights and spotlights
 struct RenderStageGlowSystem : System<> {
     void once(float) const override {
         auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
@@ -124,61 +182,326 @@ static float hash_scatter(int seed) {
     return (static_cast<float>(h & 0xFFFF) / 32767.5f) - 1.0f;
 }
 
-struct RenderAgentsSystem : System<Agent, Transform> {
-    static constexpr Color PALETTE[] = {
-        {212, 165, 116, 255}, {180, 120, 90, 255},  {240, 200, 160, 255},
-        {100, 80, 60, 255},   {255, 180, 200, 255}, {100, 200, 255, 255},
-        {200, 255, 100, 255}, {255, 220, 100, 255},
-    };
+// Close LOD: individual agent cubes, viewport-culled
+static constexpr Color AGENT_PALETTE[] = {
+    {212, 165, 116, 255}, {180, 120, 90, 255},  {240, 200, 160, 255},
+    {100, 80, 60, 255},   {255, 180, 200, 255}, {100, 200, 255, 255},
+    {200, 255, 100, 255}, {255, 220, 100, 255},
+};
 
-    static constexpr float BODY_W = 0.14f;
-    static constexpr float BODY_H = 0.32f;
-    static constexpr float PIP_W = 0.09f;
-    static constexpr float PIP_H = 0.08f;
-    static constexpr float SCATTER_RANGE = 0.35f;
+static constexpr float BODY_W = 0.14f;
+static constexpr float BODY_H = 0.32f;
+static constexpr float PIP_W = 0.09f;
+static constexpr float PIP_H = 0.08f;
+static constexpr float SCATTER_RANGE = 0.35f;
 
-    void for_each_with(Entity& e, Agent& agent, Transform& tf, float) override {
-        if (!e.is_missing<BeingServiced>()) return;
+struct RenderAgentsSystem : System<> {
+    void once(float) const override {
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        if (vr && vr->lod != LODLevel::Close) return;
 
-        float wx = tf.position.x;
-        float wz = tf.position.y;
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
 
-        int eid = static_cast<int>(e.id);
-        float ox = hash_scatter(eid * 7 + 3) * SCATTER_RANGE;
-        float oz = hash_scatter(eid * 13 + 7) * SCATTER_RANGE;
-        wx += ox;
-        wz += oz;
+        auto agents = EntityQuery()
+                          .whereHasComponent<Agent>()
+                          .whereHasComponent<Transform>()
+                          .gen();
 
-        Color body_col = PALETTE[agent.color_idx % 8];
+        for (Entity& e : agents) {
+            if (!e.is_missing<BeingServiced>()) continue;
 
-        float bob_y = 0.0f;
-        if (!e.is_missing<WatchingStage>()) {
-            auto& ws = e.get<WatchingStage>();
-            bob_y = std::sin(ws.watch_timer * 6.0f) * 0.03f;
-        }
+            auto& agent = e.get<Agent>();
+            auto& tf = e.get<Transform>();
 
-        if (!e.is_missing<AgentHealth>()) {
-            float hp = e.get<AgentHealth>().hp;
-            if (hp < 0.5f) {
-                float t = hp / 0.5f;
-                body_col.r = static_cast<unsigned char>(body_col.r * t +
-                                                        255 * (1.f - t));
-                body_col.g = static_cast<unsigned char>(body_col.g * t);
-                body_col.b = static_cast<unsigned char>(body_col.b * t);
+            if (vr && grid) {
+                auto [gx, gz] =
+                    grid->world_to_grid(tf.position.x, tf.position.y);
+                if (gx < vr->min_x || gx > vr->max_x || gz < vr->min_z ||
+                    gz > vr->max_z)
+                    continue;
             }
+
+            float wx = tf.position.x;
+            float wz = tf.position.y;
+
+            int eid = static_cast<int>(e.id);
+            float ox = hash_scatter(eid * 7 + 3) * SCATTER_RANGE;
+            float oz = hash_scatter(eid * 13 + 7) * SCATTER_RANGE;
+            wx += ox;
+            wz += oz;
+
+            Color body_col = AGENT_PALETTE[agent.color_idx % 8];
+
+            float bob_y = 0.0f;
+            if (!e.is_missing<WatchingStage>()) {
+                auto& ws = e.get<WatchingStage>();
+                bob_y = std::sin(ws.watch_timer * 6.0f) * 0.03f;
+            }
+
+            if (!e.is_missing<AgentHealth>()) {
+                float hp = e.get<AgentHealth>().hp;
+                if (hp < 0.5f) {
+                    float t = hp / 0.5f;
+                    body_col.r = static_cast<unsigned char>(body_col.r * t +
+                                                            255 * (1.f - t));
+                    body_col.g = static_cast<unsigned char>(body_col.g * t);
+                    body_col.b = static_cast<unsigned char>(body_col.b * t);
+                }
+            }
+
+            float base_y = 0.16f + bob_y;
+            draw_cube({wx, base_y, wz}, BODY_W, BODY_H, BODY_W, body_col);
+
+            int desire_idx = static_cast<int>(agent.want);
+            Color pip_col = DESIRE_COLORS[desire_idx];
+            float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
+            draw_cube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
         }
-
-        float base_y = 0.16f + bob_y;
-        draw_cube({wx, base_y, wz}, BODY_W, BODY_H, BODY_W, body_col);
-
-        int desire_idx = static_cast<int>(agent.want);
-        Color pip_col = DESIRE_COLORS[desire_idx];
-        float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
-        draw_cube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
     }
 };
 
-// Render path-drawing preview overlays
+// Medium LOD: per-tile scattered cubes based on agent_count
+struct RenderMediumLODSystem : System<> {
+    static constexpr int MAX_DOTS_PER_TILE = 8;
+    static constexpr float DOT_W = 0.22f;
+    static constexpr float DOT_H = 0.25f;
+    static constexpr float JITTER_SPEED = 0.5f;
+    static constexpr float JITTER_AMOUNT = 0.05f;
+
+    void once(float) const override {
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        if (!vr || vr->lod != LODLevel::Medium) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        float t = get_time();
+
+        for (int z = vr->min_z; z <= vr->max_z; z++) {
+            for (int x = vr->min_x; x <= vr->max_x; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count <= 0) continue;
+
+                int dots = std::min(tile.agent_count, MAX_DOTS_PER_TILE);
+                int tile_seed = x * 1000 + z * 100;
+
+                // Distribute dots proportionally across desires
+                int desire_dots[Tile::NUM_DESIRES] = {};
+                int assigned = 0;
+                for (int d = 0; d < Tile::NUM_DESIRES && assigned < dots; d++) {
+                    int dd = tile.desire_counts[d] * dots / tile.agent_count;
+                    desire_dots[d] = dd;
+                    assigned += dd;
+                }
+                // Assign remaining dots to the largest desire
+                for (int d = 0; d < Tile::NUM_DESIRES && assigned < dots; d++) {
+                    if (tile.desire_counts[d] > 0) {
+                        desire_dots[d]++;
+                        assigned++;
+                    }
+                }
+
+                int dot_idx = 0;
+                for (int d = 0; d < Tile::NUM_DESIRES; d++) {
+                    for (int j = 0; j < desire_dots[d]; j++, dot_idx++) {
+                        float ox =
+                            hash_scatter(tile_seed + dot_idx * 7 + 3) * 0.38f;
+                        float oz =
+                            hash_scatter(tile_seed + dot_idx * 13 + 7) * 0.38f;
+
+                        float jx =
+                            std::sin(t * JITTER_SPEED + dot_idx * 1.7f + x) *
+                            JITTER_AMOUNT;
+                        float jz = std::cos(t * JITTER_SPEED * 0.8f +
+                                            dot_idx * 2.3f + z) *
+                                   JITTER_AMOUNT;
+
+                        float wx = x * TILESIZE + ox + jx;
+                        float wz = z * TILESIZE + oz + jz;
+
+                        draw_cube({wx, DOT_H * 0.5f, wz}, DOT_W, DOT_H, DOT_W,
+                                  DESIRE_COLORS[d]);
+                    }
+                }
+            }
+        }
+    }
+};
+
+// Far LOD: desire-colored blobs that merge across adjacent tiles.
+// Color reflects what agents on each tile want (stage=gold, bathroom=teal,
+// etc.) Large overlapping disks with neighbor-blended colors create seamless
+// merging.
+struct RenderFarLODSystem : System<> {
+    static constexpr int DISK_SEGMENTS = 16;
+
+    static Color desire_blend(const Tile& tile) {
+        if (tile.agent_count <= 0) return {180, 180, 180, 255};
+        float inv = 1.0f / tile.agent_count;
+        float r = 0, g = 0, b = 0;
+        for (int i = 0; i < Tile::NUM_DESIRES; i++) {
+            float w = tile.desire_counts[i] * inv;
+            r += DESIRE_COLORS[i].r * w;
+            g += DESIRE_COLORS[i].g * w;
+            b += DESIRE_COLORS[i].b * w;
+        }
+        return {static_cast<unsigned char>(std::clamp(r, 0.f, 255.f)),
+                static_cast<unsigned char>(std::clamp(g, 0.f, 255.f)),
+                static_cast<unsigned char>(std::clamp(b, 0.f, 255.f)), 255};
+    }
+
+    static Color neighbor_blend(const Grid& grid, int cx, int cz) {
+        Color center = desire_blend(grid.at(cx, cz));
+        float total_w = static_cast<float>(grid.at(cx, cz).agent_count);
+        float r = center.r * total_w;
+        float g = center.g * total_w;
+        float b = center.b * total_w;
+
+        static constexpr int dx[] = {1, -1, 0, 0, 1, -1, 1, -1};
+        static constexpr int dz[] = {0, 0, 1, -1, 1, 1, -1, -1};
+        for (int d = 0; d < 8; d++) {
+            int nx = cx + dx[d], nz = cz + dz[d];
+            if (!grid.in_bounds(nx, nz)) continue;
+            const Tile& nb = grid.at(nx, nz);
+            if (nb.agent_count <= 0) continue;
+            float w = nb.agent_count * (d < 4 ? 0.5f : 0.25f);
+            Color nc = desire_blend(nb);
+            r += nc.r * w;
+            g += nc.g * w;
+            b += nc.b * w;
+            total_w += w;
+        }
+
+        if (total_w < 1.f) return center;
+        float inv = 1.0f / total_w;
+        return {static_cast<unsigned char>(std::clamp(r * inv, 0.f, 255.f)),
+                static_cast<unsigned char>(std::clamp(g * inv, 0.f, 255.f)),
+                static_cast<unsigned char>(std::clamp(b * inv, 0.f, 255.f)),
+                255};
+    }
+
+    static bool has_occupied_neighbor(const Grid& grid, int cx, int cz) {
+        static constexpr int dx[] = {1, -1, 0, 0};
+        static constexpr int dz[] = {0, 0, 1, -1};
+        for (int d = 0; d < 4; d++) {
+            int nx = cx + dx[d], nz = cz + dz[d];
+            if (grid.in_bounds(nx, nz) && grid.at(nx, nz).agent_count > 0)
+                return true;
+        }
+        return false;
+    }
+
+    static bool has_empty_cardinal(const Grid& grid, int cx, int cz) {
+        static constexpr int dx[] = {1, -1, 0, 0};
+        static constexpr int dz[] = {0, 0, 1, -1};
+        for (int d = 0; d < 4; d++) {
+            int nx = cx + dx[d], nz = cz + dz[d];
+            if (!grid.in_bounds(nx, nz) || grid.at(nx, nz).agent_count <= 0)
+                return true;
+        }
+        return false;
+    }
+
+    static unsigned char scale_alpha(float base_alpha, float opacity) {
+        return static_cast<unsigned char>(
+            std::clamp(base_alpha * opacity, 0.f, 255.f));
+    }
+
+    void once(float) const override {
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        if (!vr || vr->lod == LODLevel::Close) return;
+
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        if (gs && gs->show_data_layer) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        // Blob opacity: 0% at full zoom in (fovy=5), 100% at max zoom out
+        // (fovy=50). Smooth transition across Medium→Far LOD range.
+        constexpr float FOVY_MIN = 5.0f;
+        constexpr float FOVY_MAX = 50.0f;
+        float opacity =
+            std::clamp((vr->fovy - FOVY_MIN) / (FOVY_MAX - FOVY_MIN), 0.f, 1.f);
+        if (opacity < 0.01f) return;
+
+        float t = get_time();
+
+        // Pass 1: solid quads that tile seamlessly.
+        // Adjacent occupied tiles share edges so the fill is continuous.
+        for (int z = vr->min_z; z <= vr->max_z; z++) {
+            for (int x = vr->min_x; x <= vr->max_x; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count <= 0) continue;
+
+                float density = std::min(
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE),
+                    1.0f);
+
+                Color c1 = neighbor_blend(*grid, x, z);
+                c1.a = scale_alpha(180 + density * 75, opacity);
+
+                draw_plane({x * TILESIZE, 0.019f, z * TILESIZE},
+                           {TILESIZE, TILESIZE}, c1);
+            }
+        }
+
+        // Pass 2: soft edge circles on perimeter tiles (those with at
+        // least one empty cardinal neighbor). This softens the blob boundary
+        // with an organic rounded falloff instead of hard square edges.
+        for (int z = vr->min_z; z <= vr->max_z; z++) {
+            for (int x = vr->min_x; x <= vr->max_x; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count <= 0) continue;
+                if (!has_empty_cardinal(*grid, x, z)) continue;
+
+                float density = std::min(
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE),
+                    1.0f);
+
+                float phase = hash_scatter(x * 31 + z * 57) * 3.14159f;
+                float pulse = (std::sin(t * 1.5f + phase) + 1.0f) * 0.5f;
+
+                float r1 = (0.8f + density * 0.4f) + pulse * 0.08f;
+                Color c1 = neighbor_blend(*grid, x, z);
+                c1.a = scale_alpha(100 + density * 80, opacity);
+
+                draw_cylinder({x * TILESIZE, 0.020f, z * TILESIZE}, r1, r1,
+                              0.001f, DISK_SEGMENTS, c1);
+            }
+        }
+
+        // Pass 3: bright core highlights on dense tiles for visual interest
+        for (int z = vr->min_z; z <= vr->max_z; z++) {
+            for (int x = vr->min_x; x <= vr->max_x; x++) {
+                const Tile& tile = grid->at(x, z);
+                if (tile.agent_count < 3) continue;
+
+                float density = std::min(
+                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE),
+                    1.0f);
+                if (density < 0.15f) continue;
+
+                float phase = hash_scatter(x * 31 + z * 57) * 3.14159f;
+                float pulse = (std::sin(t * 2.5f + phase + 2.0f) + 1.0f) * 0.5f;
+
+                float r3 = (0.3f + density * 0.3f) + pulse * 0.03f;
+                Color c3 = desire_blend(tile);
+                c3.r = static_cast<unsigned char>(
+                    std::min(255, static_cast<int>(c3.r) + 40));
+                c3.g = static_cast<unsigned char>(
+                    std::min(255, static_cast<int>(c3.g) + 40));
+                c3.b = static_cast<unsigned char>(
+                    std::min(255, static_cast<int>(c3.b) + 40));
+                c3.a = scale_alpha(200 + density * 55, opacity);
+
+                draw_cylinder({x * TILESIZE, 0.022f, z * TILESIZE}, r3, r3,
+                              0.001f, DISK_SEGMENTS, c3);
+            }
+        }
+    }
+};
+
 struct RenderBuildPreviewSystem : System<> {
     static constexpr Color PREVIEW_VALID = {100, 220, 130, 100};
     static constexpr Color PREVIEW_EXISTING = {180, 180, 180, 80};
@@ -216,8 +539,9 @@ struct RenderBuildPreviewSystem : System<> {
     }
 };
 
-// Density heat map overlay
-struct RenderDensityOverlaySystem : System<> {
+// Merged density system: handles both TAB-toggle heat map and always-on danger
+// flash. Uses VisibleRegion for culling.
+struct RenderDensitySystem : System<> {
     static Color get_density_color(float density_ratio) {
         if (density_ratio < 0.50f) {
             float t = density_ratio / 0.50f;
@@ -236,72 +560,61 @@ struct RenderDensityOverlaySystem : System<> {
     }
 
     void once(float) const override {
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (!gs || !gs->show_data_layer) return;
+        bool show_overlay = gs && gs->show_data_layer;
 
-        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-        if (!grid) return;
-
-        float tile_size = TILESIZE * 0.98f;
-        float overlay_y = 0.05f;
-
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                const Tile& tile = grid->at(x, z);
-                if (tile.agent_count <= 0) continue;
-
-                float density =
-                    tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
-                Color color = get_density_color(density);
-
-                draw_plane({x * TILESIZE, overlay_y, z * TILESIZE},
-                           {tile_size, tile_size}, color);
-            }
-        }
-    }
-};
-
-// Always-on density warning flash for dangerous tiles (75%+)
-struct RenderDensityFlashSystem : System<> {
-    void once(float) const override {
-        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-        if (!grid) return;
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        int x0 = vr ? vr->min_x : 0;
+        int x1 = vr ? vr->max_x : MAP_SIZE - 1;
+        int z0 = vr ? vr->min_z : 0;
+        int z1 = vr ? vr->max_z : MAP_SIZE - 1;
 
         float t = get_time();
         float tile_size = TILESIZE * 0.98f;
         int danger_threshold =
             static_cast<int>(DENSITY_DANGEROUS * MAX_AGENTS_PER_TILE);
 
-        for (int z = 0; z < MAP_SIZE; z++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
+        for (int z = z0; z <= z1; z++) {
+            for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
-                if (tile.agent_count < danger_threshold) continue;
+                if (tile.agent_count <= 0) continue;
 
                 float density =
                     tile.agent_count / static_cast<float>(MAX_AGENTS_PER_TILE);
-                bool critical = density >= DENSITY_CRITICAL;
 
-                float freq = critical ? 3.0f : 1.0f;
-                float pulse = (std::sin(t * freq * 6.283f) + 1.0f) * 0.5f;
-
-                unsigned char alpha;
-                Color color;
-                if (critical) {
-                    alpha = static_cast<unsigned char>(40 + pulse * 100);
-                    color = {255, 40, 40, alpha};
-                } else {
-                    alpha = static_cast<unsigned char>(pulse * 80);
-                    color = {255, 140, 0, alpha};
+                // TAB-toggle heat map overlay
+                if (show_overlay) {
+                    Color color = get_density_color(density);
+                    draw_plane({x * TILESIZE, 0.05f, z * TILESIZE},
+                               {tile_size, tile_size}, color);
                 }
 
-                draw_plane({x * TILESIZE, 0.04f, z * TILESIZE},
-                           {tile_size, tile_size}, color);
+                // Always-on danger flash (>=75% density)
+                if (tile.agent_count >= danger_threshold) {
+                    bool critical = density >= DENSITY_CRITICAL;
+                    float freq = critical ? 3.0f : 1.0f;
+                    float pulse = (std::sin(t * freq * 6.283f) + 1.0f) * 0.5f;
+
+                    unsigned char alpha;
+                    Color flash_color;
+                    if (critical) {
+                        alpha = static_cast<unsigned char>(40 + pulse * 100);
+                        flash_color = {255, 40, 40, alpha};
+                    } else {
+                        alpha = static_cast<unsigned char>(pulse * 80);
+                        flash_color = {255, 140, 0, alpha};
+                    }
+                    draw_plane({x * TILESIZE, 0.04f, z * TILESIZE},
+                               {tile_size, tile_size}, flash_color);
+                }
             }
         }
     }
 };
 
-// Render death location markers as red X shapes
 struct RenderDeathMarkersSystem : System<DeathMarker> {
     void for_each_with(Entity&, DeathMarker& dm, float) override {
         float alpha_f = 1.0f;
@@ -320,7 +633,6 @@ struct RenderDeathMarkersSystem : System<DeathMarker> {
     }
 };
 
-// Render death particles as small 3D cubes
 struct RenderParticlesSystem : System<Particle, Transform> {
     void for_each_with(Entity&, Particle& p, Transform& tf, float) override {
         float wx = tf.position.x;
@@ -346,8 +658,9 @@ void register_render_world_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderGridSystem>());
     sm.register_render_system(std::make_unique<RenderStageGlowSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
-    sm.register_render_system(std::make_unique<RenderDensityFlashSystem>());
-    sm.register_render_system(std::make_unique<RenderDensityOverlaySystem>());
+    sm.register_render_system(std::make_unique<RenderMediumLODSystem>());
+    sm.register_render_system(std::make_unique<RenderFarLODSystem>());
+    sm.register_render_system(std::make_unique<RenderDensitySystem>());
     sm.register_render_system(std::make_unique<RenderDeathMarkersSystem>());
     sm.register_render_system(std::make_unique<RenderParticlesSystem>());
     sm.register_render_system(std::make_unique<RenderBuildPreviewSystem>());

@@ -1442,6 +1442,24 @@ static void cmd_assert_region_not_blank(testing::PendingE2ECommand& cmd) {
 #endif
 }
 
+static void cmd_set_zoom(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_zoom requires FOVY");
+        return;
+    }
+    float fovy = cmd.arg_as<float>(0);
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("set_zoom: no camera");
+        return;
+    }
+    cam->cam.distance = fovy;
+    cam->cam.camera.fovy = fovy;
+    cam->cam.update_camera_position();
+    log_info("[E2E] set_zoom: fovy={}", fovy);
+    cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1511,6 +1529,7 @@ static void init_e2e_registry() {
     r.add("dismiss_nux", cmd_dismiss_nux);
     r.add("assert_pixel", cmd_assert_pixel);
     r.add("assert_region_not_blank", cmd_assert_region_not_blank);
+    r.add("set_zoom", cmd_set_zoom);
 }
 
 void register_e2e_systems(SystemManager& sm) {

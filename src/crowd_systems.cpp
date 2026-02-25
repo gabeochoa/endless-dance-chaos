@@ -179,18 +179,22 @@ struct UpdateTileDensitySystem : System<> {
 
         for (auto& tile : grid->tiles) {
             tile.agent_count = 0;
+            tile.desire_counts.fill(0);
         }
 
         auto agents = EntityQuery()
                           .whereHasComponent<Agent>()
                           .whereHasComponent<Transform>()
                           .gen();
-        for (Entity& agent : agents) {
-            if (!agent.is_missing<BeingServiced>()) continue;
-            auto& tf = agent.get<Transform>();
+        for (Entity& e : agents) {
+            if (!e.is_missing<BeingServiced>()) continue;
+            auto& tf = e.get<Transform>();
             auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
             if (grid->in_bounds(gx, gz)) {
-                grid->at(gx, gz).agent_count++;
+                auto& tile = grid->at(gx, gz);
+                tile.agent_count++;
+                int di = static_cast<int>(e.get<Agent>().want);
+                if (di >= 0 && di < Tile::NUM_DESIRES) tile.desire_counts[di]++;
             }
         }
 

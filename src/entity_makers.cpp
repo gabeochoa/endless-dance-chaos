@@ -50,6 +50,9 @@ Entity& make_sophie() {
     sophie.addComponent<NuxManager>();
     EntityHelper::registerSingleton<NuxManager>(sophie);
 
+    sophie.addComponent<VisibleRegion>();
+    EntityHelper::registerSingleton<VisibleRegion>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
