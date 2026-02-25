@@ -1,0 +1,23 @@
+# Regression: agents watching the stage must move during exodus.
+# Previously WatchingStage wasn't removed, so agents turned blue but froze.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Spawn agents on StageFloor (outside the 4x4 stage building at 30-33,25-28
+# but within STAGE_WATCH_RADIUS=8 of center 32,27)
+spawn_agents 28 27 5 stage
+spawn_agents 35 27 5 stage
+wait 5
+
+# Confirm agents are watching the stage
+assert_agent_watching gte 1
+
+# Trigger exodus
+set_time 0 0
+assert_phase exodus
+wait_frames 5
+
+# All agents should have WatchingStage removed immediately.
+# If the bug regresses, they stay WatchingStage and freeze in place.
+assert_agent_watching eq 0

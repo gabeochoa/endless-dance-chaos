@@ -95,6 +95,8 @@ struct ExodusSystem : System<> {
             if (agent.want != FacilityType::Exit) {
                 agent.want = FacilityType::Exit;
                 agent.set_target(GATE_X, GATE_Z1);
+                if (!e.is_missing<WatchingStage>())
+                    e.removeComponent<WatchingStage>();
             }
         }
     }
