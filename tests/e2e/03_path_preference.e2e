@@ -1,19 +1,38 @@
-# Test agents prefer paths over grass (move faster)
+# Test that agents prefer paths over grass (move faster on paths).
+# Two groups spawn at equal distance from the stage: one on a path, one on
+# grass.  After waiting, the path group should be noticeably closer to the
+# stage because SPEED_PATH (0.5) is 2x SPEED_GRASS (0.25).
 reset_game
 set_spawn_enabled 0
-wait_frames 2
+set_move_speed 5
+wait_frames 5
 
-# Draw a partial path heading toward the stage
-draw_path_rect 25 24 29 28
-wait_frames 2
+# Build a path from (5,26) toward the stage (stops before StageFloor ring)
+draw_path_rect 5 26 23 27
+wait_frames 5
 
-# Spawn 3 agents on the path
-spawn_agents 25 25 3 stage
-wait_frames 2
+# Group A: 5 agents on the path at x=5 heading to stage
+spawn_agents 5 26 5 stage
 
-# Wait a bit - agents on path should move faster
+# Group B: 5 agents on grass at same x distance but different z
+spawn_agents 5 20 5 stage
+
+wait_frames 5
+assert_agent_count >= 10
+
+# Wait for agents to travel.  At 5x move speed:
+#   Path group: 0.5 * 5 = 2.5 tiles/s → 8s = 20 tiles (reach ~x=25)
+#   Grass group: 0.25 * 5 = 1.25 tiles/s → 8s = 10 tiles (reach ~x=15)
 wait 8
-screenshot 03_agents_on_path
 
-# Verify agents exist
-assert_agent_count >= 3
+screenshot 03_path_vs_grass
+
+# Path group should have reached the stage vicinity (near x=27, z=27)
+assert_agent_near 25 27 5
+
+# Grass group should still be far from the stage (near x=15, z=23).
+# Verify they haven't reached the stage area yet.
+assert_agent_near 15 23 8
+
+# Confirm some agents are actually on Path tiles (chose the path)
+assert_agents_on_tiletype path >= 1

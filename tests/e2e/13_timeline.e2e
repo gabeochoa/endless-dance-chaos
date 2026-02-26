@@ -1,13 +1,32 @@
-# Test timeline sidebar displays
+# Test timeline sidebar displays and updates with artist schedule
 reset_game
+set_spawn_enabled 0
 wait 1
 
+# "LINEUP" header should always be visible
 expect_text "LINEUP"
-wait 1
 
-# Set time during performance
-set_time 10 30
-wait 2
+# Timeline sidebar region should not be blank (right edge of screen)
+# Sidebar is at x=1130, width=150, full height
+assert_region_not_blank 1135 10 140 200
 
-# Timeline should be visible (verified via screenshots)
-wait 1
+# Force a known artist to perform
+force_artist TimelineTest 50 60
+set_time 10 05
+wait_frames 10
+
+# Artist should be performing
+assert_stage_state performing
+
+# "LINEUP" should still be visible during performance
+expect_text "LINEUP"
+
+# Take screenshot showing timeline with performing artist
+screenshot 13_timeline_performing
+
+# Advance time past the artist's set
+# (another random artist may start, so we just screenshot the change)
+set_time 12 00
+wait_frames 10
+
+screenshot 13_timeline_after

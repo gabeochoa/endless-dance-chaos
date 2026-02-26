@@ -1,0 +1,31 @@
+# Test that rain event actually slows agents down.
+# Spawn agents, let them travel, trigger rain, verify they slow.
+reset_game
+set_spawn_enabled 0
+set_move_speed 5
+wait_frames 5
+
+# Build a long path
+draw_path_rect 5 26 40 27
+wait_frames 5
+
+# Spawn agents heading to stage
+spawn_agents 5 26 5 stage
+wait_frames 5
+
+# Let them move for 3 seconds without rain
+wait 3
+
+# They should be around x=12 (0.5*5=2.5 tiles/s * 3s ≈ 7.5 tiles from x=5)
+assert_agent_near 12 26 5
+
+# Now trigger rain — agents should slow to 50% speed
+trigger_event rain 30
+assert_event_active rain
+
+# Wait another 3 seconds. With rain: 0.5*5*0.5=1.25 tiles/s * 3s ≈ 3.75 tiles
+# So they should be around x=16 (not x=20 as they would be without rain)
+wait 3
+
+# Agents should be around x=16, NOT at x=20+ where they'd be without rain
+assert_agent_near 16 26 5

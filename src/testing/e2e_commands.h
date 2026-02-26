@@ -689,6 +689,22 @@ static void cmd_set_agent_speed(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+static void cmd_set_move_speed(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_move_speed requires MULTIPLIER");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (!gs) {
+        cmd.fail("set_move_speed: no GameState");
+        return;
+    }
+    gs->speed_multiplier = cmd.arg_as<float>(0);
+    log_info("[E2E] Move speed multiplier set to {} (clock unchanged)",
+             gs->speed_multiplier);
+    cmd.consume();
+}
+
 static void cmd_get_death_count(testing::PendingE2ECommand& cmd) {
     auto* gs = EntityHelper::get_singleton_cmp<GameState>();
     log_info("[E2E] Death count: {}/{}", gs ? gs->death_count : 0,
@@ -1713,6 +1729,7 @@ static void init_e2e_registry() {
     r.add("toggle_overlay", cmd_toggle_overlay);
     r.add("assert_overlay", cmd_assert_overlay);
     r.add("set_agent_speed", cmd_set_agent_speed);
+    r.add("set_move_speed", cmd_set_move_speed);
     r.add("get_death_count", cmd_get_death_count);
     r.add("set_death_count", cmd_set_death_count);
     r.add("assert_death_count", cmd_assert_death_count);

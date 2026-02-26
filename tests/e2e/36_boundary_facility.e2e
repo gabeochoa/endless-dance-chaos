@@ -1,0 +1,34 @@
+# Test placing a facility near map boundaries and agents routing to it
+reset_game
+set_spawn_enabled 0
+set_move_speed 8
+wait_frames 5
+
+# Remove the default bathroom (2x2 at 20,20) so our boundary one is the only option
+demolish_at 20 20
+demolish_at 21 20
+demolish_at 20 21
+demolish_at 21 21
+wait_frames 5
+
+# Place a bathroom near the bottom-right boundary
+place_facility bathroom 45 40
+wait_frames 5
+assert_tile_type 45 40 bathroom
+
+# Build a path from mid-map to the facility
+draw_path_rect 25 26 25 40
+draw_path_rect 25 40 45 40
+wait_frames 5
+
+# Spawn agents nearby and force bathroom need
+spawn_agents 25 26 5 stage
+wait_frames 5
+force_need bathroom
+
+# Wait for agents to travel the path (~20 tiles at 0.5*8=4 tiles/s ≈ 5s)
+wait 10
+
+# Agents should reach the boundary facility
+assert_agent_near 45 40 6
+assert_agent_count >= 5
