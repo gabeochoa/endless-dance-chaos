@@ -1,0 +1,25 @@
+# Test bottleneck warning: overwhelmed facility triggers toast
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Unlock extra facility slots so the bottleneck check fires
+# (can_place must return true, needs max_attendees >= 100)
+set_max_attendees 200
+
+# Build path to bathroom
+draw_path_rect 18 18 22 22
+wait_frames 5
+
+# Pack the bathroom with agents to trigger the warning.
+# FACILITY_MAX_AGENTS=20, warning at 90% = 18 agents on facility tiles.
+spawn_agents 20 20 25 bathroom
+wait_frames 5
+force_need bathroom
+set_agent_speed 0
+
+# Bottleneck timer needs 5+ seconds at 90%+ capacity
+wait 8
+
+# Should see a bottleneck warning toast
+assert_toast_contains overwhelmed

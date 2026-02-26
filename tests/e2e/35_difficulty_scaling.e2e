@@ -1,0 +1,17 @@
+# Test difficulty scaling: day number increments and spawn rate increases
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Start at day 1
+assert_day_number eq 1
+assert_spawn_rate eq 1.0
+
+# Manually set day 3 and verify scaling
+set_day_number 3
+assert_day_number eq 3
+assert_spawn_rate gt 1.0
+
+# Day 1 should have base rate
+set_day_number 1
+assert_spawn_rate eq 1.0

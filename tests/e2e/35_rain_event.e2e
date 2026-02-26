@@ -1,0 +1,22 @@
+# Test rain event: triggers, slows agents, expires
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# No events active initially
+assert_event_inactive rain
+
+# Trigger a short rain event (5 seconds)
+trigger_event rain 5
+
+# Rain should be active
+assert_event_active rain
+
+# Toast should announce the event
+assert_toast_contains rain
+
+# Wait for event to expire
+wait 6
+
+# Rain should be gone
+assert_event_inactive rain

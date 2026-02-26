@@ -1,0 +1,15 @@
+# Test heat wave event: accelerates agent need timers
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# No events active initially
+assert_event_inactive heatwave
+
+# Trigger a short heat wave (5 seconds)
+trigger_event heatwave 5
+assert_event_active heatwave
+
+# Wait for event to expire
+wait 6
+assert_event_inactive heatwave

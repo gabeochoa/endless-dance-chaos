@@ -1,0 +1,45 @@
+# Test save/load: game state persists across save and load
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Clean any previous save
+delete_save
+
+# Set up some game state
+draw_path_rect 5 24 15 28
+spawn_agents 10 26 5 stage
+set_time 14 30
+set_death_count 3
+wait_frames 5
+
+# Verify pre-save state
+assert_agent_count gte 5
+assert_death_count eq 3
+
+# Save the game
+save_game
+assert_save_exists
+
+# Reset everything
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Verify state was reset
+assert_death_count eq 0
+assert_agent_count eq 0
+
+# Load the saved game
+load_game
+wait_frames 5
+
+# Verify state was restored
+assert_death_count eq 3
+assert_agent_count gte 5
+
+# Verify grid was restored (path tile should still exist)
+assert_tile_type 10 26 path
+
+# Clean up save file
+delete_save

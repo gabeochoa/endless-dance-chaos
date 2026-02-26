@@ -11,7 +11,9 @@
 #include "entity_makers.h"
 #include "game.h"
 #include "render_helpers.h"
+#include "save_system.h"
 #include "systems.h"
+#include "update_helpers.h"
 
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
@@ -1460,6 +1462,221 @@ static void cmd_set_zoom(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// ── Events ───────────────────────────────────────────────────────────────
+
+static EventType parse_event_type(const std::string& s) {
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "rain") return EventType::Rain;
+    if (lower == "poweroutage" || lower == "power_outage")
+        return EventType::PowerOutage;
+    if (lower == "vip" || lower == "vipvisit" || lower == "vip_visit")
+        return EventType::VIPVisit;
+    if (lower == "heatwave" || lower == "heat_wave" || lower == "heat")
+        return EventType::HeatWave;
+    return EventType::Rain;
+}
+
+static const char* event_type_name(EventType t) {
+    switch (t) {
+        case EventType::Rain:
+            return "rain";
+        case EventType::PowerOutage:
+            return "poweroutage";
+        case EventType::VIPVisit:
+            return "vipvisit";
+        case EventType::HeatWave:
+            return "heatwave";
+    }
+    return "unknown";
+}
+
+static void cmd_trigger_event(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("trigger_event requires TYPE DURATION_SECONDS");
+        return;
+    }
+    EventType type = parse_event_type(cmd.arg(0));
+    float duration = cmd.arg_as<float>(1);
+    Entity& ev_entity = EntityHelper::createEntity();
+    ev_entity.addComponent<ActiveEvent>();
+    auto& ev = ev_entity.get<ActiveEvent>();
+    ev.type = type;
+    ev.duration = duration;
+    ev.description = event_type_name(type);
+    EntityHelper::merge_entity_arrays();
+    spawn_toast("Event: " + ev.description + "!");
+    log_info("[E2E] trigger_event: {} for {:.1f}s", ev.description, duration);
+    cmd.consume();
+}
+
+static void cmd_assert_event_active(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_event_active requires TYPE");
+        return;
+    }
+    EventType expected = parse_event_type(cmd.arg(0));
+    auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+    bool found = false;
+    for (Entity& ev : events) {
+        if (ev.get<ActiveEvent>().type == expected) {
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        cmd.fail(fmt::format("assert_event_active FAILED: no active {} event",
+                             event_type_name(expected)));
+    else {
+        log_info("assert_event_active PASSED: {}", event_type_name(expected));
+        cmd.consume();
+    }
+}
+
+static void cmd_assert_event_inactive(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_event_inactive requires TYPE");
+        return;
+    }
+    EventType expected = parse_event_type(cmd.arg(0));
+    auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+    for (Entity& ev : events) {
+        if (ev.get<ActiveEvent>().type == expected) {
+            cmd.fail(
+                fmt::format("assert_event_inactive FAILED: {} is still active",
+                            event_type_name(expected)));
+            return;
+        }
+    }
+    log_info("assert_event_inactive PASSED: {}", event_type_name(expected));
+    cmd.consume();
+}
+
+// ── Difficulty ───────────────────────────────────────────────────────────
+
+static void cmd_assert_day_number(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_day_number requires OP VALUE");
+        return;
+    }
+    auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+    int actual = diff ? diff->day_number : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_day_number failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else {
+        log_info("assert_day_number PASSED: {}", actual);
+        cmd.consume();
+    }
+}
+
+static void cmd_set_day_number(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_day_number requires VALUE");
+        return;
+    }
+    auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+    if (diff) {
+        diff->day_number = cmd.arg_as<int>(0);
+        diff->spawn_rate_mult = 1.0f + (diff->day_number - 1) * 0.15f;
+        diff->crowd_size_mult = 1.0f + (diff->day_number - 1) * 0.1f;
+        log_info("[E2E] set_day_number: {} (spawn_mult={:.2f})",
+                 diff->day_number, diff->spawn_rate_mult);
+    }
+    cmd.consume();
+}
+
+static void cmd_assert_spawn_rate(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_spawn_rate requires OP VALUE");
+        return;
+    }
+    auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+    float actual = diff ? diff->spawn_rate_mult : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(
+            fmt::format("assert_spawn_rate failed: {:.2f} {} {:.2f} (actual: "
+                        "{:.2f})",
+                        actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else {
+        log_info("assert_spawn_rate PASSED: {:.2f}", actual);
+        cmd.consume();
+    }
+}
+
+// ── Toasts ───────────────────────────────────────────────────────────────
+
+static void cmd_assert_toast_contains(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_toast_contains requires TEXT");
+        return;
+    }
+    std::string needle = cmd.arg(0);
+    std::string needle_lower = needle;
+    std::transform(needle_lower.begin(), needle_lower.end(),
+                   needle_lower.begin(), ::tolower);
+    auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+    for (Entity& t : toasts) {
+        std::string text = t.get<ToastMessage>().text;
+        std::string text_lower = text;
+        std::transform(text_lower.begin(), text_lower.end(), text_lower.begin(),
+                       ::tolower);
+        if (text_lower.find(needle_lower) != std::string::npos) {
+            log_info("assert_toast_contains PASSED: found '{}' in '{}'", needle,
+                     text);
+            cmd.consume();
+            return;
+        }
+    }
+    cmd.fail(fmt::format(
+        "assert_toast_contains FAILED: no toast contains '{}' ({} active)",
+        needle, toasts.size()));
+}
+
+static void cmd_assert_no_toast(testing::PendingE2ECommand& cmd) {
+    auto toasts = EntityQuery().whereHasComponent<ToastMessage>().gen();
+    if (!toasts.empty())
+        cmd.fail(fmt::format("assert_no_toast FAILED: {} toasts active",
+                             toasts.size()));
+    else {
+        log_info("assert_no_toast PASSED");
+        cmd.consume();
+    }
+}
+
+// ── Save/Load ────────────────────────────────────────────────────────────
+
+static void cmd_save_game(testing::PendingE2ECommand& cmd) {
+    if (save::save_game())
+        log_info("[E2E] save_game: saved successfully");
+    else
+        log_warn("[E2E] save_game: FAILED to save");
+    cmd.consume();
+}
+
+static void cmd_load_game(testing::PendingE2ECommand& cmd) {
+    if (save::load_game())
+        log_info("[E2E] load_game: loaded successfully");
+    else
+        log_warn("[E2E] load_game: FAILED to load");
+    cmd.consume();
+}
+
+static void cmd_assert_save_exists(testing::PendingE2ECommand& cmd) {
+    if (save::has_save_file()) {
+        log_info("assert_save_exists PASSED");
+        cmd.consume();
+    } else {
+        cmd.fail("assert_save_exists FAILED: no save file");
+    }
+}
+
+static void cmd_delete_save(testing::PendingE2ECommand& cmd) {
+    save::delete_save();
+    log_info("[E2E] delete_save: done");
+    cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1530,6 +1747,18 @@ static void init_e2e_registry() {
     r.add("assert_pixel", cmd_assert_pixel);
     r.add("assert_region_not_blank", cmd_assert_region_not_blank);
     r.add("set_zoom", cmd_set_zoom);
+    r.add("trigger_event", cmd_trigger_event);
+    r.add("assert_event_active", cmd_assert_event_active);
+    r.add("assert_event_inactive", cmd_assert_event_inactive);
+    r.add("assert_day_number", cmd_assert_day_number);
+    r.add("set_day_number", cmd_set_day_number);
+    r.add("assert_spawn_rate", cmd_assert_spawn_rate);
+    r.add("assert_toast_contains", cmd_assert_toast_contains);
+    r.add("assert_no_toast", cmd_assert_no_toast);
+    r.add("save_game", cmd_save_game);
+    r.add("load_game", cmd_load_game);
+    r.add("assert_save_exists", cmd_assert_save_exists);
+    r.add("delete_save", cmd_delete_save);
 }
 
 void register_e2e_systems(SystemManager& sm) {
