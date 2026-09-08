@@ -9,6 +9,7 @@
 #include "render_helpers.h"
 #include "systems.h"
 
+#include "afterhours/src/gestures_macos.h"
 #include "afterhours/src/shutdown.h"
 
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
@@ -55,6 +56,9 @@ int main(int argc, char* argv[]) {
 
     cfg.init = [&]() {
         gfx::set_exit_key(0);
+
+        // Needs the window to exist. Idempotent, and a no-op off macOS.
+        afterhours::gestures::install_pinch_monitor();
 
         afterhours::InitAudioDevice();
         if (!g_test_mode) {

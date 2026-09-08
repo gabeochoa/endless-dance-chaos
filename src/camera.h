@@ -67,14 +67,24 @@ struct IsometricCamera {
         log_info("Camera rotated to {} degrees", 45 + rotation_index * 90);
     }
 
-    // Zoom in/out
-    void zoom(float delta) {
-        distance -= delta * scroll_sensitivity;
-        distance = std::clamp(distance, min_distance, max_distance);
-
-        // Also adjust orthographic "zoom" (fovy for ortho is like zoom level)
+    // For an orthographic camera fovy IS the zoom level, so distance and fovy
+    // move together.
+    void set_distance(float d) {
+        distance = std::clamp(d, min_distance, max_distance);
         camera.fovy = distance;
         update_camera_position();
+    }
+
+    // Zoom in/out by a wheel notch
+    void zoom(float delta) {
+        set_distance(distance - delta * scroll_sensitivity);
+    }
+
+    // Trackpad pinch, which is multiplicative rather than per-notch: +0.01 is
+    // "grow 1%", and growing the view means a smaller ortho distance. The
+    // factor floor keeps a wild delta from flipping the sign.
+    void pinch_zoom(float delta) {
+        set_distance(distance / std::max(0.1f, 1.f + delta));
     }
 
     // Pan the camera target
@@ -98,10 +108,14 @@ struct IsometricCamera {
             rotate_clockwise();
         }
 
-        // Zoom: scroll wheel
+        // Zoom: scroll wheel, or a trackpad pinch
         float wheel = input::get_mouse_wheel_move();
         if (wheel != 0) {
             zoom(wheel);
+        }
+        float pinch = input::get_pinch_delta();
+        if (pinch != 0.f) {
+            pinch_zoom(pinch);
         }
 
         // Pan: WASD or arrow keys

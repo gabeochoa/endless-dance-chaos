@@ -1,0 +1,26 @@
+# Trackpad pinch zooms the isometric camera.
+# pinch is multiplicative: +0.01 grows the view 1%, which is a SMALLER ortho
+# distance. The wheel path is covered by 01_camera.
+reset_game
+wait_frames 2
+
+set_zoom 30
+wait_frames 2
+assert_zoom == 30
+
+# Pinch out: grow the view, so distance drops. 30 / 1.5 = 20
+pinch 0.5
+wait_frames 3
+assert_zoom < 21
+assert_zoom > 19
+
+# Pinch in: shrink the view, so distance climbs back up. 20 / 0.5 = 40
+pinch -0.5
+wait_frames 3
+assert_zoom > 39
+assert_zoom < 41
+
+# Clamped at max_distance (50), not run away
+pinch -0.8
+wait_frames 3
+assert_zoom <= 50

@@ -9,13 +9,17 @@ else
 	MCP_FLAGS =
 endif
 
-FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
+# -fblocks + AppKit is what afterhours' trackpad pinch monitor needs; without
+# the define get_pinch_delta() silently reads 0.
+GESTURE_FLAGS = -fblocks -DAFTER_HOURS_ENABLE_MACOS_GESTURES
+
+FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS) $(GESTURE_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
 NOFLAGS = -Wno-deprecated-volatile -Wno-missing-field-initializers \
 		  -Wno-c99-extensions -Wno-unused-function -Wno-sign-conversion \
 		  -Wno-implicit-int-float-conversion
 
 INCLUDES = -Ivendor/ -Isrc/
-LIBS = -Lvendor/ $(RAYLIB_LIB) -framework OpenGL
+LIBS = -Lvendor/ $(RAYLIB_LIB) -framework OpenGL -framework AppKit
 
 SRC_FILES := $(wildcard src/*.cpp src/**/*.cpp)
 H_FILES := $(wildcard src/*.h src/**/*.h)

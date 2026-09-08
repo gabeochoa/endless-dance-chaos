@@ -1460,6 +1460,26 @@ static void cmd_set_zoom(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+static void cmd_assert_zoom(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_zoom requires OP VALUE");
+        return;
+    }
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("assert_zoom: no camera");
+        return;
+    }
+    float actual = cam->cam.distance;
+    std::string op = cmd.args[0];
+    float expected = cmd.arg_as<float>(1);
+    if (compare_op_f(actual, op, expected))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_zoom failed: {} {} {} (actual {})", actual,
+                             op, expected, actual));
+}
+
 // ── Events ───────────────────────────────────────────────────────────────
 
 static EventType parse_event_type(const std::string& s) {
@@ -1746,6 +1766,7 @@ static void init_e2e_registry() {
     r.add("assert_pixel", cmd_assert_pixel);
     r.add("assert_region_not_blank", cmd_assert_region_not_blank);
     r.add("set_zoom", cmd_set_zoom);
+    r.add("assert_zoom", cmd_assert_zoom);
     r.add("trigger_event", cmd_trigger_event);
     r.add("assert_event_active", cmd_assert_event_active);
     r.add("assert_event_inactive", cmd_assert_event_inactive);
