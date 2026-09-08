@@ -56,7 +56,7 @@ run: $(OUTPUT_EXE)
 	./$(OUTPUT_EXE)
 
 test: $(OUTPUT_EXE)
-	./$(OUTPUT_EXE) --test-dir tests/e2e
+	./$(OUTPUT_EXE) --test-script-dir tests/e2e
 
 count:
 	git ls-files | grep "src" | grep -v "vendor" | grep -v "resources" | xargs wc -l | sort -rn

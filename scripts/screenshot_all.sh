@@ -25,7 +25,7 @@ mkdir -p "$SCREENSHOT_SRC"
 
 echo "Running test suite..."
 cd "$PROJECT_DIR"
-timeout 600 ./output/dance.exe --test-mode --test-dir "$TMP_DIR" 2>&1 | grep -E '\[PASS\]|\[FAIL\]|Summary|Scripts|finished'
+timeout 600 ./output/dance.exe --test-script-dir "$TMP_DIR" 2>&1 | grep -E '\[PASS\]|\[FAIL\]|Summary|Scripts|finished'
 
 mkdir -p "$DEST_DIR"
 cp "$SCREENSHOT_SRC"/*.png "$DEST_DIR/" 2>/dev/null || true

@@ -205,7 +205,7 @@ Every phase includes E2E tests using the afterhours `e2e_testing` plugin.
 - `assert_*` commands for automated validation (tile type, density, agent count, death count, phase, etc.)
 - `get_*` commands for console logging (density, agent count, death count, etc.)
 
-Run: `./output/dance.exe --test-mode --test-script="tests/e2e/NN_test_name.e2e"`
+Run: `./output/dance.exe --test-script tests/e2e/NN_test_name.e2e`
 
 ---
 

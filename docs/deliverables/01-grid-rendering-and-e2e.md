@@ -161,7 +161,7 @@ constexpr int TILE_RENDER_SIZE = 32; // pixels at 1x zoom
 - [ ] 50x50 grid of grass tiles renders isometrically
 - [ ] Camera pan (WASD), rotate (Q/E), zoom (scroll) all work
 - [ ] Fredoka font loads and renders text
-- [ ] `--test-mode --test-script=path.e2e` runs E2E scripts
+- [ ] `--test-script path.e2e` runs E2E scripts
 - [ ] `spawn_agent` E2E command creates an agent entity
 - [ ] `assert_tile_type` E2E command validates tile state
 - [ ] `screenshot` command captures frame to file

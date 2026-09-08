@@ -12,6 +12,7 @@
 #include "afterhours/src/shutdown.h"
 
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
+#include "afterhours/src/plugins/e2e_testing/harness.h"
 #include "afterhours/src/plugins/e2e_testing/test_input.h"
 
 bool g_test_mode = false;
@@ -25,13 +26,12 @@ int main(int argc, char* argv[]) {
     argh::parser cmdl(argc, argv, argh::parser::PREFER_PARAM_FOR_UNREG_OPTION);
 
     bool mcp_mode = cmdl[{"--mcp"}];
-    g_test_mode = cmdl[{"--test-mode"}];
 
-    std::string test_script;
-    cmdl("--test-script") >> test_script;
-
-    std::string test_dir;
-    cmdl("--test-dir") >> test_dir;
+    // Everything e2e comes from afterhours' harness: --test-mode,
+    // --test-script, --test-script-dir, --timeout, --slow, --time-scale
+    // (aka --e2e-speed) and --screenshot-dir. argh still owns --mcp.
+    auto e2e = testing::parse_e2e_args(argc, argv);
+    g_test_mode = e2e.enabled;
 
     if (mcp_mode) {
         gfx::set_trace_log_level(7);  // LOG_NONE
@@ -39,11 +39,6 @@ int main(int argc, char* argv[]) {
     }
 
     if (g_test_mode) {
-        gfx::set_trace_log_level(7);
-    }
-
-    if (!test_dir.empty()) {
-        g_test_mode = true;
         gfx::set_trace_log_level(7);
     }
 
@@ -79,9 +74,11 @@ int main(int argc, char* argv[]) {
         EntityHelper::merge_entity_arrays();
 
         auto setup_screenshot_callback = [&]() {
-            runner.set_screenshot_callback([](const std::string& name) {
-                std::filesystem::create_directories("tests/e2e/screenshots");
-                std::string path = "tests/e2e/screenshots/" + name + ".png";
+            runner.set_screenshot_callback([&e2e](const std::string& name) {
+                std::string path = testing::screenshot_path(
+                    e2e, name, "tests/e2e/screenshots");
+                std::filesystem::create_directories(
+                    std::filesystem::path(path).parent_path());
 #ifdef AFTER_HOURS_USE_METAL
                 gfx::take_screenshot(path.c_str());
 #else
@@ -91,16 +88,20 @@ int main(int argc, char* argv[]) {
             });
         };
 
-        if (g_test_mode && !test_dir.empty()) {
-            runner.load_scripts_from_directory(test_dir);
-            runner.set_timeout(60.0f);
+        if (g_test_mode && !e2e.script_dir.empty()) {
+            runner.load_scripts_from_directory(e2e.script_dir);
+            // A whole directory needs longer than the harness's per-script
+            // default; an explicit --timeout still wins.
+            if (e2e.timeout_seconds == testing::E2EArgs{}.timeout_seconds)
+                e2e.timeout_seconds = 60.0f;
+            testing::configure_runner(runner, e2e);
             setup_screenshot_callback();
-            log_info("[E2E] Loaded test directory: {}", test_dir);
-        } else if (g_test_mode && !test_script.empty()) {
-            runner.load_script(test_script);
-            runner.set_timeout(30.0f);
+            log_info("[E2E] Loaded test directory: {}", e2e.script_dir);
+        } else if (g_test_mode && !e2e.script_path.empty()) {
+            runner.load_script(e2e.script_path);
+            testing::configure_runner(runner, e2e);
             setup_screenshot_callback();
-            log_info("[E2E] Loaded test script: {}", test_script);
+            log_info("[E2E] Loaded test script: {}", e2e.script_path);
         }
 
         if (g_test_mode) {
@@ -116,7 +117,10 @@ int main(int argc, char* argv[]) {
         bool escape_should_quit =
             gfx::is_key_pressed(KEY_ESCAPE) && should_escape_quit();
 
-        float dt = gfx::get_frame_time();
+        // --time-scale / --e2e-speed shortens a run by scaling the whole
+        // frame, so `wait <seconds>` and the sim it is waiting on move
+        // together. Defaults to 1.
+        float dt = gfx::get_frame_time() * e2e.time_scale;
         systems.run(dt);
 
         if (g_test_mode && runner.has_commands()) {

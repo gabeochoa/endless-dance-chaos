@@ -74,7 +74,7 @@ See `vendor/afterhours/example/` for usage examples.
 
 Run tests with:
 ```bash
-./output/dance.exe --test-mode --test-script="tests/e2e_scripts/test_name.e2e"
+./output/dance.exe --test-script tests/e2e_scripts/test_name.e2e
 ```
 
 Create `.e2e` script files in `tests/e2e_scripts/`. See [Testing Framework](phases/00-testing-framework.md) for details.
