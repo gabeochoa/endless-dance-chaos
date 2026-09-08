@@ -9,6 +9,8 @@
 #include "render_helpers.h"
 #include "systems.h"
 
+#include "afterhours/src/shutdown.h"
+
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
 #include "afterhours/src/plugins/e2e_testing/test_input.h"
 
@@ -136,6 +138,10 @@ int main(int argc, char* argv[]) {
         mcp_integration::shutdown();
         get_audio().shutdown();
         afterhours::CloseAudioDevice();
+        // Entities before the backend. Left to static destruction the order is
+        // unspecified, and a component destructor that calls into a dead
+        // backend throws on the way out of main().
+        afterhours::shutdown();
         unload_render_texture(g_render_texture);
     };
 
