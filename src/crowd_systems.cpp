@@ -184,10 +184,7 @@ struct UpdateTileDensitySystem : System<> {
             tile.desire_counts.fill(0);
         }
 
-        auto agents = EntityQuery()
-                          .whereHasComponent<Agent>()
-                          .whereHasComponent<Transform>()
-                          .gen();
+        auto agents = EntityQuery().whereHasComponent<Agent, Transform>().gen();
         for (Entity& e : agents) {
             if (!e.is_missing<BeingServiced>()) continue;
             auto& tf = e.get<Transform>();
@@ -317,9 +314,7 @@ struct AgentDeathSystem : System<> {
         std::unordered_map<int, DeathInfo> deaths_per_tile;
 
         auto agents = EntityQuery()
-                          .whereHasComponent<Agent>()
-                          .whereHasComponent<AgentHealth>()
-                          .whereHasComponent<Transform>()
+                          .whereHasComponent<Agent, AgentHealth, Transform>()
                           .gen();
         for (Entity& e : agents) {
             auto& health = e.get<AgentHealth>();

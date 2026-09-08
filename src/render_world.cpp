@@ -202,10 +202,7 @@ struct RenderAgentsSystem : System<> {
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
 
-        auto agents = EntityQuery()
-                          .whereHasComponent<Agent>()
-                          .whereHasComponent<Transform>()
-                          .gen();
+        auto agents = EntityQuery().whereHasComponent<Agent, Transform>().gen();
 
         for (Entity& e : agents) {
             if (!e.is_missing<BeingServiced>()) continue;

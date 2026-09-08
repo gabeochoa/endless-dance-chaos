@@ -444,8 +444,7 @@ struct RenderHoverInfoSystem : System<> {
                         cached_hz = pds->hover_z;
                         std::memset(need_counts, 0, sizeof(need_counts));
                         auto agents = EntityQuery()
-                                          .whereHasComponent<Agent>()
-                                          .whereHasComponent<Transform>()
+                                          .whereHasComponent<Agent, Transform>()
                                           .gen();
                         for (Entity& ae : agents) {
                             if (!ae.is_missing<BeingServiced>()) continue;
@@ -615,10 +614,7 @@ struct RenderMinimapSystem : System<> {
                             Color{255, 255, 255, 255});
 
         // Draw agent dots (per-frame)
-        auto agents = EntityQuery()
-                          .whereHasComponent<Agent>()
-                          .whereHasComponent<Transform>()
-                          .gen();
+        auto agents = EntityQuery().whereHasComponent<Agent, Transform>().gen();
         for (Entity& ae : agents) {
             if (!ae.is_missing<BeingServiced>()) continue;
             auto& tf = ae.get<Transform>();

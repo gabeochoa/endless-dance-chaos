@@ -108,10 +108,8 @@ inline bool save_game() {
     }
 
     // Agent count + positions
-    auto agents = afterhours::EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<Transform>()
-                      .gen();
+    auto agents =
+        afterhours::EntityQuery().whereHasComponent<Agent, Transform>().gen();
     int agent_count = static_cast<int>(agents.size());
     f.write(reinterpret_cast<const char*>(&agent_count), sizeof(int));
     for (afterhours::Entity& a_entity : agents) {

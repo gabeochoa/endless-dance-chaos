@@ -400,10 +400,7 @@ static void cmd_assert_agent_near(testing::PendingE2ECommand& cmd) {
     }
     ::vec2 tw = grid->grid_to_world(gx, gz);
     float rw = radius * TILESIZE;
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<Transform>()
-                      .gen();
+    auto agents = EntityQuery().whereHasComponent<Agent, Transform>().gen();
     for (Entity& a : agents) {
         auto& tf = a.get<Transform>();
         float dx = tf.position.x - tw.x, dz = tf.position.y - tw.y;
@@ -454,10 +451,7 @@ static void cmd_force_need(testing::PendingE2ECommand& cmd) {
     std::string type_str = cmd.arg(0);
     std::transform(type_str.begin(), type_str.end(), type_str.begin(),
                    ::tolower);
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<AgentNeeds>()
-                      .gen();
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
     for (Entity& a : agents) {
         auto& needs = a.get<AgentNeeds>();
         if (type_str == "bathroom")
@@ -476,10 +470,7 @@ static void cmd_assert_agents_at_facility(testing::PendingE2ECommand& cmd) {
     }
     FacilityType ftype = parse_facility_type(cmd.arg(0));
     int count = 0;
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<BeingServiced>()
-                      .gen();
+    auto agents = EntityQuery().whereHasComponent<Agent, BeingServiced>().gen();
     for (Entity& a : agents)
         if (a.get<BeingServiced>().facility_type == ftype) count++;
     if (!compare_op(count, cmd.arg(1), cmd.arg_as<int>(2)))
@@ -517,10 +508,7 @@ static void cmd_assert_agents_on_tiletype(testing::PendingE2ECommand& cmd) {
         return;
     }
     int count = 0;
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<Transform>()
-                      .gen();
+    auto agents = EntityQuery().whereHasComponent<Agent, Transform>().gen();
     for (Entity& a : agents) {
         auto& tf = a.get<Transform>();
         auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
@@ -750,11 +738,8 @@ static void cmd_assert_agent_hp(testing::PendingE2ECommand& cmd) {
         cmd.fail("assert_agent_hp: no grid");
         return;
     }
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<Transform>()
-                      .whereHasComponent<AgentHealth>()
-                      .gen();
+    auto agents =
+        EntityQuery().whereHasComponent<Agent, Transform, AgentHealth>().gen();
     bool found = false;
     for (Entity& a : agents) {
         auto [gx, gz] = grid->world_to_grid(a.get<Transform>().position.x,
@@ -1183,10 +1168,7 @@ static void cmd_set_all_agent_hp(testing::PendingE2ECommand& cmd) {
         return;
     }
     float hp = cmd.arg_as<float>(0);
-    auto agents = EntityQuery()
-                      .whereHasComponent<Agent>()
-                      .whereHasComponent<AgentHealth>()
-                      .gen();
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentHealth>().gen();
     int count = 0;
     for (Entity& a : agents) {
         a.get<AgentHealth>().hp = hp;
