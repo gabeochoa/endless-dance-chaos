@@ -25,13 +25,16 @@ inline void register_all_systems(SystemManager& sm) {
     // Input system runs first to collect inputs
     afterhours::input::register_update_systems(sm);
 
-    register_mcp_update_systems(sm);
-    register_update_systems(sm);
-
-    // Register E2E command handlers when in test mode
+    // E2E commands inject input, so they have to run alongside the real input
+    // poll -- before anything reads it. Registered after the game systems, a
+    // click injected mid-frame was read first by the UI render systems, which
+    // consume the press edge; PathBuildSystem, running earlier, never saw it.
     if (g_test_mode) {
         register_e2e_systems(sm);
     }
+
+    register_mcp_update_systems(sm);
+    register_update_systems(sm);
 
     register_render_systems(sm);
     register_mcp_render_systems(sm);
