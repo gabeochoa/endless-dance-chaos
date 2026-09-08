@@ -276,7 +276,8 @@
       (defined(__cpp_consteval) &&                                    \
        (!FMT_MSC_VER || _MSC_FULL_VER >= 193030704))
 // consteval is broken in MSVC before VS2022 and Apple clang 13.
-#    define FMT_CONSTEVAL consteval
+#    define FMT_CONSTEVAL
+// PATCHED for Apple clang 21: disabled consteval
 #    define FMT_HAS_CONSTEVAL
 #  else
 #    define FMT_CONSTEVAL
