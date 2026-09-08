@@ -39,6 +39,7 @@ assert_agent_count gte 490
 perf_start
 wait 5
 perf_report
+dump_profile 8
 
 assert_fps gte 30
 screenshot perf_500_agents

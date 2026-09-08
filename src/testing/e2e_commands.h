@@ -18,6 +18,7 @@
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
+#include "afterhours/src/plugins/e2e_testing/perf_commands.h"
 
 using namespace afterhours;
 
@@ -1184,7 +1185,21 @@ static void cmd_perf_start(testing::PendingE2ECommand& cmd) {
     auto& s = get_perf_sample();
     s.reset();
     s.is_sampling = true;
-    log_info("[E2E] perf_start: sampling FPS every frame");
+
+    // Also time every registered system, so `dump_profile` can say which one
+    // ate the frame instead of only that the frame was slow. Only while a perf
+    // script asked for it -- the hook costs two clock reads per system.
+    namespace perf = afterhours::testing::perf_commands;
+    perf::PerfProvider p = perf::provider();
+    p.get_fps = []() -> std::optional<float> {
+        auto& ps = get_perf_sample();
+        return (ps.sample_count > 0) ? std::optional<float>(ps.avg())
+                                     : std::nullopt;
+    };
+    perf::set_provider(std::move(p));
+    perf::builtin_profile::enable();
+
+    log_info("[E2E] perf_start: sampling FPS and per-system time every frame");
     cmd.consume();
 }
 
@@ -1783,6 +1798,9 @@ static void init_e2e_registry() {
 
 void register_e2e_systems(SystemManager& sm) {
     testing::register_builtin_handlers(sm);
+    // dump_profile / expect_fps_above / expect_p99_below. Opt-in in
+    // afterhours, so it has to be registered explicitly.
+    testing::perf_commands::register_perf_commands(sm);
     init_e2e_registry();
     sm.register_update_system(std::make_unique<E2EDispatchSystem>());
     testing::register_unknown_handler(sm);

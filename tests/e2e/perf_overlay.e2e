@@ -27,6 +27,7 @@ wait_frames 10
 perf_start
 wait 3
 perf_report
+dump_profile 8
 screenshot perf_overlay_off
 
 # Turn on density overlay
@@ -37,6 +38,7 @@ assert_overlay on
 perf_start
 wait 3
 perf_report
+dump_profile 8
 
 # Overlay should not tank FPS below playable threshold
 assert_fps gte 30
