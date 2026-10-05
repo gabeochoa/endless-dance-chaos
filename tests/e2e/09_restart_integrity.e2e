@@ -1,7 +1,7 @@
 # Test that game restart resets ALL state properly
 reset_game
 set_spawn_enabled 0
-set_agent_speed 5
+set_move_speed 5
 wait_frames 2
 
 # Set up some state: spawn agents, cause deaths, advance time

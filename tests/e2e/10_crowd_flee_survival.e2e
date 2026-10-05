@@ -1,7 +1,7 @@
 # Test that continuous spawning doesn't cause mass death due to pileup
 reset_game
 set_spawn_enabled 0
-set_agent_speed 3
+set_move_speed 3
 wait_frames 2
 
 # Spawn 80 agents on a single tile — way over capacity

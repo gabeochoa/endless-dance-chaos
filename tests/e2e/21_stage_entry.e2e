@@ -3,7 +3,7 @@
 
 reset_game
 set_spawn_enabled 0
-set_agent_speed 8
+set_move_speed 8
 wait_frames 5
 
 # Build a path from gate area straight to the stage floor ring

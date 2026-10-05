@@ -7,7 +7,7 @@ screenshot audit_01_default
 
 # Spawn some agents and wait for them to spread
 set_spawn_enabled 1
-set_agent_speed 3
+set_move_speed 3
 wait 5
 screenshot audit_02_agents_moving
 

@@ -1,7 +1,7 @@
 # Test density-based movement slowdown in dangerous zones (75-90%)
 reset_game
 set_spawn_enabled 0
-set_agent_speed 3
+set_move_speed 3
 wait_frames 2
 
 # Build a path corridor

@@ -4,7 +4,7 @@
 
 reset_game
 set_spawn_enabled 0
-set_agent_speed 15
+set_move_speed 15
 wait_frames 5
 
 # Force a long artist so everyone watches

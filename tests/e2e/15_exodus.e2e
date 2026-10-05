@@ -1,7 +1,7 @@
 # Test exodus: agents exit through gates
 reset_game
 set_spawn_enabled 0
-set_agent_speed 5
+set_move_speed 5
 wait_frames 5
 
 # Build path from near gate to inside the map

@@ -9,12 +9,12 @@
 
 reset_game
 set_spawn_enabled 0
-set_agent_speed 10
+set_move_speed 10
 wait_frames 5
 
 # Force a very long artist so agents keep watching through the test.
-# At 10x clock speed, 1 real second = 20 game minutes, so 9999 minutes
-# lasts ~500 real seconds — far beyond this test's duration.
+# 9999 minutes lasts far beyond this test (clock is NOT sped up;
+# set_time pins below keep it in Day).
 force_artist LongAct 100 9999
 set_time 10 05
 wait_frames 5

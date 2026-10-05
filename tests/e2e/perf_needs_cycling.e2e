@@ -1,3 +1,4 @@
+# coupled-speed-ok: needs cycling is driven by the game clock
 # Performance test: 300 agents with active facility needs
 # Tests the overhead of goal recalculation + facility search
 reset_game

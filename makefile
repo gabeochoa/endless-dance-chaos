@@ -35,7 +35,7 @@ ifdef CCACHE
     CXX := ccache $(CXX)
 endif
 
-.PHONY: all clean run format test metal
+.PHONY: all clean run format test metal check
 .DEFAULT_GOAL := all
 
 all: format $(OUTPUT_EXE)
@@ -59,8 +59,11 @@ clean:
 run: $(OUTPUT_EXE)
 	./$(OUTPUT_EXE)
 
-test: $(OUTPUT_EXE)
+test: check $(OUTPUT_EXE)
 	./$(OUTPUT_EXE) --test-script-dir tests/e2e
+
+check:
+	python3 scripts/check_e2e_speed.py
 
 count:
 	git ls-files | grep "src" | grep -v "vendor" | grep -v "resources" | xargs wc -l | sort -rn

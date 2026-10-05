@@ -1,7 +1,7 @@
 # Test that agents leaving facilities deposit pheromone trails
 reset_game
 set_spawn_enabled 0
-set_agent_speed 3
+set_move_speed 3
 wait_frames 5
 
 # Build path from gate through bathroom area

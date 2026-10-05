@@ -1,3 +1,4 @@
+# coupled-speed-ok: full loop needs the game clock to advance with agents
 # Full game loop test: spawning, pathing, agent activity
 reset_game
 set_agent_speed 5

@@ -1,7 +1,7 @@
 # Test that agents flee from dangerous density and survive
 reset_game
 set_spawn_enabled 0
-set_agent_speed 5
+set_move_speed 5
 wait_frames 2
 
 # Spawn 40 agents on one tile — above critical density (90%)

@@ -1,7 +1,7 @@
 # Test fence perimeter and gate entry
 reset_game
 set_spawn_enabled 0
-set_agent_speed 5
+set_move_speed 5
 wait_frames 2
 
 # Verify fence exists on perimeter

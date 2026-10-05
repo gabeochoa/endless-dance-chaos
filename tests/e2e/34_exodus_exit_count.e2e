@@ -2,7 +2,7 @@
 # and the exit counter increments.
 reset_game
 set_spawn_enabled 0
-set_agent_speed 8
+set_move_speed 8
 wait_frames 5
 
 # Build path from gate inward

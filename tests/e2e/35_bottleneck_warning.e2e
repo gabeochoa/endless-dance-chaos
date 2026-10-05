@@ -16,7 +16,7 @@ wait_frames 5
 spawn_agents 20 20 25 bathroom
 wait_frames 5
 force_need bathroom
-set_agent_speed 0
+set_move_speed 0
 
 # Bottleneck timer needs 5+ seconds at 90%+ capacity
 wait 8

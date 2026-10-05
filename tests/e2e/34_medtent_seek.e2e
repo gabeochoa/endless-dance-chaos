@@ -2,7 +2,7 @@
 # Agents between medtent and stage should redirect when damaged.
 reset_game
 set_spawn_enabled 0
-set_agent_speed 3
+set_move_speed 3
 wait_frames 5
 
 # Build paths connecting gate through medtent to stage
