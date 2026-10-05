@@ -1,3 +1,4 @@
+# visual-only: LOD opacity is judged from screenshots at each zoom
 # LOD blob transition test: opacity fades in as you zoom out
 reset_game
 set_spawn_enabled 0

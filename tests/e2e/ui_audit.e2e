@@ -1,3 +1,4 @@
+# visual-only: screenshot audit for human UI review
 # UI audit screenshots
 reset_game
 wait_frames 10

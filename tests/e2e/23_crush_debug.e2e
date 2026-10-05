@@ -1,3 +1,4 @@
+# visual-only: diagnostic repro for log inspection (CRUSH/FLEE lines), not a pass/fail test
 # Debug test: reproduce crush deaths near empty tiles
 # Spawns a huge crowd directly on stage-adjacent tiles.
 # Check log output for CRUSH/FLEE FAIL/LETHAL NO FLEE diagnostics.

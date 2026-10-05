@@ -1,3 +1,4 @@
+# visual-only: particle rendering is visual; deaths are asserted in 07_crush_damage/09_game_over
 # Test death particle effect at critical density
 reset_game
 set_spawn_enabled 0

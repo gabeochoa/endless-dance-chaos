@@ -1,4 +1,5 @@
 # Test carryover: agents stuck after exodus persist into dead hours
+# visual-only: carryover count depends on exit timing; the vacuous always-true check was removed rather than kept as a fake pass. Screenshots judged by eye.
 reset_game
 set_spawn_enabled 0
 wait 1
@@ -22,7 +23,7 @@ wait 2
 
 # Any agents still inside are carryover
 # (they couldn't exit in time)
-assert_carryover_count gte 0
+# (no numeric assert: see visual-only note above)
 screenshot 15_carryover_agents
 
 # Verify no new agents spawn during dead hours

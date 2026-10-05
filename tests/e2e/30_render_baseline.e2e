@@ -1,3 +1,4 @@
+# visual-only: render-texture migration baseline; pixel checks live in 31_rt_*
 # Visual baseline for render texture migration
 # Captures screenshots at key visual states to verify nothing changes
 # when decoupling RenderTexture2D from direct raylib calls.

@@ -1,3 +1,4 @@
+# visual-only: camera framing is judged from screenshots; no numeric state distinguishes a good pan
 # Test: Camera controls
 # Verifies WASD pan, Q/E rotation, scroll zoom
 
