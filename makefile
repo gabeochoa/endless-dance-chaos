@@ -65,6 +65,7 @@ test: check $(OUTPUT_EXE)
 check:
 	python3 scripts/check_e2e_speed.py
 	python3 scripts/check_e2e_assertions.py
+	python3 scripts/check_raylib_boundary.py
 
 count:
 	git ls-files | grep "src" | grep -v "vendor" | grep -v "resources" | xargs wc -l | sort -rn
