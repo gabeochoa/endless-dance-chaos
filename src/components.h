@@ -680,6 +680,67 @@ struct BuilderState : afterhours::BaseComponent {
     BuildTool tool = BuildTool::Path;
 };
 
+// Staff roles. Staff are real entities (Transform + StaffMember), not
+// abstract counters: guards patrol, medics walk to collapsed agents,
+// janitors roam. They have no Agent component, so they are never counted
+// as attendees, never take crush damage, and never join the density map.
+enum class StaffRole { Guard, Medic, Janitor };
+
+struct StaffMember : afterhours::BaseComponent {
+    StaffRole role = StaffRole::Guard;
+    int home_x = 0;  // hire tile: patrol stays within STAFF_PATROL_RADIUS
+    int home_z = 0;
+    int target_x = -1;  // current wander/seek target tile (-1 = repick)
+    int target_z = -1;
+    int move_x = -1;  // next step tile (greedy pathfinding cache)
+    int move_z = -1;
+};
+
+// Payroll / quit bookkeeping singleton (lives on the Sophie entity).
+// Counts are derived live from StaffMember entities; this only tracks
+// payroll edges (which day was last paid, cumulative quits for the
+// ticker) so a reset can resync without re-reporting old walkouts.
+struct StaffState : afterhours::BaseComponent {
+    int last_payroll_day = 1;
+    int quit_count = 0;  // cumulative staff who quit over unpaid wages
+};
+
+inline int staff_bonus_for(StaffRole role) {
+    switch (role) {
+        case StaffRole::Guard:
+            return STAFF_GUARD_BONUS;
+        case StaffRole::Medic:
+            return STAFF_MEDIC_BONUS;
+        case StaffRole::Janitor:
+            return STAFF_JANITOR_BONUS;
+    }
+    return 0;
+}
+
+inline int staff_wage_for(StaffRole role) {
+    switch (role) {
+        case StaffRole::Guard:
+            return STAFF_GUARD_WAGE;
+        case StaffRole::Medic:
+            return STAFF_MEDIC_WAGE;
+        case StaffRole::Janitor:
+            return STAFF_JANITOR_WAGE;
+    }
+    return 0;
+}
+
+inline const char* staff_name_for(StaffRole role) {
+    switch (role) {
+        case StaffRole::Guard:
+            return "Guard";
+        case StaffRole::Medic:
+            return "Medic";
+        case StaffRole::Janitor:
+            return "Janitor";
+    }
+    return "Staff";
+}
+
 // Game clock - 24-hour cycle with phases
 enum class GameSpeed { Paused, OneX, TwoX, FourX };
 

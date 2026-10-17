@@ -185,6 +185,21 @@ struct RenderTopBarSystem : System<> {
 
         draw_bevel_panel(0, 0, DEFAULT_SCREEN_WIDTH, 44,
                          Color{192, 192, 192, 255});
+        // Right cluster (Day) is laid out from measured text widths,
+        // ending at the sidebar edge minus a margin. The left flow may
+        // never cross left_cap: tail items are dropped before they can
+        // overlap Day (the old code drew Day in the left flow with a
+        // fixed +90 advance, so at 1280x720 it collided with FPS).
+        // FPS lives in the sidebar header now (see
+        // RenderTimelineSidebarSystem), not in this bar.
+        float right_end = DEFAULT_SCREEN_WIDTH - 150 - 12;
+        std::string day_text;
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        if (diff) day_text = fmt::format("Day {}", diff->day_number);
+        float right_start =
+            right_end -
+            (day_text.empty() ? 0.f : ui_measure_text(day_text, 20).x);
+        float left_cap = right_start - 12;
         float bar_x = 12;
         if (clock) {
             std::string time_str = clock->format_time();
@@ -243,13 +258,13 @@ struct RenderTopBarSystem : System<> {
                                             : Color{0, 0, 0, 255};
             ui_draw_text(death_text, bar_x, 11, 20, dc);
             vtr.register_text(death_text);
-            bar_x += 170;
+            bar_x += ui_measure_text(death_text, 20).x + 12;
             int agent_count =
                 (int) EntityQuery().whereHasComponent<Agent>().gen_count();
             std::string att_text = fmt::format("Attendees: {}", agent_count);
             ui_draw_text(att_text, bar_x, 11, 20, Color{0, 0, 0, 255});
             vtr.register_text(att_text);
-            bar_x += ui_measure_text(att_text, 20).x + 20;
+            bar_x += ui_measure_text(att_text, 20).x + 12;
         }
         if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
             std::string cash_text = fmt::format("Cash: ${}", econ->cash);
@@ -257,14 +272,14 @@ struct RenderTopBarSystem : System<> {
                 econ->cash < 0 ? Color{200, 0, 0, 255} : Color{0, 140, 0, 255};
             ui_draw_text(cash_text, bar_x, 11, 20, cash_col);
             vtr.register_text(cash_text);
-            bar_x += ui_measure_text(cash_text, 20).x + 20;
+            bar_x += ui_measure_text(cash_text, 20).x + 12;
 
             // Ticket price with [-]/[+] buttons (same adjust as "," / ".").
             std::string ticket_text =
                 fmt::format("Ticket: ${}", econ->ticket_price);
             ui_draw_text(ticket_text, bar_x, 11, 20, Color{160, 100, 0, 255});
             vtr.register_text(ticket_text);
-            bar_x += ui_measure_text(ticket_text, 20).x + 8;
+            bar_x += ui_measure_text(ticket_text, 20).x + 6;
             auto mouse = input::get_mouse_position();
             bool mouse_click =
                 input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
@@ -282,31 +297,37 @@ struct RenderTopBarSystem : System<> {
                              Color{0, 0, 0, 255});
                 bar_x += bw + 4;
             }
-            bar_x += 8;
+            bar_x += 6;
         }
         if (gs) {
             std::string inj_text = fmt::format("Inj: {}", gs->injury_count);
-            Color inj_col = gs->injury_count > 0 ? Color{200, 100, 0, 255}
-                                                 : Color{0, 0, 0, 255};
-            ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
-            vtr.register_text(inj_text);
-            bar_x += ui_measure_text(inj_text, 20).x + 20;
+            float inj_w = ui_measure_text(inj_text, 20).x;
+            if (bar_x + inj_w <= left_cap) {
+                Color inj_col = gs->injury_count > 0 ? Color{200, 100, 0, 255}
+                                                     : Color{0, 0, 0, 255};
+                ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
+                vtr.register_text(inj_text);
+                bar_x += inj_w + 12;
+            }
         }
         if (auto* insp = EntityHelper::get_singleton_cmp<InspectionState>()) {
             std::string insp_text =
                 fmt::format("Insp: {}", std::string(1, insp->last_grade));
-            Color insp_col = insp->last_grade == 'F' ? Color{200, 0, 0, 255}
-                                                     : Color{0, 0, 0, 255};
-            ui_draw_text(insp_text, bar_x, 11, 20, insp_col);
-            vtr.register_text(insp_text);
-            bar_x += ui_measure_text(insp_text, 20).x + 20;
+            float insp_w = ui_measure_text(insp_text, 20).x;
+            if (bar_x + insp_w <= left_cap) {
+                Color insp_col = insp->last_grade == 'F' ? Color{200, 0, 0, 255}
+                                                         : Color{0, 0, 0, 255};
+                ui_draw_text(insp_text, bar_x, 11, 20, insp_col);
+                vtr.register_text(insp_text);
+                bar_x += insp_w + 12;
+            }
         }
-        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
-        if (diff) {
-            std::string day_text = fmt::format("Day {}", diff->day_number);
-            ui_draw_text(day_text, bar_x, 11, 20, Color{30, 60, 160, 255});
+        // Right cluster: Day, drawn from its measured width so it can
+        // never overlap the left flow (or the sidebar) at 1280x720.
+        if (!day_text.empty()) {
+            ui_draw_text(day_text, right_start, 11, 20,
+                         Color{30, 60, 160, 255});
             vtr.register_text(day_text);
-            bar_x += 90;
         }
 
         {
@@ -316,18 +337,13 @@ struct RenderTopBarSystem : System<> {
                 float remain = ev.duration - ev.elapsed;
                 std::string ev_text =
                     fmt::format("{} ({:.0f}s)", ev.description, remain);
+                float ev_w = ui_measure_text(ev_text, 16).x;
+                if (bar_x + ev_w > left_cap) continue;  // drop, don't overlap
                 ui_draw_text(ev_text, bar_x, 11, 16, Color{160, 100, 0, 255});
                 vtr.register_text(ev_text);
-                bar_x += ui_measure_text(ev_text, 16).x + 12;
+                bar_x += ev_w + 12;
             }
         }
-
-        int fps = get_fps();
-        std::string fps_text = fmt::format("FPS: {}", fps);
-        auto fps_measure = ui_measure_text(fps_text, 18);
-        ui_draw_text(fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10,
-                     12, 18,
-                     fps >= 55 ? Color{0, 140, 0, 255} : Color{200, 0, 0, 255});
     }
 };
 
@@ -387,6 +403,80 @@ struct RenderBuildBarSystem : System<> {
     }
 };
 
+// Staff hire/fire panel, build-bar style: docked into the build bar's
+// right margin (build tools end at x~793, sidebar starts at 1130), so it
+// reuses the build bar's bevel + click + hover-tooltip patterns.
+// Geometry is fixed so E2E `click` can target the buttons:
+//   panel x=830 w=290; columns at x=838/932/1026; hire "+" centre
+//   (859/953/1047, 702), fire "-" centre (905/999/1093, 702).
+// Hires spawn at the gate; fires refund nothing.
+static constexpr float STAFF_PANEL_X = DEFAULT_SCREEN_WIDTH - 150 - 300;
+static constexpr float STAFF_PANEL_W = 290.f;
+
+struct RenderStaffPanelSystem : System<> {
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        auto mouse = input::get_mouse_position();
+        bool mouse_click = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+        if (game_is_over()) return;
+
+        float px = STAFF_PANEL_X;
+        float py = BUILD_BAR_Y + 4;
+        draw_bevel_panel(px, py, STAFF_PANEL_W, 46, Color{175, 175, 175, 255});
+
+        static constexpr StaffRole ROLES[] = {
+            StaffRole::Guard, StaffRole::Medic, StaffRole::Janitor};
+        static constexpr const char* SHORT_NAMES[] = {"Guard", "Medic",
+                                                      "Janitor"};
+        for (int i = 0; i < 3; i++) {
+            float col_x = px + 8 + i * 94.f;
+            std::string label =
+                fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i]));
+            ui_draw_text(label, col_x, py + 4, 13, Color{0, 0, 0, 255});
+            vtr.register_text(label);
+
+            float btn_y = py + 22;
+            float btn_h = 20.f;
+            float hire_x = col_x;
+            float fire_x = col_x + 46;
+            float btn_w = 42.f;
+            if (mouse_click && mouse.y >= btn_y && mouse.y <= btn_y + btn_h) {
+                if (mouse.x >= hire_x && mouse.x <= hire_x + btn_w) {
+                    hire_staff(ROLES[i], SPAWN_X, SPAWN_Z);
+                } else if (mouse.x >= fire_x && mouse.x <= fire_x + btn_w) {
+                    fire_staff(ROLES[i]);
+                }
+            }
+            draw_bevel_panel(hire_x, btn_y, btn_w, btn_h,
+                             Color{200, 200, 200, 255});
+            draw_bevel_panel(fire_x, btn_y, btn_w, btn_h,
+                             Color{200, 200, 200, 255});
+            auto plus_m = ui_measure_text("+", 16);
+            auto minus_m = ui_measure_text("-", 16);
+            ui_draw_text("+", hire_x + (btn_w - plus_m.x) / 2.f, btn_y + 2, 16,
+                         Color{0, 120, 0, 255});
+            ui_draw_text("-", fire_x + (btn_w - minus_m.x) / 2.f, btn_y + 2, 16,
+                         Color{200, 0, 0, 255});
+
+            if (mouse.x >= col_x && mouse.x <= col_x + 88 && mouse.y >= py &&
+                mouse.y <= py + 46) {
+                std::string tip = fmt::format(
+                    "{}: ${} signing, ${}/day. + hires, - fires (no refund).",
+                    SHORT_NAMES[i], staff_bonus_for(ROLES[i]),
+                    staff_wage_for(ROLES[i]));
+                auto tip_m = ui_measure_text(tip, 14);
+                float tip_x =
+                    std::clamp(col_x + 44 - tip_m.x / 2.f, 8.f,
+                               DEFAULT_SCREEN_WIDTH - 150 - tip_m.x - 8.f);
+                float tip_y = py - tip_m.y - 8.f;
+                draw_bevel_panel(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
+                                 Color{192, 192, 192, 255});
+                ui_draw_text(tip, tip_x, tip_y, 14, Color{0, 0, 0, 255});
+            }
+        }
+    }
+};
+
 // Bottom news ticker: a scrolling strip above the build bar, fed by
 // edge-detecting the game singletons each render frame (see NewsTicker
 // in render_helpers.h). The newest event pre-empts the strip, so it is
@@ -400,6 +490,7 @@ void ticker_poll_events() {
     auto* gs = EntityHelper::get_singleton_cmp<GameState>();
     auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
     auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+    auto* staff_state = EntityHelper::get_singleton_cmp<StaffState>();
 
     if (!t.seeded) {
         t.last_deaths = gs ? gs->death_count : 0;
@@ -408,6 +499,7 @@ void ticker_poll_events() {
         t.last_milestone_idx = gs ? gs->milestone_idx : 0;
         t.last_day = diff ? diff->day_number : 1;
         t.last_game_over = gs && gs->is_game_over();
+        t.last_staff_quits = staff_state ? staff_state->quit_count : 0;
         t.seeded = true;
         return;
     }
@@ -481,6 +573,19 @@ void ticker_poll_events() {
                             diff->day_number));
         } else if (diff->day_number < t.last_day) {
             t.last_day = diff->day_number;
+            reset_seen = true;
+        }
+    }
+    if (staff_state) {
+        if (staff_state->quit_count > t.last_staff_quits) {
+            int n = staff_state->quit_count - t.last_staff_quits;
+            t.last_staff_quits = staff_state->quit_count;
+            t.push_event(fmt::format(
+                "STAFF WALKOUT! {} staffer{} quit over unpaid wages. "
+                "Management blames 'the vibes' and offers exposure.",
+                n, n == 1 ? "" : "s"));
+        } else if (staff_state->quit_count < t.last_staff_quits) {
+            t.last_staff_quits = staff_state->quit_count;
             reset_seen = true;
         }
     }
@@ -716,7 +821,24 @@ struct RenderTimelineSidebarSystem : System<> {
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         vtr.register_text("LINEUP");
 
-        float content_top = 30.f;
+        // FPS moved here from the top bar: it used to share the bar's
+        // right edge with Day ("D8y: 302"). Same-row, right-aligned from
+        // its measured width, so it can never collide with LINEUP.
+        int fps = get_fps();
+        std::string fps_text = fmt::format("FPS: {}", fps);
+        auto fps_m = ui_measure_text(fps_text, 14);
+        ui_draw_text(fps_text, sidebar_x + sidebar_w - fps_m.x - 8, 10, 14,
+                     fps >= 55 ? Color{0, 140, 0, 255} : Color{200, 0, 0, 255});
+        vtr.register_text(fps_text);
+
+        // Staff counts (HUD): guards / medics / janitors on payroll.
+        std::string staff_text = fmt::format(
+            "Staff: G{} M{} J{}", staff_count(StaffRole::Guard),
+            staff_count(StaffRole::Medic), staff_count(StaffRole::Janitor));
+        ui_draw_text(staff_text, sidebar_x + 10, 28, 14, Color{0, 0, 0, 255});
+        vtr.register_text(staff_text);
+
+        float content_top = 50.f;
         float content_bot = DEFAULT_SCREEN_HEIGHT - 150.f;
         begin_scissor_mode(sidebar_x, content_top, sidebar_w,
                            content_bot - content_top);
@@ -950,6 +1072,7 @@ void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderTopBarSystem>());
     sm.register_render_system(std::make_unique<RenderNewsTickerSystem>());
     sm.register_render_system(std::make_unique<RenderBuildBarSystem>());
+    sm.register_render_system(std::make_unique<RenderStaffPanelSystem>());
     sm.register_render_system(std::make_unique<RenderToastsSystem>());
     sm.register_render_system(std::make_unique<RenderNuxBannerSystem>());
     sm.register_render_system(std::make_unique<RenderCompassSystem>());

@@ -59,6 +59,9 @@ Entity& make_sophie() {
     sophie.addComponent<InspectionState>();
     EntityHelper::registerSingleton<InspectionState>(sophie);
 
+    sophie.addComponent<StaffState>();
+    EntityHelper::registerSingleton<StaffState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -141,6 +144,8 @@ void reset_game_state() {
     for (Entity& ev : events) ev.cleanup = true;
     auto markers = EntityQuery().whereHasComponent<DeathMarker>().gen();
     for (Entity& m : markers) m.cleanup = true;
+    auto staff = EntityQuery().whereHasComponent<StaffMember>().gen();
+    for (Entity& s : staff) s.cleanup = true;
     EntityHelper::cleanup();
 
     // Reset grid
@@ -234,6 +239,13 @@ void reset_game_state() {
         nm->bathroom_overload_timer = 0.f;
         nm->food_overload_timer = 0.f;
         nm->medtent_overload_timer = 0.f;
+    }
+
+    // Reset staff payroll bookkeeping (staff entities cleared above)
+    auto* staff_state = EntityHelper::get_singleton_cmp<StaffState>();
+    if (staff_state) {
+        staff_state->last_payroll_day = 1;
+        staff_state->quit_count = 0;
     }
 
     // Reset difficulty state

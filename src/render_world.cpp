@@ -237,6 +237,31 @@ static constexpr float PIP_W = 0.09f;
 static constexpr float PIP_H = 0.08f;
 static constexpr float SCATTER_RANGE = 0.35f;
 
+// Staff: distinct cubes per role so roaming staff read at a glance
+// (guard = blue, medic = white with red pip, janitor = yellow).
+struct RenderStaffSystem : System<> {
+    void once(float) const override {
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        if (vr && vr->lod != LODLevel::Close) return;
+        auto staff =
+            EntityQuery().whereHasComponent<StaffMember, Transform>().gen();
+        for (Entity& e : staff) {
+            auto& s = e.get<StaffMember>();
+            auto& tf = e.get<Transform>();
+            Color body = s.role == StaffRole::Guard ? Color{50, 90, 255, 255}
+                         : s.role == StaffRole::Medic
+                             ? Color{255, 255, 255, 255}
+                             : Color{255, 200, 0, 255};
+            draw_cube({tf.position.x, 0.16f, tf.position.y}, 0.16f, 0.34f,
+                      0.16f, body);
+            Color pip = s.role == StaffRole::Medic ? Color{255, 45, 45, 255}
+                                                   : Color{25, 25, 25, 255};
+            draw_cube({tf.position.x, 0.38f, tf.position.y}, 0.10f, 0.08f,
+                      0.10f, pip);
+        }
+    }
+};
+
 struct RenderAgentsSystem : System<> {
     void once(float) const override {
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
@@ -703,6 +728,7 @@ void register_render_world_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderGridSystem>());
     sm.register_render_system(std::make_unique<RenderStageGlowSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());
+    sm.register_render_system(std::make_unique<RenderStaffSystem>());
     sm.register_render_system(std::make_unique<RenderMediumLODSystem>());
     sm.register_render_system(std::make_unique<RenderFarLODSystem>());
     sm.register_render_system(std::make_unique<RenderDensitySystem>());

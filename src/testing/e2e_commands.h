@@ -2026,6 +2026,115 @@ static void cmd_assert_total_arrivals(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Staff ─────────────────────────────────────────────────────────────────
+
+inline bool parse_staff_role(const std::string& s, StaffRole& out) {
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "guard" || lower == "security") {
+        out = StaffRole::Guard;
+        return true;
+    }
+    if (lower == "medic" || lower == "med") {
+        out = StaffRole::Medic;
+        return true;
+    }
+    if (lower == "janitor" || lower == "cleaner") {
+        out = StaffRole::Janitor;
+        return true;
+    }
+    return false;
+}
+
+// hire_staff ROLE [X Z] — signing bonus deducted; X/Z default to the gate.
+static void cmd_hire_staff(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("hire_staff requires ROLE [X Z]");
+        return;
+    }
+    StaffRole role;
+    if (!parse_staff_role(cmd.arg(0), role)) {
+        cmd.fail(fmt::format("hire_staff: unknown role '{}'", cmd.arg(0)));
+        return;
+    }
+    int x = cmd.has_args(3) ? cmd.arg_as<int>(1) : SPAWN_X;
+    int z = cmd.has_args(3) ? cmd.arg_as<int>(2) : SPAWN_Z;
+    hire_staff(role, x, z);
+    cmd.consume();
+}
+
+// fire_staff ROLE — refunds nothing.
+static void cmd_fire_staff(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("fire_staff requires ROLE");
+        return;
+    }
+    StaffRole role;
+    if (!parse_staff_role(cmd.arg(0), role)) {
+        cmd.fail(fmt::format("fire_staff: unknown role '{}'", cmd.arg(0)));
+        return;
+    }
+    fire_staff(role);
+    cmd.consume();
+}
+
+static void cmd_assert_staff_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(3)) {
+        cmd.fail("assert_staff_count requires ROLE OP VALUE");
+        return;
+    }
+    StaffRole role;
+    if (!parse_staff_role(cmd.arg(0), role)) {
+        cmd.fail(
+            fmt::format("assert_staff_count: unknown role '{}'", cmd.arg(0)));
+        return;
+    }
+    int actual = staff_count(role);
+    if (!compare_op(actual, cmd.arg(1), cmd.arg_as<int>(2)))
+        cmd.fail(fmt::format(
+            "assert_staff_count {} failed: {} {} {} (actual: {})", cmd.arg(0),
+            actual, cmd.arg(1), cmd.arg_as<int>(2), actual));
+    else
+        cmd.consume();
+}
+
+// assert_staff_near ROLE X Z RADIUS — a staffer of the role within RADIUS
+// tiles of (X, Z), e.g. a medic who walked to a collapsed agent.
+static void cmd_assert_staff_near(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(4)) {
+        cmd.fail("assert_staff_near requires ROLE X Z RADIUS");
+        return;
+    }
+    StaffRole role;
+    if (!parse_staff_role(cmd.arg(0), role)) {
+        cmd.fail(
+            fmt::format("assert_staff_near: unknown role '{}'", cmd.arg(0)));
+        return;
+    }
+    int gx = cmd.arg_as<int>(1), gz = cmd.arg_as<int>(2);
+    float radius = cmd.arg_as<float>(3);
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid) {
+        cmd.fail("assert_staff_near: no grid");
+        return;
+    }
+    ::vec2 tw = grid->grid_to_world(gx, gz);
+    float rw = radius * TILESIZE;
+    auto staff =
+        EntityQuery().whereHasComponent<StaffMember, Transform>().gen();
+    for (Entity& e : staff) {
+        if (e.get<StaffMember>().role != role) continue;
+        auto& tf = e.get<Transform>();
+        float dx = tf.position.x - tw.x, dz = tf.position.y - tw.y;
+        if (std::sqrt(dx * dx + dz * dz) <= rw) {
+            cmd.consume();
+            return;
+        }
+    }
+    cmd.fail(fmt::format("assert_staff_near {} ({},{}) r={}: none nearby",
+                         cmd.arg(0), gx, gz, radius));
+}
+
 static void cmd_assert_collapsed_count(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(2)) {
         cmd.fail("assert_collapsed_count requires OP VALUE");
@@ -2144,6 +2253,10 @@ static void init_e2e_registry() {
     r.add("add_arrivals", cmd_add_arrivals);
     r.add("assert_total_arrivals", cmd_assert_total_arrivals);
     r.add("assert_collapsed_count", cmd_assert_collapsed_count);
+    r.add("hire_staff", cmd_hire_staff);
+    r.add("fire_staff", cmd_fire_staff);
+    r.add("assert_staff_count", cmd_assert_staff_count);
+    r.add("assert_staff_near", cmd_assert_staff_near);
 }
 
 void register_e2e_systems(SystemManager& sm) {

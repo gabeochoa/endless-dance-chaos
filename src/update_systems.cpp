@@ -25,6 +25,7 @@ void register_crowd_damage_systems(SystemManager& sm);
 void register_crowd_particle_systems(SystemManager& sm);
 void register_polish_systems(SystemManager& sm);
 void register_tycoon_systems(SystemManager& sm);
+void register_staff_systems(SystemManager& sm);
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -255,6 +256,10 @@ void register_update_systems(SystemManager& sm) {
     // Tycoon: ticket price, inspections, milestones (after difficulty so
     // the daily inspection sees the new day number)
     register_tycoon_systems(sm);
+
+    // Staff: payroll on day rollover + roaming (after difficulty so the
+    // payroll sees the new day number, same frame as the inspection).
+    register_staff_systems(sm);
 
     // Polish: hints, bottleneck detection, death markers
     register_polish_systems(sm);

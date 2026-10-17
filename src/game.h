@@ -79,6 +79,22 @@ constexpr float COLLAPSE_RESCUE_DELAY = 2.0f;  // sec before medics pick up
 constexpr float COLLAPSE_FATAL_TIME = 8.0f;    // sec collapsed before death
 constexpr float MEDTENT_RESCUE_RADIUS = 12.0f;
 
+// Staff (RimWorld/RCT): hireable, paid daily wages from Economy.
+// Signing bonus deducted on hire; wages deducted at each day rollover.
+constexpr int STAFF_GUARD_BONUS = 300;
+constexpr int STAFF_GUARD_WAGE = 50;
+constexpr int STAFF_MEDIC_BONUS = 400;
+constexpr int STAFF_MEDIC_WAGE = 75;
+constexpr int STAFF_JANITOR_BONUS = 200;
+constexpr int STAFF_JANITOR_WAGE = 30;
+constexpr float STAFF_GUARD_RADIUS = 6.0f;        // mobile crush-damage aura
+constexpr float STAFF_GUARD_CRUSH_MULT = 0.5f;    // same as a Security Post
+constexpr float STAFF_MEDIC_RADIUS = 8.0f;        // rescue aura around a medic
+constexpr float STAFF_MEDIC_RESCUE_DELAY = 0.5f;  // vs 2.0s without a medic
+constexpr float STAFF_PATROL_RADIUS = 3.0f;  // wander range around home tile
+constexpr float STAFF_SPEED = 1.5f;          // tiles/sec (faster than agents)
+constexpr float STAFF_JANITOR_SERVICE_MULT = 0.1f;  // -10% service time each
+
 // Inspection: one per game-day, scored from the previous day's record.
 constexpr int INSPECTION_GRANT_A = 500;
 constexpr int INSPECTION_GRANT_B = 250;

@@ -760,7 +760,8 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
             bs.facility_grid_x = gx;
             bs.facility_grid_z = gz;
             bs.facility_type = agent.want;
-            bs.time_remaining = SERVICE_TIME;
+            // Janitors cut service times park-wide (10% each, min 50%).
+            bs.time_remaining = SERVICE_TIME * staff_service_time_factor();
         }
     }
 };

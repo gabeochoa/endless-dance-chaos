@@ -1,0 +1,149 @@
+# Staff (RimWorld/RCT): hireable Guard / Medic / Janitor, signing bonus
+# on hire, daily wages at day rollover, quit + ticker when broke.
+# Guard: mobile aura halving crush damage. Medic: walks to collapsed
+# agents and rescues them without a MedTent. Janitor: cuts facility
+# service times (covered by hire/payroll here; service-time effect is
+# a global multiplier on SERVICE_TIME).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- Hire each role: signing bonus deducted, counts + HUD ---
+assert_cash eq 10000
+assert_staff_count guard eq 0
+assert_staff_count medic eq 0
+assert_staff_count janitor eq 0
+expect_text "Staff: G0 M0 J0"
+hire_staff guard 25 23
+wait_frames 2
+assert_staff_count guard eq 1
+assert_cash eq 9700
+expect_text "Staff: G1 M0 J0"
+expect_text "Guard 1"
+hire_staff medic 40 40
+wait_frames 2
+assert_staff_count medic eq 1
+assert_cash eq 9300
+hire_staff janitor 10 10
+wait_frames 2
+assert_staff_count janitor eq 1
+assert_cash eq 9100
+expect_text "Staff: G1 M1 J1"
+# Staff are not attendees: no Agent component, no density, no tickets.
+assert_agent_count eq 0
+
+# --- Panel: click hire / fire buttons (coords in render_ui.cpp) ---
+click 1047 702
+wait_frames 3
+assert_staff_count janitor eq 2
+assert_cash eq 8900
+click 1093 702
+wait_frames 3
+assert_staff_count janitor eq 1
+assert_cash eq 8900
+
+# --- Hire refused when the bonus is unaffordable ---
+set_cash 100
+wait_frames 2
+hire_staff guard 25 23
+wait_frames 2
+assert_staff_count guard eq 1
+assert_cash eq 100
+assert_toast_contains "Not enough cash"
+
+# --- Day rollover deducts wages (Guard 50 + Medic 75 + Janitor 30 = 155) ---
+# A day rollover also runs the inspection, which would grant +$500 on a
+# clean record; seed injuries to force a D grade (no grant) so the cash
+# assertion isolates the payroll deduction.
+add_injury_count 20
+set_cash 1000
+wait_frames 2
+set_day_number 2
+wait_frames 5
+assert_day_number eq 2
+assert_cash eq 845
+assert_staff_count guard eq 1
+assert_staff_count medic eq 1
+assert_staff_count janitor eq 1
+
+# --- Broke -> staff quit + ticker announcement, nothing deducted ---
+add_injury_count 20
+set_cash 10
+wait_frames 2
+set_day_number 3
+wait_frames 5
+assert_day_number eq 3
+assert_staff_count guard eq 0
+assert_staff_count medic eq 0
+assert_staff_count janitor eq 0
+assert_cash eq 10
+expect_text "STAFF WALKOUT"
+expect_text "Staff: G0 M0 J0"
+
+# --- Guard effect vs control crush scenario ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
+wait_frames 2
+spawn_agents 25 25 40 stage
+wait_frames 2
+assert_death_count eq 0
+wait 6
+assert_death_count gt 0
+
+# Same cage, with a patrolling guard: crush damage halved, no deaths.
+# The guard's home is (25,23) and patrol stays within 3 tiles of home,
+# so the guard is always inside the 6-tile aura of the cage.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+hire_staff guard 25 23
+wait_frames 2
+assert_staff_count guard eq 1
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
+wait_frames 2
+spawn_agents 25 25 40 stage
+wait_frames 2
+assert_death_count eq 0
+wait 6
+assert_death_count eq 0
+assert_agent_count gte 40
+
+# --- Medic rescue scenario ---
+# Collapse far from any MedTent (nearest is at 15,25, ~29 tiles away):
+# without a medic this agent dies (see tycoon_growth.e2e). The collapse
+# is asserted BEFORE hiring, so the medic's patrol aura cannot rescue
+# early; the medic hired at (33,33) then walks to the collapsed agent
+# (~9 tiles away, outside the 8-tile rescue radius) and rescues them.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agent 40 40 stage
+wait_frames 2
+force_need heat
+wait 3
+assert_collapsed_count gte 1
+assert_injury_count gte 1
+hire_staff medic 33 33
+wait_frames 2
+assert_staff_count medic eq 1
+wait 2
+assert_staff_near medic 40 40 10
+wait 4
+assert_collapsed_count eq 0
+assert_death_count eq 0
+assert_agent_count eq 1
+
+# --- Fire refunds nothing ---
+assert_cash eq 9600
+fire_staff medic
+wait_frames 2
+assert_staff_count medic eq 0
+assert_cash eq 9600

@@ -245,12 +245,14 @@ struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
         int count = grid->at(gx, gz).agent_count;
         float density = count / static_cast<float>(MAX_AGENTS_PER_TILE);
         if (density >= DENSITY_CRITICAL) {
-            // Security Post halves crush damage in its radius; a nearby
-            // Bar slightly raises injury risk.
+            // Security Post halves crush damage in its radius; a patrolling
+            // guard does the same from STAFF_GUARD_RADIUS. A nearby Bar
+            // slightly raises injury risk.
             float rate = CRUSH_DAMAGE_RATE;
             if (near_tile_type(*grid, gx, gz, TileType::SecurityPost,
                                SECURITY_RADIUS))
                 rate *= SECURITY_CRUSH_MULT;
+            if (guard_near(gx, gz)) rate *= STAFF_GUARD_CRUSH_MULT;
             if (near_tile_type(*grid, gx, gz, TileType::Bar, BAR_RADIUS))
                 rate *= BAR_CRUSH_MULT;
             health.hp -= rate * dt;
@@ -295,16 +297,37 @@ struct CollapseRescueSystem : System<Agent, Transform, Collapsed> {
         if (!e.is_missing<BeingServiced>()) return;
 
         collapsed.timer += dt;
-        if (collapsed.timer < COLLAPSE_RESCUE_DELAY) return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+
+        // A medic nearby rescues faster (0.5s) and needs no MedTent:
+        // field first aid — heal, clear the heat need, send them back to
+        // the stage. Without a medic, the MedTent path below applies.
+        bool medic_close = medic_near(gx, gz);
+        float rescue_delay =
+            medic_close ? STAFF_MEDIC_RESCUE_DELAY : COLLAPSE_RESCUE_DELAY;
+        if (collapsed.timer < rescue_delay) return;
 
         if (collapsed.timer >= COLLAPSE_FATAL_TIME) {
             if (!e.is_missing<AgentHealth>()) e.get<AgentHealth>().hp = 0.f;
             return;
         }
 
-        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
-        if (!grid) return;
-        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (medic_close) {
+            if (!e.is_missing<AgentHealth>()) e.get<AgentHealth>().hp = 1.0f;
+            if (!e.is_missing<AgentNeeds>()) {
+                auto& needs = e.get<AgentNeeds>();
+                needs.needs_heat = false;
+                needs.heat_timer = 0.f;
+            }
+            e.removeComponent<Collapsed>();
+            agent.want = FacilityType::Stage;
+            auto [rsx, rsz] = best_stage_spot(gx, gz);
+            agent.set_target(rsx, rsz);
+            return;
+        }
         auto [mx, mz] = [&]() {
             // Nearest MedTent within rescue radius, preferring one with room.
             const auto& positions =
@@ -339,7 +362,7 @@ struct CollapseRescueSystem : System<Agent, Transform, Collapsed> {
         bs.facility_grid_x = mx;
         bs.facility_grid_z = mz;
         bs.facility_type = FacilityType::MedTent;
-        bs.time_remaining = SERVICE_TIME;
+        bs.time_remaining = SERVICE_TIME * staff_service_time_factor();
         agent.want = FacilityType::MedTent;
         agent.set_target(mx, mz);
     }

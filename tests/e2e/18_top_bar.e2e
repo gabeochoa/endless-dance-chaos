@@ -7,4 +7,9 @@ wait 1
 expect_text "14:34"
 expect_text "Deaths: 0/10"
 expect_text "Attendees:"
+# Day is right-aligned from its measured width (never under the left
+# flow); FPS moved to the sidebar header (never under Day).
+expect_text "Day 1"
+expect_text "FPS:"
+expect_text "Staff: G0 M0 J0"
 wait 1
