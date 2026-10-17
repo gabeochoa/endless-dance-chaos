@@ -14,6 +14,15 @@
 #define SOKOL_GL_IMPL
 #include <sokol/sokol_gl.h>
 
+// afterhours' sokol/Metal backend requires exactly one SOKOL_IMPL TU to
+// include these two headers: image_decode.h defines the impl-TU sentinel
+// that graphics::run() references, and capture_impl.h defines the
+// metal_create_system_device / metal_capture_render_texture entry points.
+// Without them `make metal` fails at link time (pre-existing, not caused
+// by the afterhours bump — the requirement predates it).
+#include <afterhours/src/backends/sokol/capture_impl.h>
+#include <afterhours/src/backends/sokol/image_decode.h>
+
 #define FONTSTASH_IMPLEMENTATION
 #include <fontstash/stb_truetype.h>
 #include <fontstash/fontstash.h>

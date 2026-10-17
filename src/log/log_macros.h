@@ -28,14 +28,14 @@
     } while (0)
 
 #define log_if(x, ...)                                                    \
-    {                                                                     \
+    do {                                                                  \
         if (x) log_me(LogLevel::LOG_IF, __FILE__, __LINE__, __VA_ARGS__); \
-    }
+    } while (0)
 
 #define log_ifx(x, level, ...)                                 \
-    {                                                          \
+    do {                                                       \
         if (x) log_me(level, __FILE__, __LINE__, __VA_ARGS__); \
-    }
+    } while (0)
 
 #define LOG_ONCE_PER(interval, level, ...) \
     log_once_per(interval, level, __FILE__, __LINE__, __VA_ARGS__)

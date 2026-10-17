@@ -15,6 +15,7 @@
 #include "afterhours/src/plugins/e2e_testing/e2e_testing.h"
 #include "afterhours/src/plugins/e2e_testing/harness.h"
 #include "afterhours/src/plugins/e2e_testing/test_input.h"
+#include "afterhours/src/plugins/profiling.h"
 
 bool g_test_mode = false;
 
@@ -140,6 +141,12 @@ int main(int argc, char* argv[]) {
         if (escape_should_quit) {
             gfx::request_quit();
         }
+
+        // afterhours' profiler needs one end_frame() per application frame:
+        // it is what rolls per-system timings into the snapshot that
+        // dump_profile / expect_fps_above read. No-op while nothing is
+        // recording (no perf script asked for it).
+        afterhours::profiling::default_collector().end_frame();
     };
 
     cfg.cleanup = [&]() {

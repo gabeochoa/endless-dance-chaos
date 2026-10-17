@@ -13,7 +13,16 @@ endif
 # the define get_pinch_delta() silently reads 0.
 GESTURE_FLAGS = -fblocks -DAFTER_HOURS_ENABLE_MACOS_GESTURES
 
-FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS) $(GESTURE_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
+# afterhours' profiling is compile-time opt-in (default 0). The bump moved
+# dump_profile onto profiling::Collector, so without this the perf scripts'
+# dump_profile prints "Top 0 systems" and expect_fps_above has no metric.
+# Afterhours requires the define in EVERY translation unit (its profiling
+# switches types inside SystemManager's ProfileScope), so it lives in one
+# shared variable used by both the raylib and Metal flag sets. No-op when
+# nothing is recording: TimingScope early-outs on zero observers.
+PROFILING_FLAGS = -DAFTERHOURS_ENABLE_PROFILING=1
+
+FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g $(RAYLIB_FLAGS) $(MCP_FLAGS) $(GESTURE_FLAGS) $(PROFILING_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
 NOFLAGS = -Wno-deprecated-volatile -Wno-missing-field-initializers \
 		  -Wno-c99-extensions -Wno-unused-function -Wno-sign-conversion \
 		  -Wno-implicit-int-float-conversion
@@ -73,7 +82,7 @@ METAL_EXE := $(METAL_DIR)/dance.exe
 METAL_BACKEND_DEF := -DAFTER_HOURS_USE_METAL
 METAL_SOKOL_INCLUDES := -isystem vendor/afterhours/vendor/
 METAL_FLAGS = -std=c++23 -Wall -Wextra -Wuninitialized -Wshadow -g \
-			  $(METAL_BACKEND_DEF) $(MCP_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
+			  $(METAL_BACKEND_DEF) $(MCP_FLAGS) $(PROFILING_FLAGS) -DAFTER_HOURS_ENABLE_E2E_TESTING
 METAL_FRAMEWORKS = -framework Metal -framework MetalKit -framework Cocoa -framework QuartzCore
 METAL_LIBS = -Lvendor/ $(METAL_FRAMEWORKS)
 
