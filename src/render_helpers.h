@@ -6,6 +6,9 @@
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
+#include <deque>
+#include <string>
+
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/drawing_helpers.h"
 #include "afterhours/src/drawing_helpers_3d.h"
@@ -29,6 +32,41 @@ inline void draw_rect(float x, float y, float w, float h, Color c) {
 
 inline void draw_rect_lines(float x, float y, float w, float h, Color c) {
     afterhours::draw_rectangle_outline(Rectangle{x, y, w, h}, c, 1.f);
+}
+
+// ── '90s tycoon chrome ──
+// Flat gray panel with a classic bevel: light top-left edges, dark
+// bottom-right edges. Drawn with the existing rect helpers only.
+inline void draw_bevel_panel(float x, float y, float w, float h, Color bg) {
+    draw_rect(x, y, w, h, bg);
+    draw_rect(x, y, w, 2, Color{255, 255, 255, 255});
+    draw_rect(x, y, 2, h, Color{255, 255, 255, 255});
+    draw_rect(x, y + h - 2, w, 2, Color{64, 64, 64, 255});
+    draw_rect(x + w - 2, y, 2, h, Color{64, 64, 64, 255});
+}
+
+// Pressed-in variant for a selected toolbar button: dark top-left,
+// light bottom-right, slightly darker fill.
+inline void draw_bevel_panel_pressed(float x, float y, float w, float h,
+                                     Color bg) {
+    draw_rect(x, y, w, h, bg);
+    draw_rect(x, y, w, 2, Color{64, 64, 64, 255});
+    draw_rect(x, y, 2, h, Color{64, 64, 64, 255});
+    draw_rect(x, y + h - 2, w, 2, Color{255, 255, 255, 255});
+    draw_rect(x + w - 2, y, 2, h, Color{255, 255, 255, 255});
+}
+
+// Two-tone shading for building roofs/facades: lighten toward white,
+// darken toward black.
+inline Color lighten_color(Color c, float f) {
+    return Color{(uint8_t) (c.r + (255 - c.r) * f),
+                 (uint8_t) (c.g + (255 - c.g) * f),
+                 (uint8_t) (c.b + (255 - c.b) * f), c.a};
+}
+
+inline Color darken_color(Color c, float f) {
+    return Color{(uint8_t) (c.r * (1.0f - f)), (uint8_t) (c.g * (1.0f - f)),
+                 (uint8_t) (c.b * (1.0f - f)), c.a};
 }
 
 // ── Window / frame / timing ──
@@ -97,19 +135,21 @@ inline float get_day_night_t() {
 }
 
 // Shared day-palette colors for tiles, used by grid rendering and minimap.
+// Bright saturated '90s tycoon palette: every building type gets a distinct
+// saturated hue, grass is vivid green, paths are golden sand.
 inline constexpr Color TILE_DAY_COLORS[] = {
-    {152, 212, 168, 255},  // Grass
-    {232, 221, 212, 255},  // Path
-    {85, 85, 85, 255},     // Fence
-    {68, 136, 170, 255},   // Gate
-    {255, 217, 61, 255},   // Stage
-    {255, 235, 150, 255},  // StageFloor
-    {126, 207, 192, 255},  // Bathroom
-    {244, 164, 164, 255},  // Food
-    {255, 100, 100, 255},  // MedTent
-    {255, 160, 40, 255},   // Bar
-    {140, 160, 255, 255},  // SecurityPost
-    {80, 180, 255, 255},   // WaterStation
+    {80, 200, 100, 255},   // Grass
+    {245, 205, 120, 255},  // Path
+    {150, 95, 50, 255},    // Fence
+    {255, 255, 255, 255},  // Gate
+    {200, 30, 230, 255},   // Stage
+    {235, 190, 255, 255},  // StageFloor
+    {0, 210, 200, 255},    // Bathroom
+    {255, 80, 160, 255},   // Food
+    {255, 45, 45, 255},    // MedTent
+    {255, 145, 0, 255},    // Bar
+    {50, 90, 255, 255},    // SecurityPost
+    {0, 180, 255, 255},    // WaterStation
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
@@ -135,3 +175,60 @@ inline Color tile_color(TileType type, float night_t) {
     int idx = static_cast<int>(type);
     return lerp_color(TILE_DAY_COLORS[idx], TILE_NIGHT_COLORS[idx], night_t);
 }
+
+// ── Bottom news ticker ──
+// Queue component for the scrolling ticker strip. Game events feed it via
+// ticker_poll_events() (defined in render_ui.cpp), which watches the
+// singletons each render frame — no engine/update-system changes.
+// Breaking items pre-empt whatever is scrolling so the newest event is
+// visible (and expect_text-assertable) within a frame; the interrupted
+// item goes back to the front of the queue. When the queue is empty the
+// ticker rotates through satirical flavor lines.
+inline constexpr const char* NEWS_TICKER_FLAVOR[] = {
+    "Local man insists the porta-potties are 'part of the experience'.",
+    "Security confiscates 400 glow sticks. Nobody knows why they brought "
+    "them.",
+    "The mayor denies the festival is a front for selling overpriced water.",
+    "Scientists confirm: bass drops cause 12% more questionable life "
+    "choices.",
+    "Food stall voted 'Most Likely To Be Condemned By Tuesday'.",
+    "One attendee has been dancing non-stop since Tuesday. It is Friday.",
+    "The parking lot remains undefeated. Cars fear it.",
+    "DJ promises 'just one more song' for the ninth time.",
+};
+inline constexpr size_t NEWS_TICKER_FLAVOR_COUNT =
+    sizeof(NEWS_TICKER_FLAVOR) / sizeof(NEWS_TICKER_FLAVOR[0]);
+
+struct NewsTicker {
+    std::deque<std::string> queue;
+    std::string current;
+    float scroll_px = 0.f;
+    size_t flavor_idx = 0;
+
+    // Last-seen game state, for edge-detecting events. A drop means the
+    // game was reset: resync silently instead of re-reporting old events.
+    bool seeded = false;
+    int last_deaths = 0;
+    int last_injuries = 0;
+    int last_inspections = 0;
+    int last_milestone_idx = 0;
+    int last_day = 1;
+    bool last_game_over = false;
+
+    void push_event(const std::string& text) {
+        if (text.empty()) return;
+        if (!current.empty()) queue.push_front(current);
+        if (queue.size() > 16) queue.resize(16);
+        current = text;
+        scroll_px = 0.f;
+    }
+};
+
+inline NewsTicker& news_ticker() {
+    static NewsTicker ticker;
+    return ticker;
+}
+
+// Edge-detects game events (inspection verdicts, milestones, deaths,
+// injuries, day rollovers, shutdown) and feeds them to the ticker queue.
+void ticker_poll_events();

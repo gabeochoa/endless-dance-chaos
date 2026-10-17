@@ -1,0 +1,25 @@
+# News ticker: bottom scrolling strip fed by game events, assertable via
+# the existing expect_text registry (the ticker registers its current item).
+# Breaking items pre-empt the strip, so each assertion below targets the
+# event that was just triggered.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# Ticker strip is always up (NEWS label + a rotating flavor line)
+expect_text "NEWS"
+
+# Deaths feed the ticker
+add_death_count 1
+wait_frames 5
+expect_text "TRAGEDY"
+
+# Inspection verdicts feed the ticker (clean record -> Grade A)
+run_inspection
+wait_frames 5
+expect_text "awards Grade A"
+
+# Milestones feed the ticker
+add_arrivals 1000
+wait_frames 5
+expect_text "and counting"

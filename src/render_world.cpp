@@ -74,6 +74,23 @@ struct BeginRenderSystem : System<> {
     }
 };
 
+// Buildings get an extruded two-tone block; flat tiles (grass, path,
+// fence, gate, stage floor) stay flat planes.
+static bool is_building_tile(TileType type) {
+    switch (type) {
+        case TileType::Stage:
+        case TileType::Bathroom:
+        case TileType::Food:
+        case TileType::MedTent:
+        case TileType::Bar:
+        case TileType::SecurityPost:
+        case TileType::WaterStation:
+            return true;
+        default:
+            return false;
+    }
+}
+
 struct RenderGridSystem : System<> {
     void once(float) const override {
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
@@ -94,6 +111,17 @@ struct RenderGridSystem : System<> {
                 Color color = ::tile_color(tile.type, night_t);
                 draw_plane({x * TILESIZE, 0.01f, z * TILESIZE},
                            {tile_size, tile_size}, color);
+                if (is_building_tile(tile.type)) {
+                    // Two-tone chunky block: darkened facade sides, lighter
+                    // roof face on top. Low enough that agents walking
+                    // through a facility stay readable above it.
+                    float h = tile.type == TileType::Stage ? 0.20f : 0.12f;
+                    float w = tile_size * 0.92f;
+                    draw_cube({x * TILESIZE, h * 0.5f, z * TILESIZE}, w, h, w,
+                              darken_color(color, 0.25f));
+                    draw_plane({x * TILESIZE, h + 0.005f, z * TILESIZE}, {w, w},
+                               lighten_color(color, 0.40f));
+                }
             }
         }
     }
@@ -165,15 +193,16 @@ struct RenderStageGlowSystem : System<> {
     }
 };
 
-// Desire pip colors (indexed by FacilityType)
+// Desire pip colors (indexed by FacilityType) — match the saturated
+// building palette so a pip reads as its destination at a glance.
 static constexpr Color DESIRE_COLORS[] = {
-    {126, 207, 192, 255},  // Bathroom
-    {244, 164, 164, 255},  // Food
-    {255, 217, 61, 255},   // Stage
-    {68, 136, 170, 255},   // Exit/Gate
-    {255, 100, 100, 255},  // MedTent
-    {255, 160, 40, 255},   // Bar
-    {80, 180, 255, 255},   // WaterStation
+    {0, 210, 200, 255},    // Bathroom
+    {255, 80, 160, 255},   // Food
+    {200, 30, 230, 255},   // Stage
+    {255, 255, 255, 255},  // Exit/Gate
+    {255, 45, 45, 255},    // MedTent
+    {255, 145, 0, 255},    // Bar
+    {0, 180, 255, 255},    // WaterStation
 };
 
 static float hash_scatter(int seed) {
@@ -185,11 +214,22 @@ static float hash_scatter(int seed) {
 }
 
 // Close LOD: individual agent cubes, viewport-culled
-static constexpr Color AGENT_PALETTE[] = {
-    {212, 165, 116, 255}, {180, 120, 90, 255},  {240, 200, 160, 255},
-    {100, 80, 60, 255},   {255, 180, 200, 255}, {100, 200, 255, 255},
-    {200, 255, 100, 255}, {255, 220, 100, 255},
+// Bright saturated shirt colors, picked by a hash of the entity id mixed
+// with the spawn-time color index, so neighbors rarely match.
+static constexpr Color AGENT_SHIRT_PALETTE[] = {
+    {255, 60, 60, 255},  {255, 150, 0, 255},  {255, 225, 0, 255},
+    {70, 215, 90, 255},  {0, 200, 255, 255},  {90, 120, 255, 255},
+    {255, 90, 200, 255}, {180, 90, 255, 255},
 };
+
+static uint32_t hash_agent_color(int eid, uint8_t color_idx) {
+    uint32_t h = static_cast<uint32_t>(eid) * 2654435761u ^
+                 static_cast<uint32_t>(color_idx) * 40503u;
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return h;
+}
 
 static constexpr float BODY_W = 0.14f;
 static constexpr float BODY_H = 0.32f;
@@ -229,7 +269,8 @@ struct RenderAgentsSystem : System<> {
             wx += ox;
             wz += oz;
 
-            Color body_col = AGENT_PALETTE[agent.color_idx % 8];
+            Color body_col =
+                AGENT_SHIRT_PALETTE[hash_agent_color(eid, agent.color_idx) % 8];
 
             float bob_y = 0.0f;
             if (!e.is_missing<WatchingStage>()) {
@@ -249,7 +290,12 @@ struct RenderAgentsSystem : System<> {
             }
 
             float base_y = 0.16f + bob_y;
-            draw_cube({wx, base_y, wz}, BODY_W, BODY_H, BODY_W, body_col);
+            // Dark outline: a slightly larger dark cube behind the shirt
+            // cube reads as a 1px dark outline from the top-down camera.
+            draw_cube({wx, base_y, wz}, BODY_W + 0.05f, BODY_H, BODY_W + 0.05f,
+                      Color{25, 25, 25, 255});
+            draw_cube({wx, base_y + 0.012f, wz}, BODY_W, BODY_H + 0.024f,
+                      BODY_W, body_col);
 
             int desire_idx = static_cast<int>(agent.want);
             Color pip_col = DESIRE_COLORS[desire_idx];

@@ -16,7 +16,7 @@
 struct HoverTrackingSystem : System<> {
     static bool mouse_over_ui(float mx, float my) {
         if (my < 44) return true;
-        if (my > DEFAULT_SCREEN_HEIGHT - 54) return true;
+        if (my > DEFAULT_SCREEN_HEIGHT - 54 - 22) return true;  // ticker + bar
         if (mx > DEFAULT_SCREEN_WIDTH - 150) return true;
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (gs && gs->show_debug) {
@@ -143,7 +143,8 @@ static vec2 ui_measure_text(const std::string& text, float size) {
 static void ui_draw_text_bg(const std::string& text, float x, float y,
                             float size, Color color) {
     auto m = ui_measure_text(text, size);
-    draw_rect(x - 6, y - 3, m.x + 12, m.y + 6, Color{0, 0, 0, 240});
+    draw_bevel_panel(x - 6, y - 3, m.x + 12, m.y + 6,
+                     Color{192, 192, 192, 255});
     ui_draw_text(text, x, y, size, color);
 }
 
@@ -160,17 +161,17 @@ struct ToolInfo {
     const char* full_name;
 };
 static constexpr ToolInfo TOOL_INFO[] = {
-    {"P", {184, 168, 138, 255}, "Path"},
-    {"F", {136, 136, 136, 255}, "Fence"},
-    {"G", {68, 136, 170, 255}, "Gate"},
-    {"S", {255, 217, 61, 255}, "Stage"},
-    {"B", {126, 207, 192, 255}, "Bathroom"},
-    {"Fd", {244, 164, 164, 255}, "Food Stall"},
-    {"M", {255, 100, 100, 255}, "Med Tent"},
+    {"P", {245, 205, 120, 255}, "Path"},
+    {"F", {150, 95, 50, 255}, "Fence"},
+    {"G", {255, 255, 255, 255}, "Gate"},
+    {"S", {200, 30, 230, 255}, "Stage"},
+    {"B", {0, 210, 200, 255}, "Bathroom"},
+    {"Fd", {255, 80, 160, 255}, "Food Stall"},
+    {"M", {255, 45, 45, 255}, "Med Tent"},
     {"X", {255, 68, 68, 255}, "Demolish"},
-    {"Br", {255, 160, 40, 255}, "Bar"},
-    {"SP", {140, 160, 255, 255}, "Security Post"},
-    {"W", {80, 180, 255, 255}, "Water Station"},
+    {"Br", {255, 145, 0, 255}, "Bar"},
+    {"SP", {50, 90, 255, 255}, "Security Post"},
+    {"W", {0, 180, 255, 255}, "Water Station"},
 };
 static constexpr int TOOL_COUNT = 11;
 
@@ -182,15 +183,16 @@ struct RenderTopBarSystem : System<> {
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
 
-        draw_rect(0, 0, DEFAULT_SCREEN_WIDTH, 44, Color{0, 0, 0, 180});
+        draw_bevel_panel(0, 0, DEFAULT_SCREEN_WIDTH, 44,
+                         Color{192, 192, 192, 255});
         float bar_x = 12;
         if (clock) {
             std::string time_str = clock->format_time();
-            ui_draw_text(time_str, bar_x, 10, 22, Color{255, 255, 255, 255});
+            ui_draw_text(time_str, bar_x, 10, 22, Color{0, 0, 0, 255});
             vtr.register_text(time_str);
             bar_x += 90;
             std::string phase_str = GameClock::phase_name(clock->get_phase());
-            ui_draw_text(phase_str, bar_x, 11, 20, Color{255, 220, 100, 255});
+            ui_draw_text(phase_str, bar_x, 11, 20, Color{30, 30, 160, 255});
             vtr.register_text(phase_str);
             bar_x += ui_measure_text(phase_str, 20).x + 16;
 
@@ -209,8 +211,8 @@ struct RenderTopBarSystem : System<> {
             };
             for (int i = 0; i < 4; i++) {
                 bool active = (clock->speed == SPEED_ICONS[i].speed);
-                Color col = active ? Color{255, 255, 255, 255}
-                                   : Color{120, 120, 130, 255};
+                Color col =
+                    active ? Color{0, 0, 0, 255} : Color{110, 110, 110, 255};
                 auto sm = ui_measure_text(SPEED_ICONS[i].label, 18);
                 float icon_w = std::max(sm.x + 8.f, 22.f);
                 float ix = bar_x;
@@ -226,8 +228,7 @@ struct RenderTopBarSystem : System<> {
                 }
 
                 if (active) {
-                    draw_rect(ix, iy + ih - 2, icon_w, 2,
-                              Color{255, 255, 255, 255});
+                    draw_rect(ix, iy + ih - 2, icon_w, 2, Color{0, 0, 0, 255});
                 }
                 float tx = ix + (icon_w - sm.x) / 2.f;
                 ui_draw_text(SPEED_ICONS[i].label, tx, 12, 18, col);
@@ -238,22 +239,22 @@ struct RenderTopBarSystem : System<> {
         if (gs) {
             std::string death_text =
                 fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
-            Color dc = gs->death_count >= 7 ? Color{255, 80, 80, 255}
-                                            : Color{255, 255, 255, 255};
+            Color dc = gs->death_count >= 7 ? Color{200, 0, 0, 255}
+                                            : Color{0, 0, 0, 255};
             ui_draw_text(death_text, bar_x, 11, 20, dc);
             vtr.register_text(death_text);
             bar_x += 170;
             int agent_count =
                 (int) EntityQuery().whereHasComponent<Agent>().gen_count();
             std::string att_text = fmt::format("Attendees: {}", agent_count);
-            ui_draw_text(att_text, bar_x, 11, 20, Color{255, 255, 255, 255});
+            ui_draw_text(att_text, bar_x, 11, 20, Color{0, 0, 0, 255});
             vtr.register_text(att_text);
             bar_x += ui_measure_text(att_text, 20).x + 20;
         }
         if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
             std::string cash_text = fmt::format("Cash: ${}", econ->cash);
-            Color cash_col = econ->cash < 0 ? Color{255, 80, 80, 255}
-                                            : Color{120, 255, 120, 255};
+            Color cash_col =
+                econ->cash < 0 ? Color{200, 0, 0, 255} : Color{0, 140, 0, 255};
             ui_draw_text(cash_text, bar_x, 11, 20, cash_col);
             vtr.register_text(cash_text);
             bar_x += ui_measure_text(cash_text, 20).x + 20;
@@ -261,7 +262,7 @@ struct RenderTopBarSystem : System<> {
             // Ticket price with [-]/[+] buttons (same adjust as "," / ".").
             std::string ticket_text =
                 fmt::format("Ticket: ${}", econ->ticket_price);
-            ui_draw_text(ticket_text, bar_x, 11, 20, Color{255, 220, 100, 255});
+            ui_draw_text(ticket_text, bar_x, 11, 20, Color{160, 100, 0, 255});
             vtr.register_text(ticket_text);
             bar_x += ui_measure_text(ticket_text, 20).x + 8;
             auto mouse = input::get_mouse_position();
@@ -275,18 +276,18 @@ struct RenderTopBarSystem : System<> {
                     econ->adjust_price(i == 0 ? -Economy::TICKET_PRICE_STEP
                                               : Economy::TICKET_PRICE_STEP);
                 }
-                draw_rect(bar_x, 8, bw, 28, Color{40, 40, 55, 255});
+                draw_bevel_panel(bar_x, 8, bw, 28, Color{200, 200, 200, 255});
                 auto bm = ui_measure_text(price_btns[i], 18);
                 ui_draw_text(price_btns[i], bar_x + (bw - bm.x) / 2.f, 12, 18,
-                             Color{255, 255, 255, 255});
+                             Color{0, 0, 0, 255});
                 bar_x += bw + 4;
             }
             bar_x += 8;
         }
         if (gs) {
             std::string inj_text = fmt::format("Inj: {}", gs->injury_count);
-            Color inj_col = gs->injury_count > 0 ? Color{255, 180, 80, 255}
-                                                 : Color{255, 255, 255, 255};
+            Color inj_col = gs->injury_count > 0 ? Color{200, 100, 0, 255}
+                                                 : Color{0, 0, 0, 255};
             ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
             vtr.register_text(inj_text);
             bar_x += ui_measure_text(inj_text, 20).x + 20;
@@ -294,9 +295,8 @@ struct RenderTopBarSystem : System<> {
         if (auto* insp = EntityHelper::get_singleton_cmp<InspectionState>()) {
             std::string insp_text =
                 fmt::format("Insp: {}", std::string(1, insp->last_grade));
-            Color insp_col = insp->last_grade == 'F'
-                                 ? Color{255, 80, 80, 255}
-                                 : Color{255, 255, 255, 255};
+            Color insp_col = insp->last_grade == 'F' ? Color{200, 0, 0, 255}
+                                                     : Color{0, 0, 0, 255};
             ui_draw_text(insp_text, bar_x, 11, 20, insp_col);
             vtr.register_text(insp_text);
             bar_x += ui_measure_text(insp_text, 20).x + 20;
@@ -304,7 +304,7 @@ struct RenderTopBarSystem : System<> {
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
         if (diff) {
             std::string day_text = fmt::format("Day {}", diff->day_number);
-            ui_draw_text(day_text, bar_x, 11, 20, Color{180, 220, 255, 255});
+            ui_draw_text(day_text, bar_x, 11, 20, Color{30, 60, 160, 255});
             vtr.register_text(day_text);
             bar_x += 90;
         }
@@ -316,7 +316,7 @@ struct RenderTopBarSystem : System<> {
                 float remain = ev.duration - ev.elapsed;
                 std::string ev_text =
                     fmt::format("{} ({:.0f}s)", ev.description, remain);
-                ui_draw_text(ev_text, bar_x, 11, 16, Color{255, 200, 80, 255});
+                ui_draw_text(ev_text, bar_x, 11, 16, Color{160, 100, 0, 255});
                 vtr.register_text(ev_text);
                 bar_x += ui_measure_text(ev_text, 16).x + 12;
             }
@@ -325,16 +325,16 @@ struct RenderTopBarSystem : System<> {
         int fps = get_fps();
         std::string fps_text = fmt::format("FPS: {}", fps);
         auto fps_measure = ui_measure_text(fps_text, 18);
-        ui_draw_text(
-            fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10, 12, 18,
-            fps >= 55 ? Color{100, 255, 100, 255} : Color{255, 80, 80, 255});
+        ui_draw_text(fps_text, DEFAULT_SCREEN_WIDTH - 150 - fps_measure.x - 10,
+                     12, 18,
+                     fps >= 55 ? Color{0, 140, 0, 255} : Color{200, 0, 0, 255});
     }
 };
 
 struct RenderBuildBarSystem : System<> {
     void once(float) const override {
-        draw_rect(0, BUILD_BAR_Y, DEFAULT_SCREEN_WIDTH, 54,
-                  Color{0, 0, 0, 180});
+        draw_bevel_panel(0, BUILD_BAR_Y, DEFAULT_SCREEN_WIDTH, 54,
+                         Color{192, 192, 192, 255});
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         if (!bs) return;
 
@@ -358,33 +358,179 @@ struct RenderBuildBarSystem : System<> {
                 selected = true;
             }
 
-            Color bg = TOOL_INFO[i].color;
-            if (selected) {
-                bg.r = (uint8_t) std::min(255, bg.r + 40);
-                bg.g = (uint8_t) std::min(255, bg.g + 40);
-                bg.b = (uint8_t) std::min(255, bg.b + 40);
-            }
-            draw_rect(ox, oy, s, s, bg);
-            if (selected) {
-                draw_rect_lines(ox, oy, s, s, Color{255, 255, 255, 255});
-            }
+            // Panel-styled button: raised bevel, or pressed-in when
+            // selected. The tool's building color shows as a chip strip
+            // across the top; the letter sits below it in black.
+            if (selected)
+                draw_bevel_panel_pressed(ox, oy, s, s,
+                                         Color{165, 165, 165, 255});
+            else
+                draw_bevel_panel(ox, oy, s, s, Color{200, 200, 200, 255});
+            draw_rect(ox + 5, oy + 5, s - 10, 9, TOOL_INFO[i].color);
+            draw_rect_lines(ox + 5, oy + 5, s - 10, 9, Color{30, 30, 30, 255});
             auto label_m = ui_measure_text(TOOL_INFO[i].label, 16);
             float lx = ox + (s - label_m.x) / 2.f;
-            float ly = oy + (s - label_m.y) / 2.f;
-            ui_draw_text(TOOL_INFO[i].label, lx, ly, 16,
-                         Color{255, 255, 255, 255});
+            float ly = oy + s - label_m.y - 5.f;
+            ui_draw_text(TOOL_INFO[i].label, lx, ly, 16, Color{0, 0, 0, 255});
 
             if (mouse.x >= ox && mouse.x <= ox + s && mouse.y >= oy &&
                 mouse.y <= oy + s) {
                 auto tip_m = ui_measure_text(TOOL_INFO[i].full_name, 16);
                 float tip_x = ox + (s - tip_m.x) / 2.f;
                 float tip_y = oy - tip_m.y - 8.f;
-                draw_rect(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
-                          Color{20, 20, 30, 220});
+                draw_bevel_panel(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
+                                 Color{192, 192, 192, 255});
                 ui_draw_text(TOOL_INFO[i].full_name, tip_x, tip_y, 16,
-                             Color{255, 255, 255, 255});
+                             Color{0, 0, 0, 255});
             }
         }
+    }
+};
+
+// Bottom news ticker: a scrolling strip above the build bar, fed by
+// edge-detecting the game singletons each render frame (see NewsTicker
+// in render_helpers.h). The newest event pre-empts the strip, so it is
+// visible — and expect_text-assertable via the registry — within a frame.
+static constexpr float TICKER_H = 22.f;
+static constexpr float TICKER_Y = BUILD_BAR_Y - TICKER_H;
+static constexpr float TICKER_SCROLL_SPEED = 45.f;  // px per second
+
+void ticker_poll_events() {
+    auto& t = news_ticker();
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+
+    if (!t.seeded) {
+        t.last_deaths = gs ? gs->death_count : 0;
+        t.last_injuries = gs ? gs->injury_count : 0;
+        t.last_inspections = insp ? insp->inspections_done : 0;
+        t.last_milestone_idx = gs ? gs->milestone_idx : 0;
+        t.last_day = diff ? diff->day_number : 1;
+        t.last_game_over = gs && gs->is_game_over();
+        t.seeded = true;
+        return;
+    }
+
+    // Any counter dropping means the game was reset: counters never
+    // decrease during a run. Clear the strip so a fresh game does not
+    // keep scrolling the previous run's news.
+    bool reset_seen = false;
+    if (gs) {
+        if (gs->death_count > t.last_deaths) {
+            int d = gs->death_count - t.last_deaths;
+            t.last_deaths = gs->death_count;
+            t.push_event(
+                fmt::format("TRAGEDY! {} more festival-goer{} ha{} perished. "
+                            "Management offers thoughts and prayers.",
+                            d, d == 1 ? "" : "s", d == 1 ? "s" : "ve"));
+        } else if (gs->death_count < t.last_deaths) {
+            t.last_deaths = gs->death_count;
+            reset_seen = true;
+        }
+        if (gs->injury_count > t.last_injuries) {
+            int n = gs->injury_count - t.last_injuries;
+            t.last_injuries = gs->injury_count;
+            t.push_event(fmt::format(
+                "MEDICS: {} new injur{}! The med tent swears it is 'just a "
+                "vibe check'.",
+                n, n == 1 ? "y" : "ies"));
+        } else if (gs->injury_count < t.last_injuries) {
+            t.last_injuries = gs->injury_count;
+            reset_seen = true;
+        }
+        static constexpr int MILESTONES[] = {1000,  5000,  10000,
+                                             25000, 50000, 100000};
+        while (gs->milestone_idx > t.last_milestone_idx &&
+               t.last_milestone_idx < 6) {
+            int m = MILESTONES[t.last_milestone_idx];
+            t.last_milestone_idx++;
+            t.push_event(fmt::format(
+                "MILESTONE! {} attendees and counting! The mayor wants a "
+                "photo op.",
+                m));
+        }
+        if (gs->milestone_idx < t.last_milestone_idx) {
+            t.last_milestone_idx = gs->milestone_idx;
+            reset_seen = true;
+        }
+        bool over = gs->is_game_over();
+        if (over && !t.last_game_over)
+            t.push_event(
+                "SHUTDOWN! The festival has been shut down. Pack "
+                "up the port-a-potties.");
+        t.last_game_over = over;
+    }
+    if (insp) {
+        if (insp->inspections_done > t.last_inspections) {
+            t.last_inspections = insp->inspections_done;
+            t.push_event(fmt::format(
+                "BREAKING: Health inspector awards Grade {} ({}).",
+                std::string(1, insp->last_grade), insp->last_score));
+        } else if (insp->inspections_done < t.last_inspections) {
+            t.last_inspections = insp->inspections_done;
+            reset_seen = true;
+        }
+    }
+    if (diff) {
+        if (diff->day_number > t.last_day) {
+            t.last_day = diff->day_number;
+            t.push_event(
+                fmt::format("DAY {} BEGINS! Fresh crowds, same "
+                            "questionable decisions.",
+                            diff->day_number));
+        } else if (diff->day_number < t.last_day) {
+            t.last_day = diff->day_number;
+            reset_seen = true;
+        }
+    }
+    if (reset_seen) {
+        t.queue.clear();
+        t.current.clear();
+        t.scroll_px = 0.f;
+        t.flavor_idx = 0;
+    }
+}
+
+struct RenderNewsTickerSystem : System<> {
+    void once(float) const override {
+        ticker_poll_events();
+        auto& t = news_ticker();
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+
+        float w = DEFAULT_SCREEN_WIDTH - 150.f;
+        draw_bevel_panel(0, TICKER_Y, w, TICKER_H, Color{25, 25, 35, 255});
+
+        draw_rect(6, TICKER_Y + 3, 54, TICKER_H - 6, Color{200, 0, 0, 255});
+        ui_draw_text("NEWS", 12, TICKER_Y + 4, 14, Color{255, 255, 255, 255});
+        vtr.register_text("NEWS");
+
+        float area_x = 66.f;
+        float area_w = w - area_x - 6.f;
+        if (t.current.empty()) {
+            if (!t.queue.empty()) {
+                t.current = t.queue.front();
+                t.queue.pop_front();
+            } else {
+                t.current =
+                    NEWS_TICKER_FLAVOR[t.flavor_idx % NEWS_TICKER_FLAVOR_COUNT];
+                t.flavor_idx++;
+            }
+            t.scroll_px = 0.f;
+        }
+
+        float text_w = ui_measure_text(t.current, 15).x;
+        float text_x = area_x + area_w - t.scroll_px;
+        begin_scissor_mode(area_x, TICKER_Y, area_w, TICKER_H);
+        ui_draw_text(t.current, text_x, TICKER_Y + 4, 15,
+                     Color{255, 230, 80, 255});
+        end_scissor_mode();
+        // Register the full item, not just the on-screen slice, so
+        // expect_text can assert ticker content deterministically.
+        vtr.register_text(t.current);
+
+        t.scroll_px += get_frame_time() * TICKER_SCROLL_SPEED;
+        if (text_x + text_w < area_x) t.current.clear();
     }
 };
 
@@ -403,6 +549,8 @@ struct RenderToastsSystem : System<> {
             auto tm = ui_measure_text(toast.text, 20);
             float tx = (DEFAULT_SCREEN_WIDTH - tm.x) / 2.f;
 
+            // Plain rect: the toast fades, and the bevel helper's edges
+            // are opaque, so a bevel here would leave a lingering frame.
             draw_rect(tx - 8, toast_y - 4, tm.x + 16, tm.y + 8,
                       Color{30, 120, 60, a});
             draw_text_ex(get_font(), toast.text.c_str(), {tx, toast_y}, 20,
@@ -428,8 +576,8 @@ struct RenderNuxBannerSystem : System<> {
             float by = 50.f;
             float bh = tm.y + 12;
 
-            draw_rect(bx, by, total_w, bh, Color{20, 40, 80, 230});
-            draw_rect(bx, by, 3, bh, Color{80, 160, 255, 255});
+            draw_bevel_panel(bx, by, total_w, bh, Color{20, 40, 80, 255});
+            draw_rect(bx + 2, by + 2, 3, bh - 4, Color{80, 160, 255, 255});
 
             ui_draw_text(nux.text, bx + 12, by + 6, 20,
                          Color{255, 255, 255, 255});
@@ -530,14 +678,14 @@ struct RenderHoverInfoSystem : System<> {
                         hover_text += " \xe2\x80\x94 " + breakdown;
                 }
 
-                ui_draw_text_bg(hover_text, 10, BUILD_BAR_Y - 30, 18,
-                                Color{200, 200, 200, 255});
+                ui_draw_text_bg(hover_text, 10, BUILD_BAR_Y - 52, 18,
+                                Color{0, 0, 0, 255});
             }
         }
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (gs && gs->show_data_layer) {
-            ui_draw_text_bg("[TAB] Density Overlay", 10, BUILD_BAR_Y - 56, 18,
-                            Color{255, 255, 100, 255});
+            ui_draw_text_bg("[TAB] Density Overlay", 10, BUILD_BAR_Y - 78, 18,
+                            Color{0, 0, 0, 255});
         }
     }
 };
@@ -560,11 +708,11 @@ struct RenderTimelineSidebarSystem : System<> {
         float sidebar_y = 0.f;
         float sidebar_h = static_cast<float>(DEFAULT_SCREEN_HEIGHT);
 
-        draw_rect(sidebar_x, sidebar_y, sidebar_w, sidebar_h,
-                  Color{15, 15, 25, 200});
+        draw_bevel_panel(sidebar_x, sidebar_y, sidebar_w, sidebar_h,
+                         Color{192, 192, 192, 255});
 
         draw_text_ex(get_font(), "LINEUP", {sidebar_x + 10, 8}, 18,
-                     FONT_SPACING, Color{255, 220, 100, 255});
+                     FONT_SPACING, Color{0, 0, 0, 255});
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         vtr.register_text("LINEUP");
 
@@ -590,16 +738,15 @@ struct RenderTimelineSidebarSystem : System<> {
             if (block_y + block_h < content_top || block_y > content_bot)
                 continue;
 
-            Color bg =
-                a.performing ? Color{255, 217, 61, 80} : Color{40, 40, 60, 180};
+            Color bg = a.performing ? Color{255, 210, 40, 255}
+                                    : Color{215, 215, 215, 255};
             draw_rect(sidebar_x + 4, block_y, sidebar_w - 8, block_h, bg);
             draw_rect_lines(sidebar_x + 4, block_y, sidebar_w - 8, block_h,
-                            Color{100, 100, 120, 200});
+                            Color{120, 120, 120, 255});
 
             std::string label =
                 a.performing ? fmt::format("> {}", a.name) : a.name;
-            Color name_col = a.performing ? Color{255, 230, 80, 255}
-                                          : Color{255, 255, 255, 255};
+            Color name_col = Color{0, 0, 0, 255};
             draw_text_ex(get_font(), label.c_str(),
                          {sidebar_x + 11, block_y + 5}, 16, FONT_SPACING,
                          Color{0, 0, 0, 120});
@@ -613,7 +760,7 @@ struct RenderTimelineSidebarSystem : System<> {
                 fmt::format("{:02d}:{:02d}  ~{} ppl", h, m, a.expected_crowd);
             draw_text_ex(get_font(), info.c_str(),
                          {sidebar_x + 10, block_y + 24}, 14, FONT_SPACING,
-                         Color{190, 190, 210, 255});
+                         Color{60, 60, 60, 255});
         }
 
         end_scissor_mode();
@@ -646,7 +793,7 @@ struct RenderMinimapSystem : System<> {
             grid->minimap_dirty = false;
 
             begin_texture_mode(g_minimap_texture);
-            clear_background({152, 212, 168, 255});
+            clear_background(tile_day_color(TileType::Grass));
 
             for (int z = 0; z < MAP_SIZE; z++) {
                 for (int x = 0; x < MAP_SIZE; x++) {
@@ -704,7 +851,7 @@ struct RenderMinimapSystem : System<> {
         }
 
         draw_rect_lines(sidebar_x, minimap_y, MINIMAP_SIZE, MINIMAP_SIZE,
-                        Color{100, 100, 120, 255});
+                        Color{90, 90, 90, 255});
     }
 };
 
@@ -722,11 +869,10 @@ struct RenderGameOverSystem : System<> {
         float pw = 460, ph = 420;
         float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
         float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
-        draw_rect(px, py, pw, ph, Color{20, 20, 30, 240});
-        draw_rect_lines(px, py, pw, ph, Color{255, 80, 80, 255});
+        draw_bevel_panel(px, py, pw, ph, Color{192, 192, 192, 255});
 
         std::string title = "FESTIVAL SHUT DOWN";
-        ui_draw_text_centered(title, py + 20, 34, Color{255, 80, 80, 255});
+        ui_draw_text_centered(title, py + 20, 34, Color{180, 0, 0, 255});
 
         int minutes = static_cast<int>(gs->time_survived) / 60;
         int seconds = static_cast<int>(gs->time_survived) % 60;
@@ -750,35 +896,35 @@ struct RenderGameOverSystem : System<> {
             "Inspection: {}", insp ? std::string(1, insp->last_grade) : "-");
 
         float sy = py + 66;
-        ui_draw_text_centered(stats1, sy, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats2, sy + 28, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats3, sy + 56, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats4, sy + 84, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats5, sy + 112, 20, Color{120, 255, 120, 255});
-        ui_draw_text_centered(stats6, sy + 140, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats7, sy + 168, 20, Color{255, 255, 255, 255});
-        ui_draw_text_centered(stats8, sy + 196, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats1, sy, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats2, sy + 28, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats3, sy + 56, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats4, sy + 84, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats5, sy + 112, 20, Color{0, 140, 0, 255});
+        ui_draw_text_centered(stats6, sy + 140, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats7, sy + 168, 20, Color{0, 0, 0, 255});
+        ui_draw_text_centered(stats8, sy + 196, 20, Color{0, 0, 0, 255});
 
         save::MetaProgress meta;
         save::load_meta(meta);
         float my = sy + 232;
-        draw_line(px + 20, my, px + pw - 20, my, Color{100, 100, 120, 200});
+        draw_line(px + 20, my, px + pw - 20, my, Color{120, 120, 120, 255});
         my += 8;
         ui_draw_text_centered("--- All-Time Records ---", my, 16,
-                              Color{180, 200, 255, 255});
+                              Color{40, 60, 140, 255});
         my += 24;
         ui_draw_text_centered(
             fmt::format("Best Day: {}  |  Best Served: {}", meta.best_day,
                         meta.best_agents_served),
-            my, 16, Color{160, 180, 220, 255});
+            my, 16, Color{40, 60, 140, 255});
         my += 22;
         ui_draw_text_centered(
             fmt::format("Peak Attendees: {}  |  Runs: {}",
                         meta.best_max_attendees, meta.total_runs),
-            my, 16, Color{160, 180, 220, 255});
+            my, 16, Color{40, 60, 140, 255});
 
         ui_draw_text_centered("Press SPACE to restart", py + ph - 40, 20,
-                              Color{180, 180, 180, 255});
+                              Color{60, 60, 60, 255});
 
         vtr.register_text(title);
         vtr.register_text(stats5);
@@ -802,6 +948,7 @@ void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderFacilityLabelsSystem>());
     sm.register_render_system(std::make_unique<RenderTopBarSystem>());
+    sm.register_render_system(std::make_unique<RenderNewsTickerSystem>());
     sm.register_render_system(std::make_unique<RenderBuildBarSystem>());
     sm.register_render_system(std::make_unique<RenderToastsSystem>());
     sm.register_render_system(std::make_unique<RenderNuxBannerSystem>());
