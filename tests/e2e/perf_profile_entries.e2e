@@ -1,0 +1,13 @@
+# Regression test for the afterhours bump that moved dump_profile onto
+# profiling::Collector: profiling must be compiled in (AFTERHOURS_ENABLE_PROFILING=1
+# in every TU) AND the app must call Collector::end_frame() once per frame.
+# Without either, dump_profile prints "Top 0 systems" while still passing,
+# so this script asserts a sampled entry exists instead of trusting the log.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+perf_start
+wait_frames 5
+assert_profile_sampled
+dump_profile 8
+perf_report

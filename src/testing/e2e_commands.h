@@ -1188,16 +1188,10 @@ static void cmd_perf_start(testing::PendingE2ECommand& cmd) {
 
     // Also time every registered system, so `dump_profile` can say which one
     // ate the frame instead of only that the frame was slow. Only while a perf
-    // script asked for it -- the hook costs two clock reads per system.
-    namespace perf = afterhours::testing::perf_commands;
-    perf::PerfProvider p = perf::provider();
-    p.get_fps = []() -> std::optional<float> {
-        auto& ps = get_perf_sample();
-        return (ps.sample_count > 0) ? std::optional<float>(ps.avg())
-                                     : std::nullopt;
-    };
-    perf::set_provider(std::move(p));
-    perf::builtin_profile::enable();
+    // script asked for it. builtin_profile::enable() installs the whole
+    // provider (FPS, p99, top entries) from afterhours' Collector, so there
+    // is no app provider to set up first.
+    afterhours::testing::perf_commands::builtin_profile::enable();
 
     log_info("[E2E] perf_start: sampling FPS and per-system time every frame");
     cmd.consume();
@@ -1233,6 +1227,35 @@ static void cmd_assert_fps(testing::PendingE2ECommand& cmd) {
                  cmd.arg(0), expected);
         cmd.consume();
     }
+}
+
+// assert_profile_sampled — fail unless dump_profile's provider has at least
+// one system entry with a real timing sample (calls > 0). Catches the bump
+// failure mode where profiling is compiled out (no entries at all) or the app
+// never calls Collector::end_frame() (entries exist, all with 0 calls), both
+// of which made dump_profile print "Top 0 systems" while still passing.
+static void cmd_assert_profile_sampled(testing::PendingE2ECommand& cmd) {
+    namespace perf = afterhours::testing::perf_commands;
+    auto& p = perf::provider();
+    if (!p.top_entries) {
+        cmd.fail(
+            "assert_profile_sampled FAILED: no perf provider "
+            "configured (run perf_start first)");
+        return;
+    }
+    auto entries = p.top_entries(20);
+    for (const auto& e : entries) {
+        if (e.calls && *e.calls > 0) {
+            log_info("assert_profile_sampled PASSED: '{}' has {} calls", e.name,
+                     *e.calls);
+            cmd.consume();
+            return;
+        }
+    }
+    cmd.fail(fmt::format(
+        "assert_profile_sampled FAILED: {} profile entries, none with any "
+        "calls (profiling compiled out or end_frame() never called)",
+        entries.size()));
 }
 
 static void cmd_assert_min_fps(testing::PendingE2ECommand& cmd) {
@@ -1774,6 +1797,7 @@ static void init_e2e_registry() {
     r.add("perf_report", cmd_perf_report);
     r.add("assert_fps", cmd_assert_fps);
     r.add("assert_min_fps", cmd_assert_min_fps);
+    r.add("assert_profile_sampled", cmd_assert_profile_sampled);
     r.add("assert_nux_active", cmd_assert_nux_active);
     r.add("assert_nux_inactive", cmd_assert_nux_inactive);
     r.add("assert_nux_count", cmd_assert_nux_count);
