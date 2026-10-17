@@ -235,3 +235,7 @@ It does not belong in the core game.
 - Test boids force weights
 - Validate readability at high density
 - Compare core loop against Power Grid concept
+
+## Tycoon Framing (Gabe, 2026-10-16)
+
+A tycoon game: make as much money as possible running a music festival, but if you aren't careful people die and you get shut down; grow as big as possible. Inspired by RollerCoaster Tycoon, RimWorld and Prison Architect. Build the festival layout → crowds simulate → money flows → safety risk/shutdown. Favor afterhours systems. (Sibling reference for patterns: "car park capital" — not found under that name on GitHub 2026-10-16; carthreejs/cartographer checked instead.)
