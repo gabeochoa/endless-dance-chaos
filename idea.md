@@ -238,4 +238,14 @@ It does not belong in the core game.
 
 ## Tycoon Framing (Gabe, 2026-10-16)
 
-A tycoon game: make as much money as possible running a music festival, but if you aren't careful people die and you get shut down; grow as big as possible. Inspired by RollerCoaster Tycoon, RimWorld and Prison Architect. Build the festival layout → crowds simulate → money flows → safety risk/shutdown. Favor afterhours systems. (Sibling reference for patterns: "car park capital" — not found under that name on GitHub 2026-10-16; carthreejs/cartographer checked instead.)
+A tycoon game: make as much money as possible running a music festival, but if you aren't careful people die and you get shut down; grow as big as possible. Inspired by RollerCoaster Tycoon, RimWorld and Prison Architect. Build the festival layout → crowds simulate → money flows → safety risk/shutdown. Favor afterhours systems.
+
+## Visual Reference: Car Park Capital (Gabe, 2026-10-17)
+
+Not a repo — a Steam game (Hilko Janssen / MicroProse, Early Access Oct 9 2026): satirical parking-garage tycoon in a '90s Theme Park / RollerCoaster Tycoon / SimCity 2000 look. Use as the VISUAL north star for this game:
+- chunky late-'90s isometric/top-down pixel sim look
+- bright saturated palette, clear tile grid
+- tiny readable agents
+- classic tycoon HUD panels and toolbar
+- satirical tone in labels/news ticker
+Refs: timeextension.com + killscreen.com coverage of Car Park Capital. Don't copy assets; style only.
