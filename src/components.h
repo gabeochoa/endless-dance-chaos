@@ -24,6 +24,8 @@ struct Transform : afterhours::BaseComponent {
 };
 
 // Tile types for the grid
+// New types append at the end: TILE_BLOCKS / TILE_DAY_COLORS /
+// TILE_NIGHT_COLORS are indexed by TileType, so they must grow in sync.
 enum class TileType {
     Grass,
     Path,
@@ -33,7 +35,10 @@ enum class TileType {
     StageFloor,
     Bathroom,
     Food,
-    MedTent
+    MedTent,
+    Bar,
+    SecurityPost,
+    WaterStation
 };
 
 // Single tile in the grid
@@ -73,6 +78,9 @@ struct Grid : afterhours::BaseComponent {
     std::vector<std::pair<int, int>> bathroom_positions;
     std::vector<std::pair<int, int>> food_positions;
     std::vector<std::pair<int, int>> medtent_positions;
+    std::vector<std::pair<int, int>> bar_positions;
+    std::vector<std::pair<int, int>> security_positions;
+    std::vector<std::pair<int, int>> water_positions;
 
     // Cached StageFloor positions sorted by distance from stage center.
     // Used by best_stage_spot to find closest non-crowded tile to an agent.
@@ -144,6 +152,9 @@ struct Grid : afterhours::BaseComponent {
         bathroom_positions.clear();
         food_positions.clear();
         medtent_positions.clear();
+        bar_positions.clear();
+        security_positions.clear();
+        water_positions.clear();
         for (int z = 0; z < MAP_SIZE; z++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 switch (at(x, z).type) {
@@ -158,6 +169,15 @@ struct Grid : afterhours::BaseComponent {
                         break;
                     case TileType::MedTent:
                         medtent_positions.push_back({x, z});
+                        break;
+                    case TileType::Bar:
+                        bar_positions.push_back({x, z});
+                        break;
+                    case TileType::SecurityPost:
+                        security_positions.push_back({x, z});
+                        break;
+                    case TileType::WaterStation:
+                        water_positions.push_back({x, z});
                         break;
                     default:
                         break;
@@ -211,6 +231,12 @@ struct Grid : afterhours::BaseComponent {
                 return food_positions;
             case TileType::MedTent:
                 return medtent_positions;
+            case TileType::Bar:
+                return bar_positions;
+            case TileType::SecurityPost:
+                return security_positions;
+            case TileType::WaterStation:
+                return water_positions;
             case TileType::Gate:
                 return gate_positions;
             default:
@@ -279,13 +305,13 @@ struct Grid : afterhours::BaseComponent {
         bool seen[MAP_SIZE * MAP_SIZE] = {};
         auto add_facility = [&](int x, int z, TileType /*type*/,
                                 const char* text, uint8_t r, uint8_t g,
-                                uint8_t b) {
+                                uint8_t b, int w = 2, int h = 2) {
             int idx = z * MAP_SIZE + x;
             if (seen[idx]) return;
-            facility_labels.push_back(
-                {text, (x + 1.0f) * TILESIZE, (z + 1.0f) * TILESIZE, r, g, b});
-            for (int dz = 0; dz < 2; dz++)
-                for (int dx = 0; dx < 2; dx++)
+            facility_labels.push_back({text, (x + w / 2.0f) * TILESIZE,
+                                       (z + h / 2.0f) * TILESIZE, r, g, b});
+            for (int dz = 0; dz < h; dz++)
+                for (int dx = 0; dx < w; dx++)
                     if (in_bounds(x + dx, z + dz))
                         seen[(z + dz) * MAP_SIZE + x + dx] = true;
         };
@@ -299,6 +325,12 @@ struct Grid : afterhours::BaseComponent {
                     add_facility(x, z, t, "FOOD", 244, 164, 164);
                 else if (t == TileType::MedTent)
                     add_facility(x, z, t, "MED", 255, 100, 100);
+                else if (t == TileType::Bar)
+                    add_facility(x, z, t, "BAR", 255, 160, 40);
+                else if (t == TileType::SecurityPost)
+                    add_facility(x, z, t, "SEC", 140, 160, 255, 1, 1);
+                else if (t == TileType::WaterStation)
+                    add_facility(x, z, t, "WATER", 80, 180, 255, 1, 1);
             }
         }
 
@@ -312,17 +344,30 @@ struct Grid : afterhours::BaseComponent {
 };
 
 // Facility types (for agents to want)
-enum class FacilityType { Bathroom, Food, Stage, Exit, MedTent };
+// Bar / WaterStation append at the end. They have no pheromone channel
+// (facility_to_channel returns -1 for them) and no desire-count slot:
+// Tile::NUM_DESIRES stays 5 and crowd code guards the index.
+enum class FacilityType {
+    Bathroom,
+    Food,
+    Stage,
+    Exit,
+    MedTent,
+    Bar,
+    WaterStation
+};
 
 // Map FacilityType to its corresponding TileType.
 // Indexed by FacilityType enum value.
 inline TileType facility_type_to_tile(FacilityType type) {
     constexpr TileType MAP[] = {
-        TileType::Bathroom,  // Bathroom
-        TileType::Food,      // Food
-        TileType::Stage,     // Stage
-        TileType::Gate,      // Exit
-        TileType::MedTent,   // MedTent
+        TileType::Bathroom,      // Bathroom
+        TileType::Food,          // Food
+        TileType::Stage,         // Stage
+        TileType::Gate,          // Exit
+        TileType::MedTent,       // MedTent
+        TileType::Bar,           // Bar
+        TileType::WaterStation,  // WaterStation
     };
     return MAP[static_cast<int>(type)];
 }
@@ -368,14 +413,28 @@ struct Agent : afterhours::BaseComponent {
         : want(w), target_grid_x(tx), target_grid_z(tz) {}
 };
 
-// Agent need timers - triggers bathroom/food seeking behavior
+// Agent need timers - triggers bathroom/food/heat/bar seeking behavior
 struct AgentNeeds : afterhours::BaseComponent {
     float bathroom_timer = 0.f;
     float bathroom_threshold = 0.f;  // random 30-90 sec
     float food_timer = 0.f;
     float food_threshold = 0.f;  // random 45-120 sec
+    float heat_timer = 0.f;
+    float heat_threshold = 0.f;  // random 90-180 sec; max => collapse
+    float bar_timer = 0.f;
+    float bar_threshold = 0.f;  // random 60-180 sec
     bool needs_bathroom = false;
     bool needs_food = false;
+    bool needs_heat = false;
+    bool needs_bar = false;
+    float fun_boost =
+        0.f;  // >0 after Bar service: next stage watch lasts longer
+};
+
+// Attached while an agent has collapsed from heat: immobile until medics
+// rescue them (nearby MedTent) or COLLAPSE_FATAL_TIME elapses (death).
+struct Collapsed : afterhours::BaseComponent {
+    float timer = 0.f;
 };
 
 // Attached while agent is watching the stage (standing in front zone)
@@ -425,7 +484,10 @@ struct GameState : afterhours::BaseComponent {
     float game_time = 0.f;
     bool show_data_layer = false;
     int death_count = 0;
+    int injury_count = 0;  // heat collapses; tracked separately from deaths
     int max_deaths = MAX_DEATHS;
+    int total_arrivals = 0;  // agents who paid at a gate (milestone progress)
+    int milestone_idx = 0;   // index into the milestone threshold table
     float speed_multiplier = 1.0f;
     bool show_debug = false;
     int total_agents_served = 0;
@@ -472,6 +534,8 @@ struct FacilitySlots : afterhours::BaseComponent {
 };
 
 // Build tool - what the player is currently placing
+// New tools append after Demolish so every existing tool keeps its index
+// (build-bar slots, tool-cycling tests, and key bindings depend on it).
 enum class BuildTool {
     Path,
     Fence,
@@ -480,7 +544,10 @@ enum class BuildTool {
     Bathroom,
     Food,
     MedTent,
-    Demolish
+    Demolish,
+    Bar,
+    SecurityPost,
+    WaterStation
 };
 
 // Economy singleton: tycoon money flows (cash in from tickets, cash out
@@ -490,6 +557,23 @@ struct Economy : afterhours::BaseComponent {
     int ticket_price = DEFAULT_TICKET_PRICE;
     int total_earned = 0;
     int total_spent = 0;
+
+    static constexpr int MIN_TICKET_PRICE = 5;
+    static constexpr int MAX_TICKET_PRICE = 100;
+    static constexpr int TICKET_PRICE_STEP = 5;
+
+    // Clamped +/- adjustment shared by the price keys, the HUD buttons,
+    // and the E2E ticket_price_up/down commands.
+    void adjust_price(int delta) {
+        ticket_price = std::clamp(ticket_price + delta, MIN_TICKET_PRICE,
+                                  MAX_TICKET_PRICE);
+    }
+
+    // Spawn-rate factor: higher price => fewer arrivals. Multiplied into
+    // the spawn interval by the schedule systems.
+    float price_spawn_factor() const {
+        return ticket_price / static_cast<float>(DEFAULT_TICKET_PRICE);
+    }
 
     void earn(int amount) {
         cash += amount;
@@ -521,6 +605,12 @@ inline int build_cost_for_tool(BuildTool tool) {
             return 500;
         case BuildTool::MedTent:
             return 750;
+        case BuildTool::Bar:
+            return 600;
+        case BuildTool::SecurityPost:
+            return 400;
+        case BuildTool::WaterStation:
+            return 200;
         default:
             return 0;
     }
@@ -538,10 +628,31 @@ inline int build_cost_for_tile(TileType type) {
             return 500;
         case TileType::MedTent:
             return 750;
+        case TileType::Bar:
+            return 600;
+        case TileType::SecurityPost:
+            return 400;
+        case TileType::WaterStation:
+            return 200;
         default:
             return 0;
     }
 }
+
+// Inspection state singleton: one health-and-safety inspection per game-day.
+// Grades A-F; F, or 3 consecutive D/F grades, shuts the festival down.
+struct InspectionState : afterhours::BaseComponent {
+    char last_grade = '-';  // '-' = no inspection yet
+    int last_score = -1;
+    int inspections_done = 0;
+    int consecutive_bad = 0;     // consecutive D/F grades
+    int density_violations = 0;  // seconds with a critically dense tile
+    int deaths_at_last = 0;      // death_count snapshot at last inspection
+    int injuries_at_last = 0;    // injury_count snapshot at last inspection
+    int last_inspected_day = 1;
+    bool shutdown_triggered = false;
+    bool force_inspection = false;  // E2E run_inspection: inspect next frame
+};
 
 // Random event types that affect gameplay
 enum class EventType { Rain, PowerOutage, VIPVisit, HeatWave };

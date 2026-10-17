@@ -107,6 +107,9 @@ inline constexpr Color TILE_DAY_COLORS[] = {
     {126, 207, 192, 255},  // Bathroom
     {244, 164, 164, 255},  // Food
     {255, 100, 100, 255},  // MedTent
+    {255, 160, 40, 255},   // Bar
+    {140, 160, 255, 255},  // SecurityPost
+    {80, 180, 255, 255},   // WaterStation
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
@@ -119,6 +122,9 @@ inline constexpr Color TILE_NIGHT_COLORS[] = {
     {60, 100, 90, 255},   // Bathroom
     {120, 80, 80, 255},   // Food
     {120, 50, 50, 255},   // MedTent
+    {120, 80, 20, 255},   // Bar
+    {70, 80, 130, 255},   // SecurityPost
+    {40, 90, 130, 255},   // WaterStation
 };
 
 inline Color tile_day_color(TileType type) {

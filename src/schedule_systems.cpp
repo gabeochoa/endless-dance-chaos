@@ -123,17 +123,21 @@ struct UpdateArtistScheduleSystem : System<> {
             float base_rate = 1.f / DEFAULT_SPAWN_INTERVAL;
             auto* current = sched->get_current();
             auto* next = sched->get_next();
+            // Higher ticket price => longer interval => fewer arrivals.
+            float price_factor = 1.f;
+            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>())
+                price_factor = econ->price_spawn_factor();
 
             if (current) {
                 float mult = current->expected_crowd / 100.0f;
                 if (mult < 0.5f) mult = 0.5f;
-                ss->interval = 1.f / (base_rate * mult);
+                ss->interval = 1.f / (base_rate * mult) * price_factor;
             } else if (next && now > next->start_time_minutes - 15.f) {
                 float mult = next->expected_crowd / 100.0f;
                 if (mult < 0.5f) mult = 0.5f;
-                ss->interval = 1.f / (base_rate * mult);
+                ss->interval = 1.f / (base_rate * mult) * price_factor;
             } else {
-                ss->interval = DEFAULT_SPAWN_INTERVAL;
+                ss->interval = DEFAULT_SPAWN_INTERVAL * price_factor;
             }
         }
     }
@@ -179,7 +183,14 @@ struct DifficultyScalingSystem : System<> {
         last_hour = hour;
 
         if (!spawn->manual_override) {
-            spawn->interval = DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult;
+            // Runs after the artist schedule each frame, so this is the
+            // interval that sticks. Ticket price scales it: $40 tickets
+            // spawn half as often as $20 tickets.
+            float price_factor = 1.f;
+            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>())
+                price_factor = econ->price_spawn_factor();
+            spawn->interval =
+                DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult * price_factor;
         }
     }
 };

@@ -165,13 +165,15 @@ struct RenderStageGlowSystem : System<> {
     }
 };
 
-// Desire pip colors
+// Desire pip colors (indexed by FacilityType)
 static constexpr Color DESIRE_COLORS[] = {
     {126, 207, 192, 255},  // Bathroom
     {244, 164, 164, 255},  // Food
     {255, 217, 61, 255},   // Stage
     {68, 136, 170, 255},   // Exit/Gate
     {255, 100, 100, 255},  // MedTent
+    {255, 160, 40, 255},   // Bar
+    {80, 180, 255, 255},   // WaterStation
 };
 
 static float hash_scatter(int seed) {

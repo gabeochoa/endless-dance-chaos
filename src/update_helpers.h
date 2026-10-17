@@ -43,9 +43,11 @@ inline void spawn_toast(const std::string& text, float lifetime = 3.0f) {
 }
 
 // Lookup table: true if tile blocks agent movement (fences + stage structure).
-// Facilities (Bathroom, Food, MedTent) are walkable so agents can enter them.
+// Facilities (Bathroom, Food, MedTent, Bar, SecurityPost, WaterStation) are
+// walkable so agents can enter them.
 // Indexed by TileType enum: Grass=0,Path=1,Fence=2,Gate=3,Stage=4,
-//   StageFloor=5,Bathroom=6,Food=7,MedTent=8
+//   StageFloor=5,Bathroom=6,Food=7,MedTent=8,Bar=9,SecurityPost=10,
+//   WaterStation=11
 inline constexpr bool TILE_BLOCKS[] = {
     false,  // Grass
     false,  // Path
@@ -56,6 +58,9 @@ inline constexpr bool TILE_BLOCKS[] = {
     false,  // Bathroom
     false,  // Food
     false,  // MedTent
+    false,  // Bar
+    false,  // SecurityPost
+    false,  // WaterStation
 };
 
 inline bool tile_blocks_movement(TileType type) {
@@ -63,7 +68,25 @@ inline bool tile_blocks_movement(TileType type) {
 }
 
 // Map FacilityType to pheromone channel index.
-// FacilityType enum order matches Tile::PHERO_* constants exactly.
+// FacilityType enum order matches Tile::PHERO_* constants exactly for the
+// original five types. Bar / WaterStation have no channel (-1); callers
+// must guard before indexing Tile::pheromone.
 inline int facility_to_channel(FacilityType type) {
+    if (type == FacilityType::Bar || type == FacilityType::WaterStation)
+        return -1;
     return static_cast<int>(type);
+}
+
+// True if any tile of the given type lies within radius of (x, z).
+// Used for the Bar / Security Post / Water Station proximity auras.
+inline bool near_tile_type(Grid& grid, int x, int z, TileType type,
+                           float radius) {
+    const auto& positions = grid.get_facility_positions(type);
+    float r2 = radius * radius;
+    for (auto [px, pz] : positions) {
+        float dx = static_cast<float>(px - x);
+        float dz = static_cast<float>(pz - z);
+        if (dx * dx + dz * dz <= r2) return true;
+    }
+    return false;
 }

@@ -64,6 +64,25 @@ constexpr float DENSITY_CRITICAL = 0.90f;   // 36 agents — crush damage
 constexpr float CRUSH_DAMAGE_RATE = 0.2f;   // HP/sec in critical zone
 constexpr int MAX_DEATHS = 10;
 
+// Tycoon growth: Bar / Security Post / Water Station
+constexpr int BAR_DRINK_PRICE = 8;  // cash earned per agent served at a Bar
+constexpr float BAR_RADIUS = 6.0f;  // injury-risk aura around a Bar
+constexpr float BAR_CRUSH_MULT = 1.25f;  // crush damage multiplier near a Bar
+constexpr float SECURITY_RADIUS = 6.0f;  // aura around a Security Post
+constexpr float SECURITY_CRUSH_MULT = 0.5f;  // crush damage multiplier near one
+constexpr float SECURITY_FLEE_MULT = 1.25f;  // flee speed multiplier near one
+constexpr float WATER_RADIUS = 6.0f;  // heat-growth relief aura (Water Station)
+
+// Heat / illness need: grows over time, faster in dense crowds, slower near
+// water; at max the agent collapses (counts as an injury).
+constexpr float COLLAPSE_RESCUE_DELAY = 2.0f;  // sec before medics pick up
+constexpr float COLLAPSE_FATAL_TIME = 8.0f;    // sec collapsed before death
+constexpr float MEDTENT_RESCUE_RADIUS = 12.0f;
+
+// Inspection: one per game-day, scored from the previous day's record.
+constexpr int INSPECTION_GRANT_A = 500;
+constexpr int INSPECTION_GRANT_B = 250;
+
 // Version
 constexpr std::string_view VERSION = "0.0.1";
 

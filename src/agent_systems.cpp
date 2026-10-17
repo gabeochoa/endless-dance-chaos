@@ -57,7 +57,9 @@ static std::pair<int, int> pick_next_tile(
 
         float dist =
             static_cast<float>(std::abs(nx - goal_x) + std::abs(nz - goal_z));
-        float phero = Tile::to_strength(grid.at(nx, nz).pheromone[channel]);
+        float phero =
+            channel >= 0 ? Tile::to_strength(grid.at(nx, nz).pheromone[channel])
+                         : 0.f;
         float score = dist - (phero * 2.0f);
 
         bool is_path = (type == TileType::Path || type == TileType::Gate ||
@@ -252,6 +254,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
                        float dt) override {
         if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<Collapsed>()) return;  // collapsed: medics or death
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -337,6 +340,10 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     agent.speed = SPEED_PATH;
                     if (gs) agent.speed *= gs->speed_multiplier;
                     if (event_flags::rain_active) agent.speed *= 0.5f;
+                    // Security Post: faster density relief in its radius.
+                    if (near_tile_type(*grid, cur_gx, cur_gz,
+                                       TileType::SecurityPost, SECURITY_RADIUS))
+                        agent.speed *= SECURITY_FLEE_MULT;
                 }
             } else if (!dangerous) {
                 agent.flee_target_x = -1;
@@ -358,7 +365,9 @@ struct AgentMovementSystem : System<Agent, Transform> {
                 (cur_type == TileType::Path || cur_type == TileType::Gate ||
                  cur_type == TileType::StageFloor ||
                  cur_type == TileType::Bathroom || cur_type == TileType::Food ||
-                 cur_type == TileType::MedTent)
+                 cur_type == TileType::MedTent || cur_type == TileType::Bar ||
+                 cur_type == TileType::SecurityPost ||
+                 cur_type == TileType::WaterStation)
                     ? SPEED_PATH
                     : SPEED_GRASS;
 
@@ -447,17 +456,27 @@ static std::pair<int, int> find_nearest_facility(int from_x, int from_z,
     return {-1, -1};
 }
 
-// Tick need timers and set need flags
-struct NeedTickSystem : System<Agent, AgentNeeds> {
-    void for_each_with(Entity& e, Agent&, AgentNeeds& needs,
+// Tick need timers and set need flags.
+// Heat grows over time, faster in dense crowds and during heat waves, and
+// slower near a Water Station. At max the agent collapses (an injury).
+// Bar thirst only builds when at least one Bar exists on the map.
+struct NeedTickSystem : System<Agent, AgentNeeds, Transform> {
+    float collapse_toast_cooldown = 0.f;
+
+    // Once per frame (not per agent) so the toast throttle stays real-time.
+    void once(float dt) override { collapse_toast_cooldown -= dt; }
+
+    void for_each_with(Entity& e, Agent&, AgentNeeds& needs, Transform& tf,
                        float dt) override {
         if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
+        if (!e.is_missing<Collapsed>()) return;
 
         float need_dt = event_flags::heat_active ? dt * 2.0f : dt;
         needs.bathroom_timer += need_dt;
         needs.food_timer += need_dt;
+        needs.bar_timer += need_dt;
 
         if (!needs.needs_bathroom &&
             needs.bathroom_timer >= needs.bathroom_threshold) {
@@ -466,16 +485,63 @@ struct NeedTickSystem : System<Agent, AgentNeeds> {
         if (!needs.needs_food && needs.food_timer >= needs.food_threshold) {
             needs.needs_food = true;
         }
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (grid) {
+            auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            bool has_bar = !grid->get_facility_positions(TileType::Bar).empty();
+            if (!needs.needs_bar && has_bar &&
+                needs.bar_timer >= needs.bar_threshold) {
+                needs.needs_bar = true;
+            }
+
+            // Heat: base rate + crowd-density bonus, halved near water.
+            float heat_dt = need_dt;
+            if (grid->in_bounds(gx, gz)) {
+                float density = grid->at(gx, gz).agent_count /
+                                static_cast<float>(MAX_AGENTS_PER_TILE);
+                heat_dt *= 1.0f + density * 2.0f;
+            }
+            if (near_tile_type(*grid, gx, gz, TileType::WaterStation,
+                               WATER_RADIUS))
+                heat_dt *= 0.5f;
+            needs.heat_timer += heat_dt;
+        } else {
+            needs.heat_timer += need_dt;
+        }
+
+        // At 75% the agent seeks relief (Water Station, else MedTent);
+        // at 100% they collapse.
+        if (!needs.needs_heat &&
+            needs.heat_timer >= needs.heat_threshold * 0.75f) {
+            needs.needs_heat = true;
+        }
+        if (needs.heat_timer >= needs.heat_threshold) {
+            needs.heat_timer = needs.heat_threshold;  // clamp: one collapse
+            if (e.is_missing<Collapsed>()) {
+                e.addComponent<Collapsed>();
+                auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+                if (gs) gs->injury_count++;
+                if (collapse_toast_cooldown <= 0.f) {
+                    collapse_toast_cooldown = 5.0f;
+                    spawn_toast(
+                        "An attendee collapsed from the heat! Medics, go!",
+                        5.0f);
+                }
+            }
+        }
     }
 };
 
-// Select agent's goal based on need priority: bathroom > food > stage.
+// Select agent's goal based on need priority:
+// medical > bathroom > food > heat > bar > stage.
 struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
     void for_each_with(Entity& e, Agent& agent, AgentNeeds& needs,
                        Transform& tf, float) override {
         if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
+        if (!e.is_missing<Collapsed>()) return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -493,6 +559,17 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
             urgent = true;
         } else if (needs.needs_food) {
             desired = FacilityType::Food;
+            urgent = false;
+        } else if (needs.needs_heat) {
+            // Water Station relieves heat; fall back to the MedTent when the
+            // map has no water.
+            if (!grid->get_facility_positions(TileType::WaterStation).empty())
+                desired = FacilityType::WaterStation;
+            else
+                desired = FacilityType::MedTent;
+            urgent = false;
+        } else if (needs.needs_bar) {
+            desired = FacilityType::Bar;
             urgent = false;
         }
 
@@ -534,6 +611,21 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
                 agent.want = FacilityType::Stage;
                 auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
                 agent.set_target(rsx, rsz);
+            } else if (desired == FacilityType::Bar) {
+                // Bar demolished mid-trip: drop the craving, head to stage.
+                needs.needs_bar = false;
+                needs.bar_timer = 0.f;
+                needs.bar_threshold = 120.f;
+                agent.want = FacilityType::Stage;
+                auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
+                agent.set_target(rsx, rsz);
+            } else if (desired == FacilityType::WaterStation) {
+                // Water gone mid-trip: keep the heat need; next frame the
+                // selector falls back to the MedTent. Just stop walking
+                // toward the stale target.
+                agent.want = FacilityType::Stage;
+                auto [rsx, rsz] = best_stage_spot(cur_gx, cur_gz);
+                agent.set_target(rsx, rsz);
             }
         }
     }
@@ -568,7 +660,14 @@ struct StageWatchingSystem : System<Agent, Transform> {
 
         auto& rng = RandomEngine::get();
         e.addComponent<WatchingStage>();
-        e.get<WatchingStage>().watch_duration = rng.get_float(30.f, 120.f);
+        float duration = rng.get_float(30.f, 120.f);
+        // Bar service raises fun: the next set lasts half again as long.
+        if (!e.is_missing<AgentNeeds>() &&
+            e.get<AgentNeeds>().fun_boost > 0.f) {
+            duration *= 1.5f;
+            e.get<AgentNeeds>().fun_boost = 0.f;
+        }
+        e.get<WatchingStage>().watch_duration = duration;
     }
 };
 
@@ -599,6 +698,25 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                     if (!e.is_missing<AgentHealth>()) {
                         e.get<AgentHealth>().hp = 1.0f;
                     }
+                    // MedTent also relieves heat/illness.
+                    needs.needs_heat = false;
+                    needs.heat_timer = 0.f;
+                    needs.heat_threshold = rng.get_float(90.f, 180.f);
+                } else if (bs.facility_type == FacilityType::Bar) {
+                    // Bar: cash per served agent + a fun boost.
+                    if (auto* econ =
+                            EntityHelper::get_singleton_cmp<Economy>()) {
+                        econ->earn(BAR_DRINK_PRICE);
+                    }
+                    needs.needs_bar = false;
+                    needs.bar_timer = 0.f;
+                    needs.bar_threshold = rng.get_float(60.f, 180.f);
+                    needs.fun_boost = 1.0f;
+                } else if (bs.facility_type == FacilityType::WaterStation) {
+                    // Water Station: cheap heat/illness relief.
+                    needs.needs_heat = false;
+                    needs.heat_timer = 0.f;
+                    needs.heat_threshold = rng.get_float(90.f, 180.f);
                 }
 
                 tf.position.x = bs.facility_grid_x * TILESIZE - TILESIZE;
@@ -624,6 +742,8 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
         }
 
         if (agent.want == FacilityType::Stage) return;
+        // Collapsed agents never walk into a facility; rescue handles them.
+        if (!e.is_missing<Collapsed>()) return;
 
         auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
         if (!grid->in_bounds(gx, gz)) return;

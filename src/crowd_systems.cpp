@@ -142,6 +142,7 @@ struct PheromoneDepositSystem : System<Agent, Transform, PheromoneDepositor> {
         if (!grid->in_bounds(gx, gz)) return;
 
         int ch = facility_to_channel(dep.leaving_type);
+        if (ch < 0) return;  // Bar / WaterStation leave no pheromone trail
         auto& val = grid->at(gx, gz).pheromone[ch];
         int nv = static_cast<int>(val) + 50;
         val = static_cast<uint8_t>(std::min(nv, 255));
@@ -244,7 +245,15 @@ struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
         int count = grid->at(gx, gz).agent_count;
         float density = count / static_cast<float>(MAX_AGENTS_PER_TILE);
         if (density >= DENSITY_CRITICAL) {
-            health.hp -= CRUSH_DAMAGE_RATE * dt;
+            // Security Post halves crush damage in its radius; a nearby
+            // Bar slightly raises injury risk.
+            float rate = CRUSH_DAMAGE_RATE;
+            if (near_tile_type(*grid, gx, gz, TileType::SecurityPost,
+                               SECURITY_RADIUS))
+                rate *= SECURITY_CRUSH_MULT;
+            if (near_tile_type(*grid, gx, gz, TileType::Bar, BAR_RADIUS))
+                rate *= BAR_CRUSH_MULT;
+            health.hp -= rate * dt;
 
             log_cooldown -= dt;
             if (log_cooldown <= 0.f) {
@@ -273,6 +282,66 @@ struct CrushDamageSystem : System<Agent, Transform, AgentHealth> {
                     min_neighbor, has_empty_walkable);
             }
         }
+    }
+};
+
+// Collapsed agents wait for medics: a MedTent within rescue radius picks
+// them up (BeingServiced at the tent, which heals and clears heat).
+// With no MedTent in range, the collapse turns fatal at COLLAPSE_FATAL_TIME.
+struct CollapseRescueSystem : System<Agent, Transform, Collapsed> {
+    void for_each_with(Entity& e, Agent& agent, Transform& tf,
+                       Collapsed& collapsed, float dt) override {
+        if (skip_game_logic()) return;
+        if (!e.is_missing<BeingServiced>()) return;
+
+        collapsed.timer += dt;
+        if (collapsed.timer < COLLAPSE_RESCUE_DELAY) return;
+
+        if (collapsed.timer >= COLLAPSE_FATAL_TIME) {
+            if (!e.is_missing<AgentHealth>()) e.get<AgentHealth>().hp = 0.f;
+            return;
+        }
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        auto [mx, mz] = [&]() {
+            // Nearest MedTent within rescue radius, preferring one with room.
+            const auto& positions =
+                grid->get_facility_positions(TileType::MedTent);
+            int best_x = -1, best_z = -1, best_dist = INT_MAX;
+            int close_x = -1, close_z = -1, close_dist = INT_MAX;
+            for (auto [px, pz] : positions) {
+                int dist = std::abs(px - gx) + std::abs(pz - gz);
+                float euclid = std::sqrt(static_cast<float>(
+                    (px - gx) * (px - gx) + (pz - gz) * (pz - gz)));
+                if (euclid > MEDTENT_RESCUE_RADIUS) continue;
+                if (dist < close_dist) {
+                    close_dist = dist;
+                    close_x = px;
+                    close_z = pz;
+                }
+                if (grid->at(px, pz).agent_count < FACILITY_MAX_AGENTS &&
+                    dist < best_dist) {
+                    best_dist = dist;
+                    best_x = px;
+                    best_z = pz;
+                }
+            }
+            if (best_x >= 0) return std::pair{best_x, best_z};
+            return std::pair{close_x, close_z};
+        }();
+        if (mx < 0) return;  // no MedTent in range: keep waiting for fatal
+
+        e.removeComponent<Collapsed>();
+        e.addComponent<BeingServiced>();
+        auto& bs = e.get<BeingServiced>();
+        bs.facility_grid_x = mx;
+        bs.facility_grid_z = mz;
+        bs.facility_type = FacilityType::MedTent;
+        bs.time_remaining = SERVICE_TIME;
+        agent.want = FacilityType::MedTent;
+        agent.set_target(mx, mz);
     }
 };
 
@@ -452,6 +521,7 @@ void register_crowd_flow_systems(SystemManager& sm) {
 
 void register_crowd_damage_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<CrushDamageSystem>());
+    sm.register_update_system(std::make_unique<CollapseRescueSystem>());
     sm.register_update_system(std::make_unique<AgentDeathSystem>());
     sm.register_update_system(std::make_unique<TrackStatsSystem>());
 }

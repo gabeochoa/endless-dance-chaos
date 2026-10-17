@@ -107,7 +107,9 @@ struct RenderFacilityLabelsSystem : System<> {
             // Fill bar for serviceable facilities (not stage/gate)
             bool is_facility = (std::strcmp(lbl.text, "WC") == 0 ||
                                 std::strcmp(lbl.text, "FOOD") == 0 ||
-                                std::strcmp(lbl.text, "MED") == 0);
+                                std::strcmp(lbl.text, "MED") == 0 ||
+                                std::strcmp(lbl.text, "BAR") == 0 ||
+                                std::strcmp(lbl.text, "WATER") == 0);
             if (is_facility) {
                 int agents =
                     facility_agent_count(grid, lbl.world_x, lbl.world_z);
@@ -166,8 +168,11 @@ static constexpr ToolInfo TOOL_INFO[] = {
     {"Fd", {244, 164, 164, 255}, "Food Stall"},
     {"M", {255, 100, 100, 255}, "Med Tent"},
     {"X", {255, 68, 68, 255}, "Demolish"},
+    {"Br", {255, 160, 40, 255}, "Bar"},
+    {"SP", {140, 160, 255, 255}, "Security Post"},
+    {"W", {80, 180, 255, 255}, "Water Station"},
 };
-static constexpr int TOOL_COUNT = 8;
+static constexpr int TOOL_COUNT = 11;
 
 static constexpr float BUILD_BAR_Y = DEFAULT_SCREEN_HEIGHT - 54.f;
 
@@ -252,6 +257,49 @@ struct RenderTopBarSystem : System<> {
             ui_draw_text(cash_text, bar_x, 11, 20, cash_col);
             vtr.register_text(cash_text);
             bar_x += ui_measure_text(cash_text, 20).x + 20;
+
+            // Ticket price with [-]/[+] buttons (same adjust as "," / ".").
+            std::string ticket_text =
+                fmt::format("Ticket: ${}", econ->ticket_price);
+            ui_draw_text(ticket_text, bar_x, 11, 20, Color{255, 220, 100, 255});
+            vtr.register_text(ticket_text);
+            bar_x += ui_measure_text(ticket_text, 20).x + 8;
+            auto mouse = input::get_mouse_position();
+            bool mouse_click =
+                input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+            const char* price_btns[] = {"-", "+"};
+            for (int i = 0; i < 2; i++) {
+                float bw = 22.f;
+                if (mouse_click && !game_is_over() && mouse.x >= bar_x &&
+                    mouse.x <= bar_x + bw && mouse.y >= 8 && mouse.y <= 36) {
+                    econ->adjust_price(i == 0 ? -Economy::TICKET_PRICE_STEP
+                                              : Economy::TICKET_PRICE_STEP);
+                }
+                draw_rect(bar_x, 8, bw, 28, Color{40, 40, 55, 255});
+                auto bm = ui_measure_text(price_btns[i], 18);
+                ui_draw_text(price_btns[i], bar_x + (bw - bm.x) / 2.f, 12, 18,
+                             Color{255, 255, 255, 255});
+                bar_x += bw + 4;
+            }
+            bar_x += 8;
+        }
+        if (gs) {
+            std::string inj_text = fmt::format("Inj: {}", gs->injury_count);
+            Color inj_col = gs->injury_count > 0 ? Color{255, 180, 80, 255}
+                                                 : Color{255, 255, 255, 255};
+            ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
+            vtr.register_text(inj_text);
+            bar_x += ui_measure_text(inj_text, 20).x + 20;
+        }
+        if (auto* insp = EntityHelper::get_singleton_cmp<InspectionState>()) {
+            std::string insp_text =
+                fmt::format("Insp: {}", std::string(1, insp->last_grade));
+            Color insp_col = insp->last_grade == 'F'
+                                 ? Color{255, 80, 80, 255}
+                                 : Color{255, 255, 255, 255};
+            ui_draw_text(insp_text, bar_x, 11, 20, insp_col);
+            vtr.register_text(insp_text);
+            bar_x += ui_measure_text(insp_text, 20).x + 20;
         }
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
         if (diff) {
@@ -462,15 +510,16 @@ struct RenderHoverInfoSystem : System<> {
                             if (agx == cached_hx && agz == cached_hz) {
                                 int idx =
                                     static_cast<int>(ae.get<Agent>().want);
-                                if (idx >= 0 && idx < 5) need_counts[idx]++;
+                                if (idx >= 0 && idx < 7) need_counts[idx]++;
                             }
                         }
                     }
 
-                    const char* names[] = {"bathroom", "food", "watching",
-                                           "exiting", "medical"};
+                    const char* names[] = {"bathroom", "food",    "watching",
+                                           "exiting",  "medical", "bar",
+                                           "water"};
                     std::string breakdown;
-                    for (int i = 0; i < 5; i++) {
+                    for (int i = 0; i < 7; i++) {
                         if (need_counts[i] > 0) {
                             if (!breakdown.empty()) breakdown += ", ";
                             breakdown +=
@@ -579,6 +628,8 @@ struct RenderMinimapSystem : System<> {
         {255, 217, 61, 255},   // Stage
         {68, 136, 170, 255},   // Exit
         {255, 100, 100, 255},  // MedTent
+        {255, 160, 40, 255},   // Bar
+        {80, 180, 255, 255},   // WaterStation
     };
 
     void once(float) const override {
@@ -632,7 +683,8 @@ struct RenderMinimapSystem : System<> {
             float py = minimap_y + gz * MINIMAP_SCALE;
 
             int di = static_cast<int>(ae.get<Agent>().want);
-            Color dot_col = AGENT_DOT_COLORS[di % 5];
+            Color dot_col = (di >= 0 && di < 7) ? AGENT_DOT_COLORS[di]
+                                                : AGENT_DOT_COLORS[2];
             draw_rect(px, py, 2, 2, dot_col);
         }
 
@@ -667,7 +719,7 @@ struct RenderGameOverSystem : System<> {
         draw_rect(0, 0, DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT,
                   Color{0, 0, 0, 200});
 
-        float pw = 460, ph = 360;
+        float pw = 460, ph = 420;
         float px = (DEFAULT_SCREEN_WIDTH - pw) / 2.f;
         float py = (DEFAULT_SCREEN_HEIGHT - ph) / 2.f;
         draw_rect(px, py, pw, ph, Color{20, 20, 30, 240});
@@ -692,6 +744,10 @@ struct RenderGameOverSystem : System<> {
             fmt::format("Final Cash: ${}", econ ? econ->cash : 0);
         std::string stats6 =
             fmt::format("Day Survived: {}", diff ? diff->day_number : 1);
+        std::string stats7 = fmt::format("Injuries: {}", gs->injury_count);
+        auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+        std::string stats8 = fmt::format(
+            "Inspection: {}", insp ? std::string(1, insp->last_grade) : "-");
 
         float sy = py + 66;
         ui_draw_text_centered(stats1, sy, 20, Color{255, 255, 255, 255});
@@ -700,10 +756,12 @@ struct RenderGameOverSystem : System<> {
         ui_draw_text_centered(stats4, sy + 84, 20, Color{255, 255, 255, 255});
         ui_draw_text_centered(stats5, sy + 112, 20, Color{120, 255, 120, 255});
         ui_draw_text_centered(stats6, sy + 140, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats7, sy + 168, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats8, sy + 196, 20, Color{255, 255, 255, 255});
 
         save::MetaProgress meta;
         save::load_meta(meta);
-        float my = sy + 180;
+        float my = sy + 232;
         draw_line(px + 20, my, px + pw - 20, my, Color{100, 100, 120, 200});
         my += 8;
         ui_draw_text_centered("--- All-Time Records ---", my, 16,

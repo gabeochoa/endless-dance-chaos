@@ -1,0 +1,198 @@
+# Tycoon growth: Bar / Security Post / Water Station placeables, heat +
+# collapse + rescue/death, inspections (grade, grant, shutdown), ticket
+# price vs spawn rate, attendee milestones.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- (1) New placeables: cost deducted, footprint placed ---
+assert_cash eq 10000
+place_building bar 40 10
+wait_frames 2
+assert_tile_type 40 10 bar
+assert_tile_type 41 11 bar
+assert_cash eq 9400
+place_building securitypost 40 13
+wait_frames 2
+assert_tile_type 40 13 securitypost
+assert_cash eq 9000
+place_building waterstation 40 16
+wait_frames 2
+assert_tile_type 40 16 waterstation
+assert_cash eq 8800
+
+# Real build path (click) for the water tool, plus tool selection
+select_tool waterstation
+assert_tool waterstation
+wait_frames 2
+click_grid 10 40
+wait_frames 3
+assert_tile_type 10 40 waterstation
+assert_cash eq 8600
+select_tool bar
+assert_tool bar
+select_tool securitypost
+assert_tool securitypost
+select_tool waterstation
+assert_tool waterstation
+
+# --- (1) Bar earns money per served agent ---
+spawn_agent 40 10 bar
+wait_frames 2
+force_need bar
+wait 3
+assert_cash eq 8608
+assert_total_earned eq 8
+
+# --- (1) Security Post: staged crush scenario, control first ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
+wait_frames 2
+spawn_agents 25 25 40 stage
+wait_frames 2
+assert_death_count eq 0
+wait 6
+assert_death_count gt 0
+
+# Same cage, with a Security Post in radius: no crush deaths
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+place_building securitypost 25 23
+wait_frames 2
+assert_tile_type 25 23 securitypost
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
+wait_frames 2
+spawn_agents 25 25 40 stage
+wait_frames 2
+assert_death_count eq 0
+wait 6
+assert_death_count eq 0
+assert_agent_count gte 40
+
+# --- (2) Heat: Water Station relieves it before collapse ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+place_building waterstation 40 10
+wait_frames 2
+spawn_agent 40 10 stage
+wait_frames 2
+force_need heat
+wait 3
+assert_injury_count eq 0
+assert_death_count eq 0
+assert_agent_count eq 1
+
+# --- (2) Heat: collapse -> MedTent rescue saves the agent ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agent 18 25 stage
+wait_frames 2
+force_need heat
+wait 3
+assert_collapsed_count gte 1
+assert_injury_count gte 1
+wait 6
+assert_death_count eq 0
+assert_agent_count eq 1
+assert_collapsed_count eq 0
+
+# --- (2) Heat: collapse far from any MedTent -> death ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agent 40 40 stage
+wait_frames 2
+force_need heat
+wait 14
+assert_injury_count gte 1
+assert_death_count gte 1
+assert_agent_count eq 0
+
+# --- (3) Inspection: clean record -> A + grant ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_death_count 0
+set_injury_count 0
+run_inspection
+wait_frames 3
+assert_inspection_grade A
+assert_inspection_score eq 100
+assert_cash eq 10500
+expect_text "Insp: A"
+assert_toast_contains "Inspector"
+
+# --- (3) Inspection: 3 consecutive D grades -> shutdown ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+add_injury_count 20
+run_inspection
+wait_frames 3
+assert_inspection_grade D
+assert_inspection_score eq 40
+add_injury_count 20
+run_inspection
+wait_frames 3
+assert_inspection_grade D
+add_injury_count 20
+run_inspection
+wait_frames 5
+assert_inspection_grade D
+assert_game_status gameover
+expect_text "FESTIVAL SHUT DOWN"
+
+# --- (3) Inspection: F grade -> immediate shutdown ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+add_injury_count 40
+run_inspection
+wait_frames 5
+assert_inspection_grade F
+assert_inspection_score eq 0
+assert_game_status gameover
+
+# --- (4) Ticket price: up -> spawn interval up (fewer arrivals) + revenue ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_ticket_price 20
+wait_frames 2
+assert_ticket_price eq 20
+assert_spawn_interval eq 2.0
+set_ticket_price 40
+wait_frames 2
+assert_ticket_price eq 40
+assert_spawn_interval eq 4.0
+ticket_price_up
+wait_frames 2
+assert_ticket_price eq 45
+ticket_price_down
+wait_frames 2
+assert_ticket_price eq 40
+spawn_agent 0 26 stage
+wait_frames 2
+assert_cash eq 10040
+assert_total_earned eq 40
+
+# --- (4) Milestone: 1000 arrivals -> cash bonus ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+add_arrivals 1000
+wait_frames 3
+assert_total_arrivals eq 1000
+assert_cash eq 10500
+assert_toast_contains "MILESTONE"

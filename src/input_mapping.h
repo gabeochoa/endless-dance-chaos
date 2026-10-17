@@ -42,10 +42,16 @@ enum class InputAction {
     ToolFence,
     ToolGate,
     ToolDemolish,
-    Tool5,  // Bathroom
-    Tool6,  // Food
-    Tool7,  // MedTent
-    Tool8,  // Demolish
+    Tool5,   // Bathroom
+    Tool6,   // Food
+    Tool7,   // MedTent
+    Tool8,   // Demolish
+    Tool9,   // Bar
+    Tool10,  // Security Post
+    Tool11,  // Water Station
+    // Ticket price: "," down / "." up (also HUD [-]/[+] buttons)
+    PriceDown,
+    PriceUp,
     // Save/Load
     QuickSave,
     QuickLoad,
@@ -201,6 +207,21 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::Tool8)] = {
         KEY_EIGHT,
+    };
+    mapping[to_int(InputAction::Tool9)] = {
+        KEY_NINE,
+    };
+    mapping[to_int(InputAction::Tool10)] = {
+        KEY_ZERO,
+    };
+    mapping[to_int(InputAction::Tool11)] = {
+        KEY_MINUS,
+    };
+    mapping[to_int(InputAction::PriceDown)] = {
+        KEY_COMMA,
+    };
+    mapping[to_int(InputAction::PriceUp)] = {
+        KEY_PERIOD,
     };
     mapping[to_int(InputAction::QuickSave)] = {
         KEY_F5,

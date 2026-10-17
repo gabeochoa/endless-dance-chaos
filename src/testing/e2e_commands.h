@@ -58,6 +58,12 @@ inline TileType parse_tile_type(const std::string& s) {
     if (lower == "food") return TileType::Food;
     if (lower == "medtent" || lower == "med_tent" || lower == "med")
         return TileType::MedTent;
+    if (lower == "bar") return TileType::Bar;
+    if (lower == "securitypost" || lower == "security_post" ||
+        lower == "security" || lower == "sec")
+        return TileType::SecurityPost;
+    if (lower == "waterstation" || lower == "water_station" || lower == "water")
+        return TileType::WaterStation;
     return TileType::Grass;
 }
 
@@ -70,6 +76,9 @@ inline FacilityType parse_facility_type(const std::string& s) {
     if (lower == "exit") return FacilityType::Exit;
     if (lower == "medtent" || lower == "med_tent" || lower == "med")
         return FacilityType::MedTent;
+    if (lower == "bar") return FacilityType::Bar;
+    if (lower == "waterstation" || lower == "water_station" || lower == "water")
+        return FacilityType::WaterStation;
     return FacilityType::Bathroom;
 }
 
@@ -459,6 +468,14 @@ static void cmd_force_need(testing::PendingE2ECommand& cmd) {
             needs.needs_bathroom = true;
         else if (type_str == "food")
             needs.needs_food = true;
+        else if (type_str == "bar")
+            needs.needs_bar = true;
+        else if (type_str == "heat") {
+            // Hot enough to seek relief, ~2s from collapse.
+            needs.needs_heat = true;
+            if (needs.heat_threshold <= 0.f) needs.heat_threshold = 90.f;
+            needs.heat_timer = needs.heat_threshold - 2.f;
+        }
         if (!a.is_missing<WatchingStage>()) a.removeComponent<WatchingStage>();
     }
     cmd.consume();
@@ -1084,6 +1101,12 @@ static void cmd_select_tool(testing::PendingE2ECommand& cmd) {
         bs->tool = BuildTool::MedTent;
     else if (tool == "demolish")
         bs->tool = BuildTool::Demolish;
+    else if (tool == "bar")
+        bs->tool = BuildTool::Bar;
+    else if (tool == "securitypost" || tool == "security" || tool == "sec")
+        bs->tool = BuildTool::SecurityPost;
+    else if (tool == "waterstation" || tool == "water")
+        bs->tool = BuildTool::WaterStation;
     else
         log_warn("select_tool: unknown tool '{}'", tool);
     cmd.consume();
@@ -1102,10 +1125,11 @@ static void cmd_assert_tool(testing::PendingE2ECommand& cmd) {
     std::string expected = cmd.args[0];
     std::transform(expected.begin(), expected.end(), expected.begin(),
                    ::tolower);
-    static const char* names[] = {"path",     "fence", "gate",    "stage",
-                                  "bathroom", "food",  "medtent", "demolish"};
+    static const char* names[] = {
+        "path",    "fence",    "gate", "stage",        "bathroom",    "food",
+        "medtent", "demolish", "bar",  "securitypost", "waterstation"};
     int idx = static_cast<int>(bs->tool);
-    std::string actual = (idx >= 0 && idx < 8) ? names[idx] : "unknown";
+    std::string actual = (idx >= 0 && idx < 11) ? names[idx] : "unknown";
     if (actual == expected) {
         log_info("assert_tool PASSED: {}", actual);
         cmd.consume();
@@ -1149,6 +1173,18 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
         tile_type = TileType::MedTent;
         w = 2;
         h = 2;
+    } else if (type == "bar") {
+        tile_type = TileType::Bar;
+        w = 2;
+        h = 2;
+    } else if (type == "securitypost" || type == "security" || type == "sec") {
+        tile_type = TileType::SecurityPost;
+        w = 1;
+        h = 1;
+    } else if (type == "waterstation" || type == "water") {
+        tile_type = TileType::WaterStation;
+        w = 1;
+        h = 1;
     }
     if (w == 0) {
         cmd.consume();
@@ -1820,6 +1856,190 @@ static void cmd_delete_save(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// ── Tycoon growth: price, injuries, inspections, milestones ─────────────
+
+static void cmd_set_ticket_price(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_ticket_price requires VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) {
+        cmd.fail("set_ticket_price: no Economy");
+        return;
+    }
+    econ->ticket_price =
+        std::clamp(cmd.arg_as<int>(0), Economy::MIN_TICKET_PRICE,
+                   Economy::MAX_TICKET_PRICE);
+    cmd.consume();
+}
+
+static void cmd_ticket_price_up(testing::PendingE2ECommand& cmd) {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ) econ->adjust_price(Economy::TICKET_PRICE_STEP);
+    cmd.consume();
+}
+
+static void cmd_ticket_price_down(testing::PendingE2ECommand& cmd) {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ) econ->adjust_price(-Economy::TICKET_PRICE_STEP);
+    cmd.consume();
+}
+
+static void cmd_assert_ticket_price(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_ticket_price requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? econ->ticket_price : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_ticket_price failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_spawn_interval(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_spawn_interval requires OP VALUE");
+        return;
+    }
+    auto* ss = EntityHelper::get_singleton_cmp<SpawnState>();
+    float actual = ss ? ss->interval : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_spawn_interval failed: {:.3f} {} {:.3f} (actual: {:.3f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_injury_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_injury_count requires OP VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    int actual = gs ? gs->injury_count : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_injury_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_set_injury_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_injury_count requires VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) gs->injury_count = cmd.arg_as<int>(0);
+    cmd.consume();
+}
+
+static void cmd_add_injury_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("add_injury_count requires VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) gs->injury_count += cmd.arg_as<int>(0);
+    cmd.consume();
+}
+
+static void cmd_add_death_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("add_death_count requires VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) gs->death_count += cmd.arg_as<int>(0);
+    cmd.consume();
+}
+
+static void cmd_run_inspection(testing::PendingE2ECommand& cmd) {
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    if (!insp) {
+        cmd.fail("run_inspection: no InspectionState");
+        return;
+    }
+    insp->force_inspection = true;
+    cmd.consume();
+}
+
+static void cmd_assert_inspection_grade(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_inspection_grade requires GRADE");
+        return;
+    }
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    char actual = insp ? insp->last_grade : '-';
+    if (cmd.arg(0).empty() || cmd.arg(0)[0] != actual)
+        cmd.fail(
+            fmt::format("assert_inspection_grade failed: expected {}, got {}",
+                        cmd.arg(0), std::string(1, actual)));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_inspection_score(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_inspection_score requires OP VALUE");
+        return;
+    }
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    int actual = insp ? insp->last_score : -1;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_inspection_score failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_add_arrivals(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("add_arrivals requires VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs) gs->total_arrivals += cmd.arg_as<int>(0);
+    cmd.consume();
+}
+
+static void cmd_assert_total_arrivals(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_total_arrivals requires OP VALUE");
+        return;
+    }
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    int actual = gs ? gs->total_arrivals : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_total_arrivals failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_collapsed_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_collapsed_count requires OP VALUE");
+        return;
+    }
+    int actual = (int) EntityQuery().whereHasComponent<Collapsed>().gen_count();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_collapsed_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -1909,6 +2129,21 @@ static void init_e2e_registry() {
     r.add("load_game", cmd_load_game);
     r.add("assert_save_exists", cmd_assert_save_exists);
     r.add("delete_save", cmd_delete_save);
+    r.add("set_ticket_price", cmd_set_ticket_price);
+    r.add("ticket_price_up", cmd_ticket_price_up);
+    r.add("ticket_price_down", cmd_ticket_price_down);
+    r.add("assert_ticket_price", cmd_assert_ticket_price);
+    r.add("assert_spawn_interval", cmd_assert_spawn_interval);
+    r.add("assert_injury_count", cmd_assert_injury_count);
+    r.add("set_injury_count", cmd_set_injury_count);
+    r.add("add_injury_count", cmd_add_injury_count);
+    r.add("add_death_count", cmd_add_death_count);
+    r.add("run_inspection", cmd_run_inspection);
+    r.add("assert_inspection_grade", cmd_assert_inspection_grade);
+    r.add("assert_inspection_score", cmd_assert_inspection_score);
+    r.add("add_arrivals", cmd_add_arrivals);
+    r.add("assert_total_arrivals", cmd_assert_total_arrivals);
+    r.add("assert_collapsed_count", cmd_assert_collapsed_count);
 }
 
 void register_e2e_systems(SystemManager& sm) {

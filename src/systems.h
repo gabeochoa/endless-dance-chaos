@@ -17,6 +17,10 @@ void register_render_systems(SystemManager& sm);
 
 // Pick the closest non-crowded StageFloor tile to (from_x, from_z)
 std::pair<int, int> best_stage_spot(int from_x, int from_z);
+// Run one health-and-safety inspection now (tycoon_systems.cpp). Shared by
+// the daily inspection trigger and the E2E run_inspection command.
+void run_inspection_now();
+void register_tycoon_systems(SystemManager& sm);
 void register_mcp_update_systems(SystemManager& sm);
 void register_mcp_render_systems(SystemManager& sm);
 void register_e2e_systems(SystemManager& sm);

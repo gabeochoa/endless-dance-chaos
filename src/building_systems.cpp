@@ -30,15 +30,16 @@ struct PlacementMeta {
 
 // Display names indexed by BuildTool, for the insufficient-funds toast/log.
 static constexpr const char* TOOL_INFO_NAMES[] = {
-    "Path",     "Fence", "Gate",     "Stage",
-    "Bathroom", "Food",  "Med Tent", "Demolish",
+    "Path",     "Fence",    "Gate", "Stage",         "Bathroom",      "Food",
+    "Med Tent", "Demolish", "Bar",  "Security Post", "Water Station",
 };
 
 static const PlacementMeta* get_placement_meta(BuildTool tool) {
     static constexpr PlacementMeta TABLE[] = {
-        {TileType::Gate, 1, 2},     {TileType::Stage, 4, 4},
-        {TileType::Bathroom, 2, 2}, {TileType::Food, 2, 2},
-        {TileType::MedTent, 2, 2},
+        {TileType::Gate, 1, 2},         {TileType::Stage, 4, 4},
+        {TileType::Bathroom, 2, 2},     {TileType::Food, 2, 2},
+        {TileType::MedTent, 2, 2},      {TileType::Bar, 2, 2},
+        {TileType::SecurityPost, 1, 1}, {TileType::WaterStation, 1, 1},
     };
     switch (tool) {
         case BuildTool::Gate:
@@ -51,6 +52,12 @@ static const PlacementMeta* get_placement_meta(BuildTool tool) {
             return &TABLE[3];
         case BuildTool::MedTent:
             return &TABLE[4];
+        case BuildTool::Bar:
+            return &TABLE[5];
+        case BuildTool::SecurityPost:
+            return &TABLE[6];
+        case BuildTool::WaterStation:
+            return &TABLE[7];
         default:
             return nullptr;
     }
@@ -65,16 +72,16 @@ struct PathBuildSystem : System<> {
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         if (!pds || !grid || !bs) return;
 
-        // Tool cycling with [ ]
+        // Tool cycling with [ ] — 11 tools total
         if (action_pressed(InputAction::PrevTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 7) % 8;
+            t = (t + 10) % 11;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
         if (action_pressed(InputAction::NextTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 1) % 8;
+            t = (t + 1) % 11;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
@@ -87,6 +94,11 @@ struct PathBuildSystem : System<> {
         if (action_pressed(InputAction::Tool6)) bs->tool = BuildTool::Food;
         if (action_pressed(InputAction::Tool7)) bs->tool = BuildTool::MedTent;
         if (action_pressed(InputAction::Tool8)) bs->tool = BuildTool::Demolish;
+        if (action_pressed(InputAction::Tool9)) bs->tool = BuildTool::Bar;
+        if (action_pressed(InputAction::Tool10))
+            bs->tool = BuildTool::SecurityPost;
+        if (action_pressed(InputAction::Tool11))
+            bs->tool = BuildTool::WaterStation;
         if (action_pressed(InputAction::ToggleDemolish))
             bs->tool = BuildTool::Demolish;
 
@@ -132,7 +144,10 @@ struct PathBuildSystem : System<> {
                 case BuildTool::Stage:
                 case BuildTool::Bathroom:
                 case BuildTool::Food:
-                case BuildTool::MedTent: {
+                case BuildTool::MedTent:
+                case BuildTool::Bar:
+                case BuildTool::SecurityPost:
+                case BuildTool::WaterStation: {
                     auto* meta = get_placement_meta(bs->tool);
                     if (meta && can_place_at(*grid, hx, hz, meta->width,
                                              meta->height)) {
@@ -164,6 +179,9 @@ struct PathBuildSystem : System<> {
                         tile.type == TileType::Bathroom ||
                         tile.type == TileType::Food ||
                         tile.type == TileType::MedTent ||
+                        tile.type == TileType::Bar ||
+                        tile.type == TileType::SecurityPost ||
+                        tile.type == TileType::WaterStation ||
                         tile.type == TileType::Stage) {
                         bool is_gate = (tile.type == TileType::Gate);
                         if (is_gate && grid->gate_count() <= 1) break;

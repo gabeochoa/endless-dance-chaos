@@ -24,6 +24,7 @@ void register_crowd_flow_systems(SystemManager& sm);
 void register_crowd_damage_systems(SystemManager& sm);
 void register_crowd_particle_systems(SystemManager& sm);
 void register_polish_systems(SystemManager& sm);
+void register_tycoon_systems(SystemManager& sm);
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -114,11 +115,31 @@ struct UpdateToastsSystem : System<ToastMessage> {
     }
 };
 
-// Check if death count has reached max -> game over
+// Check if death count has reached max -> game over.
+// Also fires when the health inspector triggers a shutdown.
 struct CheckGameOverSystem : System<> {
     void once(float) override {
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (!gs || gs->is_game_over()) return;
+
+        auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+        bool inspector_shutdown = insp && insp->shutdown_triggered;
+        if (inspector_shutdown) {
+            gs->status = GameStatus::GameOver;
+            if (auto* ss = EntityHelper::get_singleton_cmp<SpawnState>()) {
+                ss->enabled = false;
+            }
+            get_audio().play_gameover();
+            get_audio().stop_music();
+            save::update_meta_on_game_over();
+            save::delete_save();
+            auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+            log_info(
+                "GAME OVER: health inspector shut the festival down "
+                "(final cash ${})",
+                econ ? econ->cash : 0);
+            return;
+        }
 
         if (gs->death_count >= gs->max_deaths) {
             gs->status = GameStatus::GameOver;
@@ -230,6 +251,10 @@ void register_update_systems(SystemManager& sm) {
 
     // Schedule: difficulty scaling
     register_schedule_difficulty_systems(sm);
+
+    // Tycoon: ticket price, inspections, milestones (after difficulty so
+    // the daily inspection sees the new day number)
+    register_tycoon_systems(sm);
 
     // Polish: hints, bottleneck detection, death markers
     register_polish_systems(sm);

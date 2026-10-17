@@ -56,6 +56,9 @@ Entity& make_sophie() {
     sophie.addComponent<Economy>();
     EntityHelper::registerSingleton<Economy>(sophie);
 
+    sophie.addComponent<InspectionState>();
+    EntityHelper::registerSingleton<InspectionState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -94,6 +97,10 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
         if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
             econ->earn(econ->ticket_price);
         }
+        // Paid arrivals count toward attendee milestones.
+        if (auto* gs = EntityHelper::get_singleton_cmp<GameState>()) {
+            gs->total_arrivals++;
+        }
     }
 
     auto& rng = RandomEngine::get();
@@ -104,6 +111,20 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
     auto& needs = e.get<AgentNeeds>();
     needs.bathroom_threshold = rng.get_float(30.f, 90.f);
     needs.food_threshold = rng.get_float(45.f, 120.f);
+    // Heat/bar thresholds vary per agent but must NOT consume the shared
+    // RandomEngine stream: movement, pathfinding, and stage-spot
+    // decisions all draw from it, so two extra draws per spawn would
+    // shift every later draw (and every timing-marginal test downstream).
+    // A splitmix hash of the entity id gives a stable per-agent spread.
+    auto hash01 = [](uint64_t x) {
+        x += 0x9e3779b97f4a7c15ULL;
+        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+        return (x ^ (x >> 31)) & 0xffffffffULL;
+    };
+    uint64_t h = hash01(static_cast<uint64_t>(e.id));
+    needs.heat_threshold = 90.f + (h % 9000) / 100.f;          // 90-180 sec
+    needs.bar_threshold = 60.f + ((h >> 16) % 12000) / 100.f;  // 60-180 sec
 
     return e;
 }
@@ -139,6 +160,9 @@ void reset_game_state() {
         gs->status = GameStatus::Running;
         gs->game_time = 0.f;
         gs->death_count = 0;
+        gs->injury_count = 0;
+        gs->total_arrivals = 0;
+        gs->milestone_idx = 0;
         gs->total_agents_served = 0;
         gs->time_survived = 0.f;
         gs->max_attendees = 0;
@@ -147,6 +171,21 @@ void reset_game_state() {
         gs->speed_multiplier = 1.0f;
         gs->agents_exited = 0;
         gs->carryover_count = 0;
+    }
+
+    // Reset inspection state
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    if (insp) {
+        insp->last_grade = '-';
+        insp->last_score = -1;
+        insp->inspections_done = 0;
+        insp->consecutive_bad = 0;
+        insp->density_violations = 0;
+        insp->deaths_at_last = 0;
+        insp->injuries_at_last = 0;
+        insp->last_inspected_day = 1;
+        insp->shutdown_triggered = false;
+        insp->force_inspection = false;
     }
 
     // Reset spawn state
