@@ -25,6 +25,7 @@ void register_crowd_damage_systems(SystemManager& sm);
 void register_crowd_particle_systems(SystemManager& sm);
 void register_polish_systems(SystemManager& sm);
 void register_tycoon_systems(SystemManager& sm);
+void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);
 
 struct CameraInputSystem : System<ProvidesCamera> {
@@ -252,6 +253,12 @@ void register_update_systems(SystemManager& sm) {
 
     // Schedule: difficulty scaling
     register_schedule_difficulty_systems(sm);
+
+    // Lineup: act promotion + tier + spawn draw (after difficulty so the
+    // rollover promotion sees the new day number, before inspection so
+    // the grant scales with the NEW tier). See lineup_systems.cpp for
+    // the full rollover sequence.
+    register_lineup_systems(sm);
 
     // Tycoon: ticket price, inspections, milestones (after difficulty so
     // the daily inspection sees the new day number)

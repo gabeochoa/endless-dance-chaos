@@ -25,7 +25,13 @@ std::pair<int, int> best_stage_spot(int from_x, int from_z);
 // the daily inspection trigger and the E2E run_inspection command.
 void run_inspection_now();
 void register_tycoon_systems(SystemManager& sm);
+void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);
+// Lineup booking (lineup_systems.cpp): book for the NEXT day, fee paid now.
+// Returns false (fee kept) when locked, already booked, or unaffordable.
+bool book_act(int act_idx);
+bool book_act_by_id(const std::string& id);
+int find_bookable_act_index(const std::string& id);
 // Staff (staff_systems.cpp): hire deducts the signing bonus, fire refunds
 // nothing, counts are live StaffMember entities. x/z = spawn tile.
 bool hire_staff(StaffRole role, int x, int z);

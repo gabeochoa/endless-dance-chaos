@@ -62,6 +62,9 @@ Entity& make_sophie() {
     sophie.addComponent<StaffState>();
     EntityHelper::registerSingleton<StaffState>(sophie);
 
+    sophie.addComponent<LineupState>();
+    EntityHelper::registerSingleton<LineupState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -256,6 +259,17 @@ void reset_game_state() {
         diff->crowd_size_mult = 1.0f;
         diff->event_timer = 0.f;
         diff->next_event_time = 120.f;
+    }
+
+    // Reset lineup: tier, bookings, and today's acts all clear. The tier
+    // is re-derived from total_arrivals (reset above to 0) on the next
+    // frame, so no stale unlocks survive a restart.
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    if (lineup) {
+        lineup->tier = 0;
+        lineup->last_rollover_day = 1;
+        lineup->booked.clear();
+        lineup->active.clear();
     }
 }
 

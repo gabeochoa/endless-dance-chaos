@@ -212,6 +212,7 @@ struct NewsTicker {
     int last_injuries = 0;
     int last_inspections = 0;
     int last_milestone_idx = 0;
+    int last_tier = 0;
     int last_day = 1;
     bool last_game_over = false;
     int last_staff_quits = 0;

@@ -2149,6 +2149,189 @@ static void cmd_assert_collapsed_count(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Lineup booking + festival tiers ──────────────────────────────────────
+
+// book_act ID — same path as the sidebar panel button. Consumed even when
+// the booking is refused (locked / duplicate / broke), so the test can
+// assert the refusal toast and unchanged cash. Unknown IDs fail.
+static void cmd_book_act(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("book_act requires ACT_ID");
+        return;
+    }
+    if (find_bookable_act_index(cmd.arg(0)) < 0) {
+        cmd.fail(fmt::format("book_act: unknown act '{}'", cmd.arg(0)));
+        return;
+    }
+    book_act_by_id(cmd.arg(0));
+    cmd.consume();
+}
+
+static void cmd_assert_booked_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_booked_count requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    int actual = lineup ? (int) lineup->booked.size() : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_booked_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_active_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_active_count requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    int actual = lineup ? (int) lineup->active.size() : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_active_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_booked_act(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_booked_act requires ACT_ID");
+        return;
+    }
+    int idx = find_bookable_act_index(cmd.arg(0));
+    if (idx < 0) {
+        cmd.fail(
+            fmt::format("assert_booked_act: unknown act '{}'", cmd.arg(0)));
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    if (lineup && lineup->is_booked(idx))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_booked_act FAILED: '{}' not booked",
+                             cmd.arg(0)));
+}
+
+static void cmd_assert_active_act(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_active_act requires ACT_ID");
+        return;
+    }
+    int idx = find_bookable_act_index(cmd.arg(0));
+    if (idx < 0) {
+        cmd.fail(
+            fmt::format("assert_active_act: unknown act '{}'", cmd.arg(0)));
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    if (lineup && lineup->is_active(idx))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_active_act FAILED: '{}' not active",
+                             cmd.arg(0)));
+}
+
+static void cmd_assert_not_booked_act(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_not_booked_act requires ACT_ID");
+        return;
+    }
+    int idx = find_bookable_act_index(cmd.arg(0));
+    if (idx < 0) {
+        cmd.fail(
+            fmt::format("assert_not_booked_act: unknown act '{}'", cmd.arg(0)));
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    if (!lineup || !lineup->is_booked(idx))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_not_booked_act FAILED: '{}' is booked",
+                             cmd.arg(0)));
+}
+
+static void cmd_assert_festival_tier(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_festival_tier requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    int actual = lineup ? lineup->tier : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_festival_tier failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_lineup_draw(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_lineup_draw requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    float actual = lineup ? lineup->draw_mult() : 1.0f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_lineup_draw failed: {:.3f} {} {:.3f} (actual: {:.3f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_lineup_fun(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_lineup_fun requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    float actual = lineup ? lineup->fun_mult() : 1.0f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_lineup_fun failed: {:.3f} {} {:.3f} (actual: {:.3f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_spawn_cap(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_spawn_cap requires OP VALUE");
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    int actual = max_spawn_cap_for_tier(lineup ? lineup->tier : 0);
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_spawn_cap failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_act_unlocked(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_act_unlocked requires ACT_ID");
+        return;
+    }
+    int idx = find_bookable_act_index(cmd.arg(0));
+    if (idx < 0) {
+        cmd.fail(
+            fmt::format("assert_act_unlocked: unknown act '{}'", cmd.arg(0)));
+        return;
+    }
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    if (lineup && lineup->is_unlocked(idx))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_act_unlocked FAILED: '{}' is locked",
+                             cmd.arg(0)));
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -2257,6 +2440,17 @@ static void init_e2e_registry() {
     r.add("fire_staff", cmd_fire_staff);
     r.add("assert_staff_count", cmd_assert_staff_count);
     r.add("assert_staff_near", cmd_assert_staff_near);
+    r.add("book_act", cmd_book_act);
+    r.add("assert_booked_count", cmd_assert_booked_count);
+    r.add("assert_active_count", cmd_assert_active_count);
+    r.add("assert_booked_act", cmd_assert_booked_act);
+    r.add("assert_active_act", cmd_assert_active_act);
+    r.add("assert_not_booked_act", cmd_assert_not_booked_act);
+    r.add("assert_festival_tier", cmd_assert_festival_tier);
+    r.add("assert_lineup_draw", cmd_assert_lineup_draw);
+    r.add("assert_lineup_fun", cmd_assert_lineup_fun);
+    r.add("assert_spawn_cap", cmd_assert_spawn_cap);
+    r.add("assert_act_unlocked", cmd_assert_act_unlocked);
 }
 
 void register_e2e_systems(SystemManager& sm) {

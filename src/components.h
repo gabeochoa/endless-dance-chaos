@@ -654,6 +654,129 @@ struct InspectionState : afterhours::BaseComponent {
     bool force_inspection = false;  // E2E run_inspection: inspect next frame
 };
 
+// ── Lineup booking + festival tiers ──────────────────────────────────────
+// Bookable acts: the data table for the sidebar booking panel. `draw_mult`
+// multiplies next-day arrivals (spawn rate), `fun_mult` multiplies
+// stage-watch duration while the act is playing. `min_tier` gates the act
+// in the booking panel until the festival reaches that tier.
+// `short_name` is the sidebar row label (the 150px sidebar cannot fit the
+// full satirical name); toasts use the full `name`.
+struct BookableAct {
+    const char* id;          // single-token E2E / lookup key, e.g. "cardboard"
+    const char* name;        // full satirical name, shown in toasts
+    const char* short_name;  // sidebar row label
+    const char* genre;
+    const char* flavor;  // one-line satirical blurb (booking tooltip)
+    int fee;             // cash paid at booking time, never refunded
+    float draw_mult;     // >1 draws a bigger crowd the next day
+    float fun_mult;      // >1 makes stage-watching last longer that day
+    int min_tier;        // festival tier required to book
+};
+
+inline constexpr BookableAct BOOKABLE_ACTS[] = {
+    {"cardboard", "DJ Cardboard Box", "Cardboard", "Cardboard Techno",
+     "Plays bangers off a Bluetooth speaker taped to a milk crate.", 500, 1.25f,
+     1.25f, 0},
+    {"poets", "The Port-a-Potty Poets", "PottyPoets", "Restroom Slam Poetry",
+     "Rhymes about queues. The crowd weeps. Then queues again.", 800, 1.40f,
+     1.30f, 0},
+    {"moldy", "Moldy Lunchbox", "Moldy", "Garage Punk",
+     "Three chords, one sandwich, zero rehearsals.", 1200, 1.60f, 1.40f, 1},
+    {"refunds", "Sir Sings-A-Lot & The Refunds", "Sings-A-Lot",
+     "Dad-Rock Covers",
+     "Every chorus ends with a refund request. The crowd sings along.", 2000,
+     1.90f, 1.50f, 1},
+    {"karen", "KAREN & The Managers", "KAREN", "Complaint Metal",
+     "Demands to speak to the festival. The festival apologises.", 3500, 2.40f,
+     1.60f, 2},
+    {"algorithm", "The Algorithm (Live)", "Algorithm", "AI Hyperpop",
+     "Trained on your search history. It knows what you did.", 5000, 3.00f,
+     1.80f, 2},
+    {"gregonce", "Gregoncé", "Gregoncé", "Nepo-Pop",
+     "Beyonce's cousin. Legally distinct. Vocally optimistic.", 8000, 4.00f,
+     2.00f, 3},
+    {"headliner", "The Headliner Who Shall Not Be Named", "Headliner",
+     "Mystery Headliner", "Nobody knows who it is. Everybody paid anyway.",
+     12000, 5.00f, 2.20f, 3},
+};
+inline constexpr int NUM_BOOKABLE_ACTS =
+    static_cast<int>(sizeof(BOOKABLE_ACTS) / sizeof(BOOKABLE_ACTS[0]));
+
+// Festival tiers: f(cumulative paid attendees, GameState::total_arrivals).
+// Thresholds are data, not code: tier N is reached at
+// FESTIVAL_TIER_THRESHOLDS[N - 1] attendees.
+inline constexpr int FESTIVAL_TIER_THRESHOLDS[] = {500, 2000, 8000};
+inline constexpr const char* FESTIVAL_TIER_NAMES[] = {"Local Fair", "Regional",
+                                                      "National", "Legendary"};
+inline constexpr const char* FESTIVAL_TIER_UP_LINES[] = {
+    "", "The county paper noticed you exist.",
+    "Truck drivers are rerouting for this.",
+    "Historians are already writing about this weekend."};
+
+inline int festival_tier_for_attendees(int total_arrivals) {
+    int tier = 0;
+    for (int t : FESTIVAL_TIER_THRESHOLDS)
+        if (total_arrivals >= t) tier++;
+    return tier;
+}
+
+// Inspection grants scale with tier: base * (1 + tier), so tier 0 keeps the
+// historical $500 / $250 and tier 3 pays $2000 / $1000.
+inline int inspection_grant_for(char grade, int tier) {
+    if (grade == 'A') return INSPECTION_GRANT_A * (1 + tier);
+    if (grade == 'B') return INSPECTION_GRANT_B * (1 + tier);
+    return 0;
+}
+
+// Max simultaneous agents the automatic spawner will maintain: +25 per tier.
+inline constexpr int LINEUP_BASE_SPAWN_CAP = 200;
+inline constexpr int LINEUP_SPAWN_CAP_PER_TIER = 25;
+inline int max_spawn_cap_for_tier(int tier) {
+    return LINEUP_BASE_SPAWN_CAP + LINEUP_SPAWN_CAP_PER_TIER * tier;
+}
+
+// Lineup state singleton (lives on the Sophie entity).
+// `booked` plays NEXT day, `active` plays TODAY. At each day rollover the
+// booked acts are promoted to active and yesterday's act effects expire
+// (active is replaced, not appended). Multiple booked acts play at once —
+// one per stage — and their draw/fun stack additively:
+// combined = 1 + sum(each - 1), so two acts at 1.25 / 1.40 draw 1.65.
+struct LineupState : afterhours::BaseComponent {
+    int tier = 0;
+    int last_rollover_day = 1;  // day_number the rollover last ran on
+    std::vector<int> booked;    // BOOKABLE_ACTS indices, for the next day
+    std::vector<int> active;    // BOOKABLE_ACTS indices, playing today
+
+    bool is_booked(int idx) const {
+        return std::find(booked.begin(), booked.end(), idx) != booked.end();
+    }
+    bool is_active(int idx) const {
+        return std::find(active.begin(), active.end(), idx) != active.end();
+    }
+    bool is_unlocked(int idx) const {
+        if (idx < 0 || idx >= NUM_BOOKABLE_ACTS) return false;
+        return tier >= BOOKABLE_ACTS[idx].min_tier;
+    }
+    float draw_mult() const {
+        float combined = 1.0f;
+        for (int idx : active) combined += BOOKABLE_ACTS[idx].draw_mult - 1.0f;
+        return combined;
+    }
+    float fun_mult() const {
+        float combined = 1.0f;
+        for (int idx : active) combined += BOOKABLE_ACTS[idx].fun_mult - 1.0f;
+        return combined;
+    }
+    std::string names_for(const std::vector<int>& list) const {
+        std::string out;
+        for (int idx : list) {
+            if (!out.empty()) out += ", ";
+            out += BOOKABLE_ACTS[idx].name;
+        }
+        return out;
+    }
+};
+
 // Random event types that affect gameplay
 enum class EventType { Rain, PowerOutage, VIPVisit, HeatWave };
 

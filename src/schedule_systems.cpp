@@ -155,6 +155,16 @@ struct SpawnAgentSystem : System<> {
 
         ss->timer += dt;
         if (ss->timer >= ss->interval) {
+            // Max spawn cap: the automatic spawner holds at this many live
+            // agents (+25 per festival tier). Manual E2E spawns bypass it.
+            // The timer is NOT consumed while capped, so spawning resumes
+            // as soon as room opens up.
+            int cap = max_spawn_cap_for_tier(0);
+            if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>())
+                cap = max_spawn_cap_for_tier(lineup->tier);
+            int live = static_cast<int>(
+                EntityQuery().whereHasComponent<Agent>().gen_count());
+            if (live >= cap) return;
             ss->timer -= ss->interval;
             auto [sx, sz] = best_stage_spot(SPAWN_X, SPAWN_Z);
             make_agent(SPAWN_X, SPAWN_Z, FacilityType::Stage, sx, sz);

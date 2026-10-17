@@ -491,12 +491,14 @@ void ticker_poll_events() {
     auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
     auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
     auto* staff_state = EntityHelper::get_singleton_cmp<StaffState>();
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
 
     if (!t.seeded) {
         t.last_deaths = gs ? gs->death_count : 0;
         t.last_injuries = gs ? gs->injury_count : 0;
         t.last_inspections = insp ? insp->inspections_done : 0;
         t.last_milestone_idx = gs ? gs->milestone_idx : 0;
+        t.last_tier = lineup ? lineup->tier : 0;
         t.last_day = diff ? diff->day_number : 1;
         t.last_game_over = gs && gs->is_game_over();
         t.last_staff_quits = staff_state ? staff_state->quit_count : 0;
@@ -508,6 +510,20 @@ void ticker_poll_events() {
     // decrease during a run. Clear the strip so a fresh game does not
     // keep scrolling the previous run's news.
     bool reset_seen = false;
+    // Tier-up: polled BEFORE milestones so a same-frame milestone (a
+    // 1000-arrival jump also crosses the 500 tier threshold) pre-empts it
+    // and the milestone assertion still sees its own item first.
+    if (lineup) {
+        if (lineup->tier > t.last_tier) {
+            t.last_tier = lineup->tier;
+            t.push_event(fmt::format("TIER UP! The festival is now {}! {}",
+                                     FESTIVAL_TIER_NAMES[lineup->tier],
+                                     FESTIVAL_TIER_UP_LINES[lineup->tier]));
+        } else if (lineup->tier < t.last_tier) {
+            t.last_tier = lineup->tier;
+            reset_seen = true;
+        }
+    }
     if (gs) {
         if (gs->death_count > t.last_deaths) {
             int d = gs->death_count - t.last_deaths;
@@ -801,7 +817,30 @@ static bool g_minimap_initialized = false;
 static constexpr int MINIMAP_SIZE = 150;
 static constexpr float MINIMAP_SCALE = 150.0f / 52.0f;
 
-// Timeline sidebar showing artist schedule
+// Booking panel geometry (sidebar, fixed so E2E `click` can target it):
+//   sidebar x=1130 w=150; rows start y=366, row height 24; the BOOK button
+//   is x=1222 w=52 h=18, so row i's button centre is (1248, 378 + 24*i)
+//   (row 0 = DJ Cardboard Box). Locked rows show the required tier,
+//   booked rows show BOOKED, available rows show the fee.
+static constexpr float LINEUP_BOOKING_FIRST_ROW_Y = 366.f;
+static constexpr float LINEUP_BOOKING_ROW_H = 24.f;
+static constexpr float LINEUP_BOOKING_BTN_X_OFF = 92.f;
+static constexpr float LINEUP_BOOKING_BTN_W = 52.f;
+
+static std::string lineup_short_list(const std::vector<int>& list) {
+    if (list.empty()) return "-";
+    std::string out;
+    for (int idx : list) {
+        if (!out.empty()) out += ", ";
+        out += BOOKABLE_ACTS[idx].short_name;
+    }
+    if (out.size() > 22) out = out.substr(0, 21) + "...";
+    return out;
+}
+
+// Timeline sidebar showing artist schedule + festival tier + act booking.
+// The timeline scissor is shortened (62-300) to make room for the booking
+// panel (306-564) above the minimap (570-720).
 struct RenderTimelineSidebarSystem : System<> {
     void once(float) const override {
         auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
@@ -838,8 +877,21 @@ struct RenderTimelineSidebarSystem : System<> {
         ui_draw_text(staff_text, sidebar_x + 10, 28, 14, Color{0, 0, 0, 255});
         vtr.register_text(staff_text);
 
-        float content_top = 50.f;
-        float content_bot = DEFAULT_SCREEN_HEIGHT - 150.f;
+        // Festival tier (HUD): name + progress to the next tier.
+        auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+        int tier = lineup ? lineup->tier : 0;
+        std::string tier_text =
+            fmt::format("Tier: {}", FESTIVAL_TIER_NAMES[tier]);
+        if (auto* gs = EntityHelper::get_singleton_cmp<GameState>()) {
+            if (tier < 3)
+                tier_text += fmt::format(" {}/{}", gs->total_arrivals,
+                                         FESTIVAL_TIER_THRESHOLDS[tier]);
+        }
+        ui_draw_text(tier_text, sidebar_x + 10, 44, 14, Color{0, 0, 0, 255});
+        vtr.register_text(tier_text);
+
+        float content_top = 62.f;
+        float content_bot = 300.f;
         begin_scissor_mode(sidebar_x, content_top, sidebar_w,
                            content_bot - content_top);
 
@@ -886,6 +938,113 @@ struct RenderTimelineSidebarSystem : System<> {
         }
 
         end_scissor_mode();
+
+        // ── Booking panel: book acts for the NEXT day (fee paid now) ──
+        // One row per act, always visible: locked acts show the tier they
+        // need, booked acts show BOOKED, available acts show the fee as
+        // the button label. Hover shows the full name / genre / flavor /
+        // draw / fun tooltip; clicking an available button books it.
+        if (lineup) {
+            float panel_y = 306.f;
+            ui_draw_text("BOOK ACTS", sidebar_x + 10, panel_y + 4, 14,
+                         Color{0, 0, 0, 255});
+            vtr.register_text("BOOK ACTS");
+            ui_draw_text("Click $ to book", sidebar_x + 10, panel_y + 20, 11,
+                         Color{60, 60, 60, 255});
+            std::string today_text =
+                fmt::format("Today: {}", lineup_short_list(lineup->active));
+            ui_draw_text(today_text, sidebar_x + 10, panel_y + 34, 12,
+                         Color{0, 0, 0, 255});
+            vtr.register_text(today_text);
+            std::string next_text =
+                fmt::format("Next: {}", lineup_short_list(lineup->booked));
+            ui_draw_text(next_text, sidebar_x + 10, panel_y + 46, 12,
+                         Color{0, 0, 0, 255});
+            vtr.register_text(next_text);
+
+            auto mouse = input::get_mouse_position();
+            bool mouse_click =
+                input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+            std::string hover_tip;
+            for (int i = 0; i < NUM_BOOKABLE_ACTS; i++) {
+                const auto& act = BOOKABLE_ACTS[i];
+                float row_y =
+                    LINEUP_BOOKING_FIRST_ROW_Y + i * LINEUP_BOOKING_ROW_H;
+                float btn_x = sidebar_x + LINEUP_BOOKING_BTN_X_OFF;
+                float btn_y = row_y + 3;
+                float btn_h = 18.f;
+                bool locked = !lineup->is_unlocked(i);
+                bool booked = lineup->is_booked(i);
+                bool active = lineup->is_active(i);
+
+                Color row_bg = locked   ? Color{170, 170, 170, 255}
+                               : booked ? Color{255, 210, 40, 255}
+                                        : Color{215, 215, 215, 255};
+                draw_rect(sidebar_x + 4, row_y, sidebar_w - 8,
+                          LINEUP_BOOKING_ROW_H - 2, row_bg);
+                draw_rect_lines(sidebar_x + 4, row_y, sidebar_w - 8,
+                                LINEUP_BOOKING_ROW_H - 2,
+                                Color{120, 120, 120, 255});
+                Color name_col =
+                    locked ? Color{90, 90, 90, 255} : Color{0, 0, 0, 255};
+                ui_draw_text(act.short_name, sidebar_x + 8, row_y + 5, 12,
+                             name_col);
+                vtr.register_text(act.short_name);
+
+                std::string btn_label;
+                if (locked)
+                    btn_label = fmt::format("T{}", act.min_tier);
+                else if (booked)
+                    btn_label = "BOOKED";
+                else
+                    btn_label = fmt::format("${}", act.fee);
+                vtr.register_text(btn_label);
+                bool hovering = mouse.x >= btn_x &&
+                                mouse.x <= btn_x + LINEUP_BOOKING_BTN_W &&
+                                mouse.y >= btn_y && mouse.y <= btn_y + btn_h;
+                if (hovering && mouse_click && !game_is_over() && !locked &&
+                    !booked) {
+                    book_act(i);
+                }
+                draw_bevel_panel(btn_x, btn_y, LINEUP_BOOKING_BTN_W, btn_h,
+                                 hovering ? Color{230, 230, 230, 255}
+                                          : Color{200, 200, 200, 255});
+                auto btn_m = ui_measure_text(btn_label, 12);
+                ui_draw_text(
+                    btn_label, btn_x + (LINEUP_BOOKING_BTN_W - btn_m.x) / 2.f,
+                    btn_y + 3, 12,
+                    locked ? Color{120, 0, 0, 255} : Color{0, 120, 0, 255});
+
+                if (mouse.x >= sidebar_x + 4 &&
+                    mouse.x <= sidebar_x + sidebar_w - 4 && mouse.y >= row_y &&
+                    mouse.y <= row_y + LINEUP_BOOKING_ROW_H) {
+                    hover_tip = fmt::format(
+                        "{} | {} | {} Fee ${} | Draw x{:.2f} | Fun "
+                        "x{:.2f}{}",
+                        act.name, act.genre, act.flavor, act.fee, act.draw_mult,
+                        act.fun_mult,
+                        locked ? fmt::format(" | Needs Tier {}",
+                                             FESTIVAL_TIER_NAMES[act.min_tier])
+                               : (booked ? " | Booked for tomorrow"
+                                         : (active ? " | Playing today" : "")));
+                }
+            }
+            if (!hover_tip.empty()) {
+                auto tip_m = ui_measure_text(hover_tip, 12);
+                // Clamp with a floor on the upper bound: the longest
+                // tooltip is ~as wide as the main area, so a plain
+                // clamp(..., 8, width - tip_w) could get lo > hi (UB).
+                float tip_max_x =
+                    std::max(8.f, DEFAULT_SCREEN_WIDTH - 150 - tip_m.x - 8.f);
+                float tip_x =
+                    std::clamp(sidebar_x + sidebar_w / 2.f - tip_m.x / 2.f, 8.f,
+                               tip_max_x);
+                float tip_y = LINEUP_BOOKING_FIRST_ROW_Y - tip_m.y - 10.f;
+                draw_bevel_panel(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
+                                 Color{192, 192, 192, 255});
+                ui_draw_text(hover_tip, tip_x, tip_y, 12, Color{0, 0, 0, 255});
+            }
+        }
     }
 };
 

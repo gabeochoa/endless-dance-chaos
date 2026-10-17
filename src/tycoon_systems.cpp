@@ -117,9 +117,12 @@ void run_inspection_now() {
     else
         insp->consecutive_bad = 0;
 
-    int grant = 0;
-    if (grade == 'A') grant = INSPECTION_GRANT_A;
-    if (grade == 'B') grant = INSPECTION_GRANT_B;
+    // Grant scales with the festival tier (LineupSystem runs before this
+    // system in the rollover sequence, so this is already the new tier).
+    int tier = 0;
+    if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>())
+        tier = lineup->tier;
+    int grant = inspection_grant_for(grade, tier);
     if (grant > 0 && econ) econ->earn(grant);
 
     std::string msg =

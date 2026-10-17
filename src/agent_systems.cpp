@@ -667,6 +667,12 @@ struct StageWatchingSystem : System<Agent, Transform> {
             duration *= 1.5f;
             e.get<AgentNeeds>().fun_boost = 0.f;
         }
+        // Booked acts playing today raise fun: stage-watching lasts longer
+        // by the active acts' combined fun multiplier.
+        if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>()) {
+            float fun = lineup->fun_mult();
+            if (fun > 1.0f) duration *= fun;
+        }
         e.get<WatchingStage>().watch_duration = duration;
     }
 };
