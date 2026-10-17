@@ -6,6 +6,7 @@
 #include "engine/random_engine.h"
 #include "game.h"
 #include "input_mapping.h"
+#include "systems.h"
 
 using namespace afterhours;
 
@@ -64,6 +65,9 @@ Entity& make_sophie() {
 
     sophie.addComponent<LineupState>();
     EntityHelper::registerSingleton<LineupState>(sophie);
+
+    sophie.addComponent<EventDirectorState>();
+    EntityHelper::registerSingleton<EventDirectorState>(sophie);
 
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
@@ -271,6 +275,10 @@ void reset_game_state() {
         lineup->booked.clear();
         lineup->active.clear();
     }
+
+    // Reset the event director: default seed + fresh day bookkeeping,
+    // so a restart never inherits the previous run's event sequence.
+    reset_event_director();
 }
 
 bool should_escape_quit() {

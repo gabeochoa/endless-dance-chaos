@@ -15,7 +15,55 @@ static constexpr const char* SAVE_DIR = "saves";
 static constexpr const char* SAVE_FILE = "saves/game.sav";
 static constexpr const char* META_FILE = "saves/meta.dat";
 static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
-static constexpr uint32_t SAVE_VERSION = 1;  // Increment on schema changes
+// v2 appends economy, lineup, staff, GameState extras, inspection,
+// director, and active events AFTER the v1 agent block, so the v1
+// prefix is byte-identical. Increment on schema changes.
+static constexpr uint32_t SAVE_VERSION = 2;
+
+namespace detail {
+inline void write_int(std::ofstream& f, int v) {
+    f.write(reinterpret_cast<const char*>(&v), sizeof(int));
+}
+inline void write_float(std::ofstream& f, float v) {
+    f.write(reinterpret_cast<const char*>(&v), sizeof(float));
+}
+inline void write_u8(std::ofstream& f, uint8_t v) {
+    f.write(reinterpret_cast<const char*>(&v), 1);
+}
+inline void write_int_vec(std::ofstream& f, const std::vector<int>& vec) {
+    write_int(f, static_cast<int>(vec.size()));
+    for (int v : vec) write_int(f, v);
+}
+inline void write_string(std::ofstream& f, const std::string& s) {
+    write_int(f, static_cast<int>(s.size()));
+    f.write(s.data(), static_cast<std::streamsize>(s.size()));
+}
+inline void read_int(std::ifstream& f, int& v) {
+    f.read(reinterpret_cast<char*>(&v), sizeof(int));
+}
+inline void read_float(std::ifstream& f, float& v) {
+    f.read(reinterpret_cast<char*>(&v), sizeof(float));
+}
+inline void read_u8(std::ifstream& f, uint8_t& v) {
+    f.read(reinterpret_cast<char*>(&v), 1);
+}
+inline void read_int_vec(std::ifstream& f, std::vector<int>& vec) {
+    int n = 0;
+    read_int(f, n);
+    vec.clear();
+    for (int i = 0; i < n; i++) {
+        int v = 0;
+        read_int(f, v);
+        vec.push_back(v);
+    }
+}
+inline void read_string(std::ifstream& f, std::string& s) {
+    int n = 0;
+    read_int(f, n);
+    s.assign(static_cast<size_t>(std::max(n, 0)), '\0');
+    if (n > 0) f.read(s.data(), n);
+}
+}  // namespace detail
 
 // Meta-progression: persists across sessions
 struct MetaProgress {
@@ -132,6 +180,105 @@ inline bool save_game() {
         f.write(reinterpret_cast<const char*>(&hp), sizeof(float));
     }
 
+    // ── v2 sections (appended after the v1 agent block) ─────────────
+    // Economy
+    {
+        auto* econ = afterhours::EntityHelper::get_singleton_cmp<Economy>();
+        detail::write_int(f, econ ? econ->cash : STARTING_CASH);
+        detail::write_int(f, econ ? econ->ticket_price : DEFAULT_TICKET_PRICE);
+        detail::write_int(f, econ ? econ->total_earned : 0);
+        detail::write_int(f, econ ? econ->total_spent : 0);
+    }
+    // Lineup: bookings + active acts + tier progress
+    {
+        auto* lineup =
+            afterhours::EntityHelper::get_singleton_cmp<LineupState>();
+        detail::write_int(f, lineup ? lineup->tier : 0);
+        detail::write_int(f, lineup ? lineup->last_rollover_day : 1);
+        detail::write_int_vec(f, lineup ? lineup->booked : std::vector<int>{});
+        detail::write_int_vec(f, lineup ? lineup->active : std::vector<int>{});
+    }
+    // Staff payroll bookkeeping
+    {
+        auto* staff_state =
+            afterhours::EntityHelper::get_singleton_cmp<StaffState>();
+        detail::write_int(f, staff_state ? staff_state->last_payroll_day : 1);
+        detail::write_int(f, staff_state ? staff_state->quit_count : 0);
+    }
+    // Staff roster: one entry per StaffMember entity
+    {
+        auto staff =
+            afterhours::EntityQuery().whereHasComponent<StaffMember>().gen();
+        detail::write_int(f, static_cast<int>(staff.size()));
+        for (afterhours::Entity& s_entity : staff) {
+            auto& s = s_entity.get<StaffMember>();
+            detail::write_u8(f, static_cast<uint8_t>(s.role));
+            detail::write_int(f, s.home_x);
+            detail::write_int(f, s.home_z);
+            float px = 0.f, pz = 0.f;
+            if (!s_entity.is_missing<Transform>()) {
+                px = s_entity.get<Transform>().position.x;
+                pz = s_entity.get<Transform>().position.y;
+            }
+            detail::write_float(f, px);
+            detail::write_float(f, pz);
+            detail::write_int(f, s.target_x);
+            detail::write_int(f, s.target_z);
+            detail::write_int(f, s.move_x);
+            detail::write_int(f, s.move_z);
+        }
+    }
+    // GameState extras: tier progress (total_arrivals) + inspection inputs
+    {
+        detail::write_int(f, gs ? gs->total_arrivals : 0);
+        detail::write_int(f, gs ? gs->milestone_idx : 0);
+        detail::write_int(f, gs ? gs->injury_count : 0);
+    }
+    // Inspection state (so a load does not re-grant or double-count)
+    {
+        auto* insp =
+            afterhours::EntityHelper::get_singleton_cmp<InspectionState>();
+        detail::write_u8(f,
+                         insp ? static_cast<uint8_t>(insp->last_grade) : '-');
+        detail::write_int(f, insp ? insp->last_score : -1);
+        detail::write_int(f, insp ? insp->inspections_done : 0);
+        detail::write_int(f, insp ? insp->consecutive_bad : 0);
+        detail::write_int(f, insp ? insp->density_violations : 0);
+        detail::write_int(f, insp ? insp->deaths_at_last : 0);
+        detail::write_int(f, insp ? insp->injuries_at_last : 0);
+        detail::write_int(f, insp ? insp->last_inspected_day : 1);
+        detail::write_u8(f, insp && insp->shutdown_triggered ? 1 : 0);
+    }
+    // Event director bookkeeping (no-repeat sets + quota). The
+    // announcement queue is transient UI and is not persisted.
+    {
+        auto* director =
+            afterhours::EntityHelper::get_singleton_cmp<EventDirectorState>();
+        detail::write_int(f, director ? director->last_day : 1);
+        detail::write_int(f, director ? director->events_fired_today : 0);
+        detail::write_int(f, director ? director->events_target_today : 0);
+        detail::write_float(f, director ? director->next_fire_in : 0.f);
+        detail::write_int_vec(
+            f, director ? director->fired_today : std::vector<int>{});
+        detail::write_int_vec(
+            f, director ? director->fired_yesterday : std::vector<int>{});
+        detail::write_string(f, director ? director->seed : "default_seed");
+    }
+    // Active events (timed only; instant events leave no entity)
+    {
+        auto events =
+            afterhours::EntityQuery().whereHasComponent<ActiveEvent>().gen();
+        detail::write_int(f, static_cast<int>(events.size()));
+        for (afterhours::Entity& ev_entity : events) {
+            auto& ev = ev_entity.get<ActiveEvent>();
+            detail::write_int(f, static_cast<int>(ev.type));
+            detail::write_float(f, ev.duration);
+            detail::write_float(f, ev.elapsed);
+            detail::write_string(f, ev.description);
+            detail::write_int(f, static_cast<int>(ev.offline_type));
+        }
+    }
+
     return f.good();
 }
 
@@ -146,7 +293,10 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    if (version != SAVE_VERSION) return false;  // Reject incompatible saves
+    // v1 files are a byte-identical prefix of v2: they load, with the
+    // v2-only state (economy, bookings, staff, ...) left as-is.
+    // Anything else is rejected.
+    if (version != SAVE_VERSION && version != 1) return false;
 
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
@@ -226,6 +376,191 @@ inline bool load_game() {
         e.addComponent<AgentHealth>();
         e.get<AgentHealth>().hp = hp;
         e.addComponent<AgentNeeds>();
+    }
+    // Merge before the v2 blocks: they query (staff, active events),
+    // and a query with unmerged temp entities trips EntityQuery's
+    // assert.
+    afterhours::EntityHelper::merge_entity_arrays();
+
+    // ── v2 sections (absent in v1 files: leave v2-only state as-is) ──
+    // Reads are unconditional into locals (only the assignment is
+    // guarded) so a missing singleton can never desync the stream.
+    if (version == SAVE_VERSION) {
+        // Economy
+        {
+            int cash = 0, price = 0, earned = 0, spent = 0;
+            detail::read_int(f, cash);
+            detail::read_int(f, price);
+            detail::read_int(f, earned);
+            detail::read_int(f, spent);
+            if (auto* econ =
+                    afterhours::EntityHelper::get_singleton_cmp<Economy>()) {
+                econ->cash = cash;
+                econ->ticket_price = price;
+                econ->total_earned = earned;
+                econ->total_spent = spent;
+            }
+        }
+        // Lineup: bookings + active acts + tier progress
+        {
+            int tier = 0, rollover = 1;
+            std::vector<int> booked, active;
+            detail::read_int(f, tier);
+            detail::read_int(f, rollover);
+            detail::read_int_vec(f, booked);
+            detail::read_int_vec(f, active);
+            if (auto* lineup = afterhours::EntityHelper::get_singleton_cmp<
+                    LineupState>()) {
+                lineup->tier = tier;
+                lineup->last_rollover_day = rollover;
+                lineup->booked = booked;
+                lineup->active = active;
+            }
+        }
+        // Staff payroll bookkeeping
+        {
+            int payroll_day = 1, quits = 0;
+            detail::read_int(f, payroll_day);
+            detail::read_int(f, quits);
+            if (auto* staff_state =
+                    afterhours::EntityHelper::get_singleton_cmp<StaffState>()) {
+                staff_state->last_payroll_day = payroll_day;
+                staff_state->quit_count = quits;
+            }
+        }
+        // Staff roster: replace the current roster with the saved one
+        {
+            auto old_staff = afterhours::EntityQuery()
+                                 .whereHasComponent<StaffMember>()
+                                 .gen();
+            for (afterhours::Entity& s : old_staff) s.cleanup = true;
+            afterhours::EntityHelper::cleanup();
+
+            int staff_count = 0;
+            detail::read_int(f, staff_count);
+            for (int i = 0; i < staff_count; i++) {
+                uint8_t role_u8 = 0;
+                int hx = 0, hz = 0, tx = -1, tz = -1, mx = -1, mz = -1;
+                float px = 0.f, pz = 0.f;
+                detail::read_u8(f, role_u8);
+                detail::read_int(f, hx);
+                detail::read_int(f, hz);
+                detail::read_float(f, px);
+                detail::read_float(f, pz);
+                detail::read_int(f, tx);
+                detail::read_int(f, tz);
+                detail::read_int(f, mx);
+                detail::read_int(f, mz);
+                auto& e = afterhours::EntityHelper::createEntity();
+                e.addComponent<Transform>(::vec2{px, pz});
+                e.addComponent<StaffMember>();
+                auto& s = e.get<StaffMember>();
+                s.role = static_cast<StaffRole>(role_u8);
+                s.home_x = hx;
+                s.home_z = hz;
+                s.target_x = tx;
+                s.target_z = tz;
+                s.move_x = mx;
+                s.move_z = mz;
+            }
+            // Merge before the active-events block queries: same
+            // unmerged-temp assert as above.
+            afterhours::EntityHelper::merge_entity_arrays();
+        }
+        // GameState extras
+        {
+            int arrivals = 0, milestone = 0, injuries = 0;
+            detail::read_int(f, arrivals);
+            detail::read_int(f, milestone);
+            detail::read_int(f, injuries);
+            if (gs) {
+                gs->total_arrivals = arrivals;
+                gs->milestone_idx = milestone;
+                gs->injury_count = injuries;
+            }
+        }
+        // Inspection state
+        {
+            uint8_t grade = 0, shutdown = 0;
+            int score = -1, done = 0, bad = 0, violations = 0, deaths = 0,
+                injuries = 0, inspected_day = 1;
+            detail::read_u8(f, grade);
+            detail::read_int(f, score);
+            detail::read_int(f, done);
+            detail::read_int(f, bad);
+            detail::read_int(f, violations);
+            detail::read_int(f, deaths);
+            detail::read_int(f, injuries);
+            detail::read_int(f, inspected_day);
+            detail::read_u8(f, shutdown);
+            if (auto* insp = afterhours::EntityHelper::get_singleton_cmp<
+                    InspectionState>()) {
+                insp->last_grade = static_cast<char>(grade);
+                insp->last_score = score;
+                insp->inspections_done = done;
+                insp->consecutive_bad = bad;
+                insp->density_violations = violations;
+                insp->deaths_at_last = deaths;
+                insp->injuries_at_last = injuries;
+                insp->last_inspected_day = inspected_day;
+                insp->shutdown_triggered = shutdown != 0;
+            }
+        }
+        // Event director bookkeeping
+        {
+            int last_day = 1, fired = 0, target = 0;
+            float next_fire = 0.f;
+            std::vector<int> today, yesterday;
+            std::string seed;
+            detail::read_int(f, last_day);
+            detail::read_int(f, fired);
+            detail::read_int(f, target);
+            detail::read_float(f, next_fire);
+            detail::read_int_vec(f, today);
+            detail::read_int_vec(f, yesterday);
+            detail::read_string(f, seed);
+            if (auto* director = afterhours::EntityHelper::get_singleton_cmp<
+                    EventDirectorState>()) {
+                director->last_day = last_day;
+                director->events_fired_today = fired;
+                director->events_target_today = target;
+                director->next_fire_in = next_fire;
+                director->fired_today = today;
+                director->fired_yesterday = yesterday;
+                director->seed = seed;
+                director->initialized = true;
+                director->announcement_queue.clear();
+            }
+        }
+        // Active events: replace the current ones with the saved ones
+        {
+            auto old_events = afterhours::EntityQuery()
+                                  .whereHasComponent<ActiveEvent>()
+                                  .gen();
+            for (afterhours::Entity& e : old_events) e.cleanup = true;
+            afterhours::EntityHelper::cleanup();
+
+            int event_count = 0;
+            detail::read_int(f, event_count);
+            for (int i = 0; i < event_count; i++) {
+                int type_i = 0, offline_i = 0;
+                float duration = 0.f, elapsed = 0.f;
+                std::string description;
+                detail::read_int(f, type_i);
+                detail::read_float(f, duration);
+                detail::read_float(f, elapsed);
+                detail::read_string(f, description);
+                detail::read_int(f, offline_i);
+                auto& e = afterhours::EntityHelper::createEntity();
+                e.addComponent<ActiveEvent>();
+                auto& ev = e.get<ActiveEvent>();
+                ev.type = static_cast<EventType>(type_i);
+                ev.duration = duration;
+                ev.elapsed = elapsed;
+                ev.description = description;
+                ev.offline_type = static_cast<FacilityType>(offline_i);
+            }
+        }
     }
 
     afterhours::EntityHelper::merge_entity_arrays();

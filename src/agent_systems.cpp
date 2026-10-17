@@ -339,6 +339,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
                     }
                     agent.speed = SPEED_PATH;
                     if (gs) agent.speed *= gs->speed_multiplier;
+                    // Rain: fleeing (density relief) is slower too.
                     if (event_flags::rain_active) agent.speed *= 0.5f;
                     // Security Post: faster density relief in its radius.
                     if (near_tile_type(*grid, cur_gx, cur_gz,
@@ -723,6 +724,13 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                     needs.needs_heat = false;
                     needs.heat_timer = 0.f;
                     needs.heat_threshold = rng.get_float(90.f, 180.f);
+                    // During a Viral Outbreak, water is more valuable:
+                    // it heals like a MedTent (full HP) on top of the
+                    // usual heat relief.
+                    if (event_flags::viral_active &&
+                        !e.is_missing<AgentHealth>()) {
+                        e.get<AgentHealth>().hp = 1.0f;
+                    }
                 }
 
                 tf.position.x = bs.facility_grid_x * TILESIZE - TILESIZE;
@@ -758,6 +766,12 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
         bool at_target = (cur_type == facility_type_to_tile(agent.want));
 
         if (at_target) {
+            // Equipment Failure: the facility is offline, service is
+            // skipped. The agent waits at the facility (need kept) until
+            // the event ends instead of being serviced.
+            if (facility_offline(agent.want)) {
+                return;
+            }
             if (facility_is_full(gx, gz, *grid)) {
                 return;
             }

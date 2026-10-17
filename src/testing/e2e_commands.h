@@ -1653,6 +1653,18 @@ static EventType parse_event_type(const std::string& s) {
         return EventType::VIPVisit;
     if (lower == "heatwave" || lower == "heat_wave" || lower == "heat")
         return EventType::HeatWave;
+    if (lower == "viraloutbreak" || lower == "viral_outbreak" ||
+        lower == "viral" || lower == "outbreak")
+        return EventType::ViralOutbreak;
+    if (lower == "surpriseinspection" || lower == "surprise_inspection" ||
+        lower == "surprise" || lower == "inspection")
+        return EventType::SurpriseInspection;
+    if (lower == "generoussponsor" || lower == "generous_sponsor" ||
+        lower == "sponsor")
+        return EventType::GenerousSponsor;
+    if (lower == "equipmentfailure" || lower == "equipment_failure" ||
+        lower == "equipment" || lower == "failure")
+        return EventType::EquipmentFailure;
     return EventType::Rain;
 }
 
@@ -1666,10 +1678,24 @@ static const char* event_type_name(EventType t) {
             return "vipvisit";
         case EventType::HeatWave:
             return "heatwave";
+        case EventType::ViralOutbreak:
+            return "viraloutbreak";
+        case EventType::SurpriseInspection:
+            return "surpriseinspection";
+        case EventType::GenerousSponsor:
+            return "generoussponsor";
+        case EventType::EquipmentFailure:
+            return "equipmentfailure";
     }
     return "unknown";
 }
 
+// trigger_event TYPE DURATION_SECONDS [OFFLINE_FACILITY]
+// Same path as the director's fire_event (toast + ticker + instant
+// effects). The optional 3rd arg pins an Equipment Failure's offline
+// facility; without it the pick is random. Instant events ignore the
+// duration. Forced events never touch the director's daily quota or
+// no-repeat bookkeeping.
 static void cmd_trigger_event(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(2)) {
         cmd.fail("trigger_event requires TYPE DURATION_SECONDS");
@@ -1677,16 +1703,281 @@ static void cmd_trigger_event(testing::PendingE2ECommand& cmd) {
     }
     EventType type = parse_event_type(cmd.arg(0));
     float duration = cmd.arg_as<float>(1);
-    Entity& ev_entity = EntityHelper::createEntity();
-    ev_entity.addComponent<ActiveEvent>();
-    auto& ev = ev_entity.get<ActiveEvent>();
-    ev.type = type;
-    ev.duration = duration;
-    ev.description = event_type_name(type);
-    EntityHelper::merge_entity_arrays();
-    spawn_toast("Event: " + ev.description + "!");
-    log_info("[E2E] trigger_event: {} for {:.1f}s", ev.description, duration);
+    int offline = -1;
+    if (cmd.has_args(3)) {
+        FacilityType ft = parse_facility_type(cmd.arg(2));
+        offline = static_cast<int>(ft);
+    }
+    fire_event(type, duration, offline);
+    log_info("[E2E] trigger_event: {} for {:.1f}s", event_type_name(type),
+             duration);
     cmd.consume();
+}
+
+// set_event_seed SEED — reseed the director's dedicated RNG.
+static void cmd_set_event_seed(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_event_seed requires SEED");
+        return;
+    }
+    set_event_seed(cmd.arg(0));
+    log_info("[E2E] set_event_seed: {}", cmd.arg(0));
+    cmd.consume();
+}
+
+// roll_events — fire the current day's remaining director quota now.
+static void cmd_roll_events(testing::PendingE2ECommand& cmd) {
+    int fired = director_roll_today();
+    log_info("[E2E] roll_events: fired {}", fired);
+    cmd.consume();
+}
+
+// assert_director_no_repeat — today's director picks share no type with
+// yesterday's and contain no duplicates within today.
+static void cmd_assert_director_no_repeat(testing::PendingE2ECommand& cmd) {
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+    if (!director) {
+        cmd.fail("assert_director_no_repeat: no EventDirectorState");
+        return;
+    }
+    std::vector<int> seen = director->fired_today;
+    std::sort(seen.begin(), seen.end());
+    for (size_t i = 1; i < seen.size(); i++) {
+        if (seen[i] == seen[i - 1]) {
+            cmd.fail(fmt::format(
+                "assert_director_no_repeat FAILED: type {} fired twice today",
+                seen[i]));
+            return;
+        }
+    }
+    for (int v : director->fired_today) {
+        if (std::find(director->fired_yesterday.begin(),
+                      director->fired_yesterday.end(),
+                      v) != director->fired_yesterday.end()) {
+            cmd.fail(fmt::format(
+                "assert_director_no_repeat FAILED: type {} fired on "
+                "consecutive days",
+                v));
+            return;
+        }
+    }
+    log_info("assert_director_no_repeat PASSED");
+    cmd.consume();
+}
+
+// assert_event_fired_today TYPE — the director fired TYPE today.
+static void cmd_assert_event_fired_today(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_event_fired_today requires TYPE");
+        return;
+    }
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+    EventType expected = parse_event_type(cmd.arg(0));
+    if (director &&
+        std::find(director->fired_today.begin(), director->fired_today.end(),
+                  static_cast<int>(expected)) != director->fired_today.end()) {
+        cmd.consume();
+        return;
+    }
+    cmd.fail(fmt::format("assert_event_fired_today FAILED: {} not fired today",
+                         event_type_name(expected)));
+}
+
+// assert_director_fired_today_count OP VALUE
+static void cmd_assert_director_fired_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_director_fired_today_count requires OP VALUE");
+        return;
+    }
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+    int actual = director ? (int) director->fired_today.size() : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format(
+            "assert_director_fired_today_count failed: {} {} {} (actual: {})",
+            actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_active_event_count OP VALUE — live ActiveEvent entities.
+static void cmd_assert_active_event_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_active_event_count requires OP VALUE");
+        return;
+    }
+    int actual =
+        (int) EntityQuery().whereHasComponent<ActiveEvent>().gen_count();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format(
+            "assert_active_event_count failed: {} {} {} (actual: {})", actual,
+            cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_facility_offline TYPE / assert_facility_online TYPE
+static void cmd_assert_facility_offline(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_facility_offline requires TYPE");
+        return;
+    }
+    FacilityType type = parse_facility_type(cmd.arg(0));
+    if (facility_offline(type))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_facility_offline FAILED: {} is online",
+                             cmd.arg(0)));
+}
+
+static void cmd_assert_facility_online(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_facility_online requires TYPE");
+        return;
+    }
+    FacilityType type = parse_facility_type(cmd.arg(0));
+    if (!facility_offline(type))
+        cmd.consume();
+    else
+        cmd.fail(fmt::format("assert_facility_online FAILED: {} is offline",
+                             cmd.arg(0)));
+}
+
+// ── Heat / illness need probes ────────────────────────────────────────
+
+// infect_agent X Z — give the agents on tile (X, Z) the illness
+// (needs_heat). Used to seed one patient zero for viral spread.
+static void cmd_infect_agent(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("infect_agent requires X Z");
+        return;
+    }
+    int tx = cmd.arg_as<int>(0), tz = cmd.arg_as<int>(1);
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid) {
+        cmd.fail("infect_agent: no grid");
+        return;
+    }
+    int infected = 0;
+    auto agents =
+        EntityQuery().whereHasComponent<Agent, AgentNeeds, Transform>().gen();
+    for (Entity& a : agents) {
+        auto& tf = a.get<Transform>();
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (gx == tx && gz == tz) {
+            a.get<AgentNeeds>().needs_heat = true;
+            infected++;
+        }
+    }
+    if (infected == 0) {
+        cmd.fail(fmt::format("infect_agent: no agents at ({},{})", tx, tz));
+        return;
+    }
+    log_info("[E2E] infect_agent: {} agent(s) at ({},{})", infected, tx, tz);
+    cmd.consume();
+}
+
+// assert_needs_heat_count OP VALUE — agents with the heat/illness need.
+static void cmd_assert_needs_heat_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_needs_heat_count requires OP VALUE");
+        return;
+    }
+    int count = 0;
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents)
+        if (a.get<AgentNeeds>().needs_heat) count++;
+    if (!compare_op(count, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_needs_heat_count failed: {} {} {} (actual: {})",
+                        count, cmd.arg(0), cmd.arg_as<int>(1), count));
+    else
+        cmd.consume();
+}
+
+// set_heat_timer VALUE / set_heat_threshold VALUE — all agents.
+static void cmd_set_heat_timer(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_heat_timer requires VALUE");
+        return;
+    }
+    float v = cmd.arg_as<float>(0);
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents) a.get<AgentNeeds>().heat_timer = v;
+    cmd.consume();
+}
+
+static void cmd_set_heat_threshold(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_heat_threshold requires VALUE");
+        return;
+    }
+    float v = cmd.arg_as<float>(0);
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents) {
+        a.get<AgentNeeds>().heat_threshold = v;
+        a.get<AgentNeeds>().needs_heat = false;
+    }
+    cmd.consume();
+}
+
+// assert_heat_timer OP VALUE — max heat_timer across agents (the test
+// uses a single agent, so max == that agent's timer).
+static void cmd_assert_heat_timer(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_heat_timer requires OP VALUE");
+        return;
+    }
+    float actual = -1.f;
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents)
+        actual = std::max(actual, a.get<AgentNeeds>().heat_timer);
+    if (actual < 0.f) {
+        cmd.fail("assert_heat_timer: no agents with needs");
+        return;
+    }
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_heat_timer failed: {:.2f} {} {:.2f} (actual: {:.2f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_min_agent_hp OP VALUE — min HP across agents with health.
+static void cmd_assert_min_agent_hp(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_min_agent_hp requires OP VALUE");
+        return;
+    }
+    float actual = 1e9f;
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentHealth>().gen();
+    for (Entity& a : agents) actual = std::min(actual, a.get<AgentHealth>().hp);
+    if (actual > 1e8f) {
+        cmd.fail("assert_min_agent_hp: no agents with health");
+        return;
+    }
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_min_agent_hp failed: {:.2f} {} {:.2f} (actual: {:.2f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_inspections_done OP VALUE
+static void cmd_assert_inspections_done(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_inspections_done requires OP VALUE");
+        return;
+    }
+    auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+    int actual = insp ? insp->inspections_done : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_inspections_done failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
 }
 
 static void cmd_assert_event_active(testing::PendingE2ECommand& cmd) {
@@ -2412,6 +2703,21 @@ static void init_e2e_registry() {
     r.add("trigger_event", cmd_trigger_event);
     r.add("assert_event_active", cmd_assert_event_active);
     r.add("assert_event_inactive", cmd_assert_event_inactive);
+    r.add("set_event_seed", cmd_set_event_seed);
+    r.add("roll_events", cmd_roll_events);
+    r.add("assert_director_no_repeat", cmd_assert_director_no_repeat);
+    r.add("assert_event_fired_today", cmd_assert_event_fired_today);
+    r.add("assert_director_fired_today_count", cmd_assert_director_fired_count);
+    r.add("assert_active_event_count", cmd_assert_active_event_count);
+    r.add("assert_facility_offline", cmd_assert_facility_offline);
+    r.add("assert_facility_online", cmd_assert_facility_online);
+    r.add("infect_agent", cmd_infect_agent);
+    r.add("assert_needs_heat_count", cmd_assert_needs_heat_count);
+    r.add("set_heat_timer", cmd_set_heat_timer);
+    r.add("set_heat_threshold", cmd_set_heat_threshold);
+    r.add("assert_heat_timer", cmd_assert_heat_timer);
+    r.add("assert_min_agent_hp", cmd_assert_min_agent_hp);
+    r.add("assert_inspections_done", cmd_assert_inspections_done);
     r.add("assert_day_number", cmd_assert_day_number);
     r.add("set_day_number", cmd_set_day_number);
     r.add("assert_spawn_rate", cmd_assert_spawn_rate);

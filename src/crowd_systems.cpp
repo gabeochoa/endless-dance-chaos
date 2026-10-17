@@ -328,6 +328,10 @@ struct CollapseRescueSystem : System<Agent, Transform, Collapsed> {
             agent.set_target(rsx, rsz);
             return;
         }
+        // Equipment Failure on the MedTent: no MedTent rescue while it
+        // is offline (field first aid by a nearby medic above still
+        // works — medics are not a facility). The agent keeps waiting.
+        if (facility_offline(FacilityType::MedTent)) return;
         auto [mx, mz] = [&]() {
             // Nearest MedTent within rescue radius, preferring one with room.
             const auto& positions =

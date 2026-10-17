@@ -14,11 +14,25 @@
 using namespace afterhours;
 
 // Global event effect flags set by ApplyEventEffectsSystem each frame.
-// Read by AgentMovementSystem (rain) and NeedTickSystem (heat).
+// Read by AgentMovementSystem (rain), NeedTickSystem (heat),
+// ViralSpreadSystem (viral), and FacilityServiceSystem (offline).
 namespace event_flags {
 inline bool rain_active = false;
 inline bool heat_active = false;
+inline bool viral_active = false;
+// EquipmentFailure: one flag per FacilityType, indexed by its value.
+// Only Bathroom/Food/MedTent/Bar/WaterStation ever go offline.
+inline std::array<bool, 7> facility_offline_flags = {};
 }  // namespace event_flags
+
+// True when the facility type is down for an Equipment Failure event.
+inline bool facility_offline(FacilityType type) {
+    int i = static_cast<int>(type);
+    if (i < 0 ||
+        i >= static_cast<int>(event_flags::facility_offline_flags.size()))
+        return false;
+    return event_flags::facility_offline_flags[static_cast<size_t>(i)];
+}
 
 inline bool game_is_over() {
     auto* gs = EntityHelper::get_singleton_cmp<GameState>();

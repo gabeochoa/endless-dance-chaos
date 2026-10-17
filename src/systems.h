@@ -10,6 +10,8 @@
 // Forward-declared: including components.h here would pull rl.h in
 // before afterhours' own headers (vendor type errors in render_systems).
 enum class StaffRole;
+enum class EventType;
+enum class FacilityType;
 
 using namespace afterhours;
 
@@ -44,6 +46,25 @@ float staff_service_time_factor();
 bool guard_near(int gx, int gz);
 // True when a medic is within STAFF_MEDIC_RADIUS of tile (gx, gz).
 bool medic_near(int gx, int gz);
+// Event director (event_systems.cpp): fire one event now. Timed events
+// create an ActiveEvent; instant events (inspection / sponsor) apply
+// immediately. `offline_type` is the EquipmentFailure facility (-1 =
+// pick from the facility types present on the map, -2 = same pick via
+// the director's RNG stream). Announces via toast + NEWS ticker queue.
+// Does NOT touch the director's daily quota / no-repeat bookkeeping;
+// the director records its own picks.
+void fire_event(EventType type, float duration, int offline_type = -1);
+// Fire the current day's remaining director quota right now (E2E
+// roll_events): rolls the day's target first if the director has not
+// rolled for this day yet. Returns events fired.
+int director_roll_today();
+// Seed the director's dedicated RNG (independent of the shared
+// RandomEngine stream, so event picks are reproducible regardless of
+// agent-movement draws). Also clears the director's day bookkeeping.
+void set_event_seed(const std::string& seed);
+// Reset the director RNG to "default_seed" and clear the director
+// singleton (called by reset_game_state).
+void reset_event_director();
 void register_mcp_update_systems(SystemManager& sm);
 void register_mcp_render_systems(SystemManager& sm);
 void register_e2e_systems(SystemManager& sm);

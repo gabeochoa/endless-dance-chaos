@@ -492,6 +492,17 @@ void ticker_poll_events() {
     auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
     auto* staff_state = EntityHelper::get_singleton_cmp<StaffState>();
     auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+
+    // Event director announcements: every fired event (including
+    // instant ones with no ActiveEvent entity) lands in the ticker.
+    // The queue is drained here, so a reset (which clears the queue)
+    // never re-reports a previous run's events.
+    if (director) {
+        for (const auto& text : director->announcement_queue)
+            t.push_event(text);
+        director->announcement_queue.clear();
+    }
 
     if (!t.seeded) {
         t.last_deaths = gs ? gs->death_count : 0;

@@ -427,6 +427,10 @@ struct AgentNeeds : afterhours::BaseComponent {
     bool needs_food = false;
     bool needs_heat = false;
     bool needs_bar = false;
+    // Viral Outbreak exposure: seconds spent near an ill agent. At
+    // EVENT_VIRAL_EXPOSURE_SECONDS the agent catches the illness
+    // (needs_heat = true). Decays when no ill agent is nearby.
+    float viral_exposure = 0.f;
     float fun_boost =
         0.f;  // >0 after Bar service: next stage watch lasts longer
 };
@@ -777,16 +781,89 @@ struct LineupState : afterhours::BaseComponent {
     }
 };
 
-// Random event types that affect gameplay
-enum class EventType { Rain, PowerOutage, VIPVisit, HeatWave };
+// Random event types that affect gameplay. New types append at the end so
+// every existing type keeps its value (saves + E2E scripts depend on it).
+enum class EventType {
+    Rain,
+    PowerOutage,
+    VIPVisit,
+    HeatWave,
+    ViralOutbreak,
+    SurpriseInspection,
+    GenerousSponsor,
+    EquipmentFailure
+};
 
-// Active random event
+// Active random event. Instant events (SurpriseInspection,
+// GenerousSponsor) never create one: their effect applies on fire.
 struct ActiveEvent : afterhours::BaseComponent {
     EventType type = EventType::Rain;
     float duration = 0.f;  // total seconds
     float elapsed = 0.f;   // seconds elapsed
     std::string description;
     bool notified = false;
+    // EquipmentFailure only: which facility type is offline.
+    FacilityType offline_type = FacilityType::Bathroom;
+};
+
+// Event director data table: the single source for event metadata.
+// `weight` 0 = never picked by the director (legacy types stay
+// triggerable via trigger_event but get no director effect). Durations
+// are real seconds; HeatWave spans one full game-day at 1x.
+struct EventDef {
+    EventType type;
+    const char* id;
+    const char* name;  // toast / top-bar description
+    float duration_min;
+    float duration_max;
+    int weight;
+    bool instant;
+};
+
+inline constexpr EventDef EVENT_DEFS[] = {
+    {EventType::Rain, "rain", "Rain storm", 60.f, 120.f, 10, false},
+    {EventType::HeatWave, "heatwave", "Heat wave", EVENT_HEAT_WAVE_DAY_SECONDS,
+     EVENT_HEAT_WAVE_DAY_SECONDS, 10, false},
+    {EventType::ViralOutbreak, "viraloutbreak", "Viral Outbreak", 90.f, 180.f,
+     10, false},
+    {EventType::SurpriseInspection, "surpriseinspection", "Surprise Inspection",
+     0.f, 0.f, 10, true},
+    {EventType::GenerousSponsor, "generoussponsor", "Generous Sponsor", 0.f,
+     0.f, 10, true},
+    {EventType::EquipmentFailure, "equipmentfailure", "Equipment Failure",
+     EVENT_EQUIPMENT_MIN_SECONDS, EVENT_EQUIPMENT_MAX_SECONDS, 10, false},
+    // Legacy: triggerable, never director-picked (weight 0).
+    {EventType::PowerOutage, "poweroutage", "Power outage", 15.f, 30.f, 0,
+     false},
+    {EventType::VIPVisit, "vipvisit", "VIP visit", 30.f, 60.f, 0, false},
+};
+
+inline const EventDef* event_def_for(EventType type) {
+    for (const auto& d : EVENT_DEFS)
+        if (d.type == type) return &d;
+    return nullptr;
+}
+
+// Generous Sponsor grant: base * (1 + festival tier).
+inline int sponsor_grant_for_tier(int tier) {
+    return EVENT_SPONSOR_BASE_GRANT * (1 + tier);
+}
+
+// Event director state singleton (lives on the Sophie entity).
+// The director rolls 0-2 events per game-day from EVENT_DEFS, never
+// repeating a type from the previous day. `fired_today` records every
+// event the director fired today (instant ones included); the ticker
+// drains `announcement_queue` once per render frame.
+struct EventDirectorState : afterhours::BaseComponent {
+    bool initialized = false;
+    int last_day = 1;
+    int events_fired_today = 0;
+    int events_target_today = 0;
+    float next_fire_in = 0.f;
+    std::vector<int> fired_today;      // EventType values, no duplicates
+    std::vector<int> fired_yesterday;  // EventType values from the prior day
+    std::vector<std::string> announcement_queue;  // NEWS ticker + toasts
+    std::string seed = "default_seed";
 };
 
 // Difficulty scaling singleton

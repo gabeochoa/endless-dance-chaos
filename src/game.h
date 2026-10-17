@@ -99,6 +99,19 @@ constexpr float STAFF_JANITOR_SERVICE_MULT = 0.1f;  // -10% service time each
 constexpr int INSPECTION_GRANT_A = 500;
 constexpr int INSPECTION_GRANT_B = 250;
 
+// Event director: seeded random events, 0-2 per game-day.
+// Heat Wave lasts one full game-day at 1x (1440 game-min * 0.5 s/min).
+constexpr float EVENT_HEAT_WAVE_DAY_SECONDS = 720.0f;
+// Generous Sponsor grant: base * (1 + festival tier).
+constexpr int EVENT_SPONSOR_BASE_GRANT = 1000;
+// Viral Outbreak: illness spreads to agents within this many tiles
+// (Chebyshev) after this many seconds of exposure.
+constexpr float EVENT_VIRAL_SPREAD_RADIUS = 2.0f;
+constexpr float EVENT_VIRAL_EXPOSURE_SECONDS = 2.0f;
+// Equipment Failure: one facility type offline; director rolls 60-120s.
+constexpr float EVENT_EQUIPMENT_MIN_SECONDS = 60.0f;
+constexpr float EVENT_EQUIPMENT_MAX_SECONDS = 120.0f;
+
 // Version
 constexpr std::string_view VERSION = "0.0.1";
 
