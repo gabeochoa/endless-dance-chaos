@@ -1127,18 +1127,105 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
     std::string type = cmd.args[0];
     std::transform(type.begin(), type.end(), type.begin(), ::tolower);
     int x = std::stoi(cmd.args[1]), z = std::stoi(cmd.args[2]);
+    TileType tile_type = TileType::Grass;
+    int w = 0, h = 0;
     if (type == "gate") {
-        grid->place_footprint(x, z, 1, 2, TileType::Gate);
+        tile_type = TileType::Gate;
+        w = 1;
+        h = 2;
     } else if (type == "stage") {
-        grid->place_footprint(x, z, 4, 4, TileType::Stage);
+        tile_type = TileType::Stage;
+        w = 4;
+        h = 4;
     } else if (type == "bathroom") {
-        grid->place_footprint(x, z, 2, 2, TileType::Bathroom);
+        tile_type = TileType::Bathroom;
+        w = 2;
+        h = 2;
     } else if (type == "food") {
-        grid->place_footprint(x, z, 2, 2, TileType::Food);
+        tile_type = TileType::Food;
+        w = 2;
+        h = 2;
     } else if (type == "medtent" || type == "med") {
-        grid->place_footprint(x, z, 2, 2, TileType::MedTent);
+        tile_type = TileType::MedTent;
+        w = 2;
+        h = 2;
     }
+    if (w == 0) {
+        cmd.consume();
+        return;
+    }
+    // Same cost/refusal rule as the real build path: this helper is the
+    // E2E building abstraction, so it must not bypass the economy.
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int cost = build_cost_for_tile(tile_type);
+    if (econ && !econ->try_spend(cost)) {
+        spawn_toast(fmt::format("Not enough cash! {} costs ${}", type, cost));
+        log_warn("[E2E] place_building refused: {} costs ${}, cash is ${}",
+                 type, cost, econ->cash);
+        cmd.consume();
+        return;
+    }
+    grid->place_footprint(x, z, w, h, tile_type);
     cmd.consume();
+}
+
+// set_cash VALUE — debug setter for the economy (does not touch totals)
+static void cmd_set_cash(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_cash requires VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) {
+        cmd.fail("set_cash: no Economy");
+        return;
+    }
+    econ->cash = cmd.arg_as<int>(0);
+    log_info("[E2E] set_cash: {}", econ->cash);
+    cmd.consume();
+}
+
+static void cmd_assert_cash(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_cash requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? econ->cash : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_cash failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_total_earned(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_total_earned requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? econ->total_earned : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_total_earned failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_total_spent(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_total_spent requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? econ->total_spent : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_total_spent failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
 }
 
 static void cmd_demolish_at(testing::PendingE2ECommand& cmd) {
@@ -1791,6 +1878,10 @@ static void init_e2e_registry() {
     r.add("select_tool", cmd_select_tool);
     r.add("assert_tool", cmd_assert_tool);
     r.add("place_building", cmd_place_building);
+    r.add("set_cash", cmd_set_cash);
+    r.add("assert_cash", cmd_assert_cash);
+    r.add("assert_total_earned", cmd_assert_total_earned);
+    r.add("assert_total_spent", cmd_assert_total_spent);
     r.add("demolish_at", cmd_demolish_at);
     r.add("set_all_agent_hp", cmd_set_all_agent_hp);
     r.add("perf_start", cmd_perf_start);

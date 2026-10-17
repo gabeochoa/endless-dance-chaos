@@ -65,7 +65,8 @@ static void forEachNeighbor(int i, int j,
 
 static std::vector<vec2> get_neighbors(int i, int j, int step = 1) {
     std::vector<vec2> ns;
-    forEachNeighbor(i, j, [&](const vec2& v) { ns.push_back(v); }, step);
+    forEachNeighbor(
+        i, j, [&](const vec2& v) { ns.push_back(v); }, step);
     return ns;
 }
 
@@ -73,7 +74,10 @@ static std::vector<std::pair<int, int>> get_neighbors_i(int i, int j,
                                                         int step = 1) {
     std::vector<std::pair<int, int>> ns;
     forEachNeighbor(
-        i, j, [&](const vec2& v) { ns.push_back({(int) v.x, (int) v.y}); },
+        i, j,
+        [&](const vec2& v) {
+            ns.push_back({(int) v.x, (int) v.y});
+        },
         step);
     return ns;
 }

@@ -1,0 +1,92 @@
+# Test tycoon economy: ticket income, build costs, insufficient funds,
+# safety shutdown on reaching the death threshold.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Starting economy
+assert_cash eq 10000
+assert_total_earned eq 0
+assert_total_spent eq 0
+expect_text "Cash: $10000"
+
+# One agent entering through the gate pays one ticket ($20)
+spawn_agent 0 26 stage
+wait_frames 2
+assert_cash eq 10020
+assert_total_earned eq 20
+expect_text "Cash: $10020"
+
+# Four more through the gate: +$80
+spawn_agents 0 26 4 stage
+wait_frames 2
+assert_cash eq 10100
+assert_total_earned eq 100
+assert_agent_count eq 5
+
+# An agent spawned mid-map (not through a gate) pays nothing
+spawn_agent 25 25 stage
+wait_frames 2
+assert_cash eq 10100
+assert_total_earned eq 100
+assert_agent_count eq 6
+
+# Building via the real build path deducts the bathroom cost ($500)
+select_tool bathroom
+wait_frames 2
+click_grid 30 30
+wait_frames 3
+assert_tile_type 30 30 bathroom
+assert_cash eq 9600
+assert_total_spent eq 500
+
+# Building via place_building deducts the food cost ($500)
+place_building food 40 10
+wait_frames 2
+assert_tile_type 40 10 food
+assert_cash eq 9100
+assert_total_spent eq 1000
+
+# Insufficient funds: real build path refuses, leaves tile alone, keeps cash
+set_cash 100
+wait_frames 2
+select_tool stage
+wait_frames 2
+click_grid 40 40
+wait_frames 3
+assert_tile_type 40 40 grass
+assert_cash eq 100
+assert_total_spent eq 1000
+assert_toast_contains "Not enough cash"
+
+# Insufficient funds: place_building refuses too
+place_building stage 10 40
+wait_frames 2
+assert_tile_type 10 40 grass
+assert_cash eq 100
+
+# Safety shutdown: forcing deaths to the threshold (10) shuts the festival
+reset_game
+wait_frames 2
+spawn_agents 25 25 10 stage
+wait_frames 2
+assert_agent_count eq 10
+assert_cash eq 10000
+set_all_agent_hp 0
+wait_frames 5
+assert_death_count gte 10
+assert_game_status gameover
+expect_text "FESTIVAL SHUT DOWN"
+expect_text "Final Cash: $10000"
+expect_text "Day Survived: 1"
+
+# Spawning stays stopped after shutdown (3s would otherwise spawn ~1 agent)
+wait 3
+assert_agent_count eq 0
+
+# Restart resets the economy and returns to running
+key SPACE
+wait_frames 5
+assert_game_status running
+assert_death_count eq 0
+assert_cash eq 10000

@@ -122,11 +122,23 @@ struct CheckGameOverSystem : System<> {
 
         if (gs->death_count >= gs->max_deaths) {
             gs->status = GameStatus::GameOver;
+            // Safety shutdown: stop spawning (skip_game_logic also blocks
+            // it while game over, but disable explicitly so a later
+            // state change cannot silently resume entry).
+            if (auto* ss = EntityHelper::get_singleton_cmp<SpawnState>()) {
+                ss->enabled = false;
+            }
             get_audio().play_gameover();
             get_audio().stop_music();
             save::update_meta_on_game_over();
             save::delete_save();
-            log_info("GAME OVER: {} deaths reached", gs->death_count);
+            auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+            auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+            log_info(
+                "GAME OVER: {} deaths reached — FESTIVAL SHUT DOWN "
+                "(final cash ${}, day {})",
+                gs->death_count, econ ? econ->cash : 0,
+                diff ? diff->day_number : 1);
         }
     }
 };

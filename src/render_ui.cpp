@@ -245,6 +245,14 @@ struct RenderTopBarSystem : System<> {
             vtr.register_text(att_text);
             bar_x += ui_measure_text(att_text, 20).x + 20;
         }
+        if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+            std::string cash_text = fmt::format("Cash: ${}", econ->cash);
+            Color cash_col = econ->cash < 0 ? Color{255, 80, 80, 255}
+                                            : Color{120, 255, 120, 255};
+            ui_draw_text(cash_text, bar_x, 11, 20, cash_col);
+            vtr.register_text(cash_text);
+            bar_x += ui_measure_text(cash_text, 20).x + 20;
+        }
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
         if (diff) {
             std::string day_text = fmt::format("Day {}", diff->day_number);
@@ -678,16 +686,24 @@ struct RenderGameOverSystem : System<> {
             fmt::format("Time Survived: {:02d}:{:02d}", minutes, seconds);
         std::string stats4 =
             fmt::format("Peak Attendees: {}", gs->max_attendees);
+        auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        std::string stats5 =
+            fmt::format("Final Cash: ${}", econ ? econ->cash : 0);
+        std::string stats6 =
+            fmt::format("Day Survived: {}", diff ? diff->day_number : 1);
 
         float sy = py + 66;
         ui_draw_text_centered(stats1, sy, 20, Color{255, 255, 255, 255});
         ui_draw_text_centered(stats2, sy + 28, 20, Color{255, 255, 255, 255});
         ui_draw_text_centered(stats3, sy + 56, 20, Color{255, 255, 255, 255});
         ui_draw_text_centered(stats4, sy + 84, 20, Color{255, 255, 255, 255});
+        ui_draw_text_centered(stats5, sy + 112, 20, Color{120, 255, 120, 255});
+        ui_draw_text_centered(stats6, sy + 140, 20, Color{255, 255, 255, 255});
 
         save::MetaProgress meta;
         save::load_meta(meta);
-        float my = sy + 124;
+        float my = sy + 180;
         draw_line(px + 20, my, px + pw - 20, my, Color{100, 100, 120, 200});
         my += 8;
         ui_draw_text_centered("--- All-Time Records ---", my, 16,
@@ -707,6 +723,8 @@ struct RenderGameOverSystem : System<> {
                               Color{180, 180, 180, 255});
 
         vtr.register_text(title);
+        vtr.register_text(stats5);
+        vtr.register_text(stats6);
         vtr.register_text("Press SPACE to restart");
     }
 };

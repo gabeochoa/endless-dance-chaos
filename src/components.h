@@ -483,6 +483,66 @@ enum class BuildTool {
     Demolish
 };
 
+// Economy singleton: tycoon money flows (cash in from tickets, cash out
+// for building). One instance lives on the Sophie entity.
+struct Economy : afterhours::BaseComponent {
+    int cash = STARTING_CASH;
+    int ticket_price = DEFAULT_TICKET_PRICE;
+    int total_earned = 0;
+    int total_spent = 0;
+
+    void earn(int amount) {
+        cash += amount;
+        total_earned += amount;
+    }
+
+    // Deducts amount if affordable; returns false and changes nothing when
+    // cash is insufficient.
+    bool try_spend(int amount) {
+        if (amount < 0 || cash < amount) return false;
+        cash -= amount;
+        total_spent += amount;
+        return true;
+    }
+};
+
+// Build costs. Path/Fence/Demolish are free; facilities cost money.
+// No pre-existing cost table existed, so this is the single table both the
+// real build path (PathBuildSystem) and the E2E place_building helper use.
+inline int build_cost_for_tool(BuildTool tool) {
+    switch (tool) {
+        case BuildTool::Gate:
+            return 250;
+        case BuildTool::Stage:
+            return 2000;
+        case BuildTool::Bathroom:
+            return 500;
+        case BuildTool::Food:
+            return 500;
+        case BuildTool::MedTent:
+            return 750;
+        default:
+            return 0;
+    }
+}
+
+inline int build_cost_for_tile(TileType type) {
+    switch (type) {
+        case TileType::Gate:
+            return 250;
+        case TileType::Stage:
+            return 2000;
+        case TileType::Bathroom:
+            return 500;
+        case TileType::Food:
+            return 500;
+        case TileType::MedTent:
+            return 750;
+        default:
+            return 0;
+    }
+}
+
 // Random event types that affect gameplay
 enum class EventType { Rain, PowerOutage, VIPVisit, HeatWave };
 

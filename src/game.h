@@ -52,6 +52,10 @@ constexpr int FACILITY_MAX_AGENTS = 20;  // density cap before "full"
 // Stage watching
 constexpr float STAGE_WATCH_RADIUS = 8.0f;  // tiles from stage center
 
+// Economy (tycoon loop)
+constexpr int STARTING_CASH = 10000;
+constexpr int DEFAULT_TICKET_PRICE = 20;
+
 // Density & crush damage
 constexpr int MAX_AGENTS_PER_TILE = 40;
 constexpr float DENSITY_WARNING = 0.50f;    // 20 agents — yellow

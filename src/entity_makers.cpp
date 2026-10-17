@@ -53,6 +53,9 @@ Entity& make_sophie() {
     sophie.addComponent<VisibleRegion>();
     EntityHelper::registerSingleton<VisibleRegion>(sophie);
 
+    sophie.addComponent<Economy>();
+    EntityHelper::registerSingleton<Economy>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -82,6 +85,16 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
     e.addComponent<Transform>(world_pos);
     e.addComponent<Agent>(want, target_x, target_z);
     e.addComponent<AgentHealth>();
+
+    // Ticket income: an agent entering through a gate tile pays once.
+    // SpawnAgentSystem spawns at the gate, and E2E spawns at a gate do the
+    // same; agents spawned elsewhere (e.g. mid-map crush tests) pay nothing.
+    if (grid && grid->in_bounds(grid_x, grid_z) &&
+        grid->at(grid_x, grid_z).type == TileType::Gate) {
+        if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+            econ->earn(econ->ticket_price);
+        }
+    }
 
     auto& rng = RandomEngine::get();
 
@@ -143,6 +156,15 @@ void reset_game_state() {
         ss->timer = 0.f;
         ss->enabled = true;
         ss->manual_override = false;
+    }
+
+    // Reset economy
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ) {
+        econ->cash = STARTING_CASH;
+        econ->ticket_price = DEFAULT_TICKET_PRICE;
+        econ->total_earned = 0;
+        econ->total_spent = 0;
     }
 
     // Reset game clock

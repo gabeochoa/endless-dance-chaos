@@ -28,6 +28,12 @@ struct PlacementMeta {
     int width, height;
 };
 
+// Display names indexed by BuildTool, for the insufficient-funds toast/log.
+static constexpr const char* TOOL_INFO_NAMES[] = {
+    "Path",     "Fence", "Gate",     "Stage",
+    "Bathroom", "Food",  "Med Tent", "Demolish",
+};
+
 static const PlacementMeta* get_placement_meta(BuildTool tool) {
     static constexpr PlacementMeta TABLE[] = {
         {TileType::Gate, 1, 2},     {TileType::Stage, 4, 4},
@@ -130,6 +136,19 @@ struct PathBuildSystem : System<> {
                     auto* meta = get_placement_meta(bs->tool);
                     if (meta && can_place_at(*grid, hx, hz, meta->width,
                                              meta->height)) {
+                        int cost = build_cost_for_tool(bs->tool);
+                        auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+                        if (econ && !econ->try_spend(cost)) {
+                            spawn_toast(fmt::format(
+                                "Not enough cash! {} costs ${}",
+                                TOOL_INFO_NAMES[static_cast<int>(bs->tool)],
+                                cost));
+                            log_warn(
+                                "Build refused: {} costs ${}, cash is ${}",
+                                TOOL_INFO_NAMES[static_cast<int>(bs->tool)],
+                                cost, econ->cash);
+                            break;
+                        }
                         grid->place_footprint(hx, hz, meta->width, meta->height,
                                               meta->tile_type);
                         if (meta->tile_type == TileType::Gate)
