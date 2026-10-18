@@ -75,6 +75,9 @@ Entity& make_sophie() {
     sophie.addComponent<ParkRatingState>();
     EntityHelper::registerSingleton<ParkRatingState>(sophie);
 
+    sophie.addComponent<ScenarioState>();
+    EntityHelper::registerSingleton<ScenarioState>(sophie);
+
     sophie.addComponent<StageQueueState>();
     EntityHelper::registerSingleton<StageQueueState>(sophie);
 
@@ -322,6 +325,21 @@ void reset_game_state() {
         qs->watching_cached = 0;
         qs->queue_length_cached = 0;
         qs->queue_wait_total = 0.f;
+    }
+
+    // Reset the scenario: no active scenario (a fresh game starts in
+    // sandbox; the player picks a scenario in the Park tab).
+    if (auto* scenario = EntityHelper::get_singleton_cmp<ScenarioState>()) {
+        scenario->active_id = -1;
+        scenario->status = ScenarioStatus::Inactive;
+        scenario->start_day = 1;
+        scenario->start_earned = 0;
+        scenario->start_deaths = 0;
+        scenario->start_inspections = 0;
+        scenario->seen_inspections = 0;
+        scenario->peak_attendees = 0;
+        scenario->peak_rating = 0.f;
+        scenario->had_good_inspection = false;
     }
 
     // Reset the park rating: 500, no harm, no pressures, yesterday 500.

@@ -1130,6 +1130,74 @@ inline float park_rating_inspection_bonus(char grade) {
     }
 }
 
+// ── Scenarios (RCT campaign goals) ───────────────────────────────────────
+// Data table: the single source for scenario metadata. Targets of 0 mean
+// "no objective of this kind". `requires_survive` scenarios (Safety
+// Record) win only by reaching the deadline alive with their other
+// objectives met; the rest win the moment every objective is met.
+// Progress is tracked since selection, not since run start: earned is
+// total_earned - start_earned, deaths are death_count - start_deaths,
+// inspections only count if fired after selection (start_inspections),
+// and attendees / rating are live peaks observed after selection —
+// a peak from before selection does not count. Prizes: First Weekend
+// $5000, Tycoon $10000, Safety Record $7500.
+enum class ScenarioStatus { Inactive, Active, Won, Failed };
+
+struct ScenarioDef {
+    int id;
+    const char* key;          // single-token E2E / lookup key
+    const char* name;         // Park-tab row label
+    const char* goal;         // one-line goal, shown in the Park-tab register
+    int duration_days;        // deadline = start_day + duration_days
+    int prize;                // cash paid once on WON (via Economy::earn)
+    int starting_cash;        // cash applied when the scenario is selected
+    int attendees_target;     // live-attendee peak, 0 = no objective
+    int rating_target;        // park-rating peak, 0 = no objective
+    int earned_target;        // earned since selection, 0 = no objective
+    bool requires_no_deaths;  // any death since selection fails at once
+    bool requires_good_inspection;  // grade A/B inspection at least once
+    bool requires_survive;          // win only by reaching the deadline
+};
+
+inline constexpr ScenarioDef SCENARIO_DEFS[] = {
+    {0, "first_weekend", "First Weekend",
+     "Reach 300 attendees + rating 600 in 3 days, no deaths", 3, 5000, 10000,
+     300, 600, 0, true, false, false},
+    {1, "tycoon", "Tycoon", "Bank $50,000 cumulative earned in 5 days", 5,
+     10000, 15000, 0, 0, 50000, false, false, false},
+    {2, "safety_record", "Safety Record",
+     "Survive 4 days with 0 deaths and grade B+ inspection at least once", 4,
+     7500, 8000, 0, 0, 0, true, true, true},
+};
+inline constexpr int NUM_SCENARIOS =
+    static_cast<int>(sizeof(SCENARIO_DEFS) / sizeof(SCENARIO_DEFS[0]));
+
+// Scenario tracking singleton (lives on the Sophie entity). Selecting a
+// scenario restarts this tracking (new start_* baselines, peaks reset)
+// without touching the park: tiles, agents, and day_number are unchanged.
+// `status` is terminal once Won/Failed until a new selection restarts it.
+struct ScenarioState : afterhours::BaseComponent {
+    int active_id = -1;  // -1 = no scenario selected
+    ScenarioStatus status = ScenarioStatus::Inactive;
+    int start_day = 1;
+    int start_earned = 0;
+    int start_deaths = 0;
+    int start_inspections = 0;
+    int seen_inspections = 0;  // inspections_done last observed (latch edge)
+    int peak_attendees = 0;
+    float peak_rating = 0.f;
+    bool had_good_inspection = false;  // grade A/B seen since selection
+
+    const ScenarioDef* def() const {
+        if (active_id < 0 || active_id >= NUM_SCENARIOS) return nullptr;
+        return &SCENARIO_DEFS[active_id];
+    }
+    int deadline_day() const {
+        const auto* d = def();
+        return d ? start_day + d->duration_days : start_day;
+    }
+};
+
 // ── Lineup booking + festival tiers ──────────────────────────────────────
 // Bookable acts: the data table for the window booking panel. `draw_mult`
 // multiplies next-day arrivals (spawn rate), `fun_mult` multiplies

@@ -30,6 +30,15 @@ static constexpr float PARK_WINDOW_TAB_Y = PARK_WINDOW_Y + PARK_WINDOW_TITLE_H;
 static constexpr float PARK_WINDOW_CONTENT_Y =
     PARK_WINDOW_TAB_Y + PARK_WINDOW_TAB_H;
 static constexpr float PARK_WINDOW_TAB_W[] = {44.f, 68.f, 52.f, 44.f, 52.f};
+// Scenario rows (Park tab): header y=254; row i at 274 + i*22; SELECT
+// button x = PARK_WINDOW_X + 188, w 60, h 18, so row i's button centre is
+// (1238, 283 + 22*i) (row 0 = First Weekend). Checklist: "Objectives:"
+// header y=344, one line per objective at 360 + 14*k, deadline y=402,
+// status y=416.
+static constexpr float SCENARIO_ROW_Y = 274.f;
+static constexpr float SCENARIO_ROW_H = 22.f;
+static constexpr float SCENARIO_BTN_X_OFF = 188.f;
+static constexpr float SCENARIO_BTN_W = 60.f;
 static constexpr const char* PARK_WINDOW_TAB_NAMES[] = {
     "Park", "Finances", "Guests", "Staff", "Lineup"};
 static constexpr int PARK_WINDOW_TAB_COUNT = 5;
@@ -1200,6 +1209,19 @@ static void register_park_window_texts() {
     for (int i = 0; i < 3; i++)
         vtr.register_text(
             fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i])));
+    // Park page: scenario rows + live objective checklist.
+    vtr.register_text("SCENARIOS");
+    vtr.register_text("SELECT");
+    vtr.register_text("Objectives:");
+    for (int i = 0; i < NUM_SCENARIOS; i++) {
+        vtr.register_text(SCENARIO_DEFS[i].name);
+        vtr.register_text(SCENARIO_DEFS[i].goal);
+        vtr.register_text(scenario_row_status_text(i));
+    }
+    for (const auto& line : scenario_objective_lines()) vtr.register_text(line);
+    if (!scenario_deadline_text().empty())
+        vtr.register_text(scenario_deadline_text());
+    vtr.register_text(scenario_status_text());
     // Lineup page: header, booking panel, per-act rows.
     vtr.register_text("LINEUP");
     vtr.register_text("BOOK ACTS");
@@ -1216,8 +1238,10 @@ static void register_park_window_texts() {
     }
 }
 
-// Park page: tier / rating / deaths.
-static void draw_park_window_park_page() {
+// Park page: tier / rating / deaths + scenario rows + live checklist.
+// Selecting a scenario restarts its objective tracking (not the park:
+// tiles, agents, and day are untouched) and applies its starting cash.
+static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
     float x = PARK_WINDOW_X + 10;
     ui_draw_text(park_window_tier_text(), x, 170, 14, Color{0, 0, 0, 255});
     auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
@@ -1230,6 +1254,39 @@ static void draw_park_window_park_page() {
     Color death_col = (gs && gs->death_count >= 7) ? Color{200, 0, 0, 255}
                                                    : Color{0, 0, 0, 255};
     ui_draw_text(park_window_death_text(), x, 226, 14, death_col);
+
+    // Scenarios: one row per scenario (name + status + SELECT button).
+    ui_draw_text("SCENARIOS", x, 254, 14, Color{0, 0, 0, 255});
+    for (int i = 0; i < NUM_SCENARIOS; i++) {
+        float row_y = SCENARIO_ROW_Y + i * SCENARIO_ROW_H;
+        ui_draw_text(SCENARIO_DEFS[i].name, x, row_y, 12, Color{0, 0, 0, 255});
+        std::string row_status = scenario_row_status_text(i);
+        Color status_col = row_status == "WON"      ? Color{0, 140, 0, 255}
+                           : row_status == "FAILED" ? Color{200, 0, 0, 255}
+                                                    : Color{0, 0, 0, 255};
+        ui_draw_text(row_status, x + 120, row_y, 12, status_col);
+        float btn_x = PARK_WINDOW_X + SCENARIO_BTN_X_OFF;
+        float btn_y = row_y - 2;
+        float btn_h = 18.f;
+        if (mouse_click && !game_is_over() && mouse.y >= btn_y &&
+            mouse.y <= btn_y + btn_h && mouse.x >= btn_x &&
+            mouse.x <= btn_x + SCENARIO_BTN_W)
+            select_scenario(i);
+        draw_bevel_panel(btn_x, btn_y, SCENARIO_BTN_W, btn_h,
+                         Color{200, 200, 200, 255});
+        auto sm = ui_measure_text("SELECT", 12);
+        ui_draw_text("SELECT", btn_x + (SCENARIO_BTN_W - sm.x) / 2.f, btn_y + 3,
+                     12, Color{0, 120, 0, 255});
+    }
+
+    // Live objective checklist for the active scenario.
+    ui_draw_text("Objectives:", x, 344, 14, Color{0, 0, 0, 255});
+    auto lines = scenario_objective_lines();
+    for (size_t k = 0; k < lines.size(); k++)
+        ui_draw_text(lines[k], x, 360 + k * 14, 12, Color{0, 0, 0, 255});
+    if (!scenario_deadline_text().empty())
+        ui_draw_text(scenario_deadline_text(), x, 402, 12, Color{0, 0, 0, 255});
+    ui_draw_text(scenario_status_text(), x, 416, 12, Color{0, 0, 0, 255});
 }
 
 // Finances page: cash / ticket + price buttons / earned / spent /
@@ -1626,7 +1683,7 @@ struct RenderParkWindowSystem : System<> {
                 break;
             case 0:
             default:
-                draw_park_window_park_page();
+                draw_park_window_park_page(mouse, mouse_click);
                 break;
         }
     }

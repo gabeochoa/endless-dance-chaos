@@ -27,6 +27,7 @@ void register_polish_systems(SystemManager& sm);
 void register_tycoon_systems(SystemManager& sm);
 void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);
+void register_scenario_systems(SystemManager& sm);
 
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
@@ -283,6 +284,12 @@ void register_update_systems(SystemManager& sm) {
     // the grant scales with the NEW tier). See lineup_systems.cpp for
     // the full rollover sequence.
     register_lineup_systems(sm);
+
+    // Scenarios: BEFORE the tycoon systems, so a deadline evaluation
+    // sees the pre-rollover inspection state (a new day's inspection is
+    // that new day's, outside the old window) and the rating before
+    // this frame's decay.
+    register_scenario_systems(sm);
 
     // Tycoon: ticket price, inspections, milestones (after difficulty so
     // the daily inspection sees the new day number)

@@ -3081,6 +3081,98 @@ static void cmd_assert_spawn_multiplier(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Scenarios ─────────────────────────────────────────────────────────────
+
+// select_scenario ID|none — same path as the Park-tab SELECT button:
+// restarts objective tracking (not the park) and applies the starting
+// cash. IDs: first_weekend, tycoon, safety_record (also accepts the
+// normalized spellings firstweekend / safetyrecord).
+static void cmd_select_scenario(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("select_scenario requires ID|none");
+        return;
+    }
+    if (!select_scenario_by_key(cmd.arg(0))) {
+        cmd.fail(
+            fmt::format("select_scenario: unknown scenario '{}'", cmd.arg(0)));
+        return;
+    }
+    cmd.consume();
+}
+
+static void cmd_assert_scenario_id(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_scenario_id requires ID|none");
+        return;
+    }
+    auto* st = EntityHelper::get_singleton_cmp<ScenarioState>();
+    std::string actual = "none";
+    if (st && st->def()) actual = st->def()->key;
+    std::string want = cmd.arg(0);
+    std::transform(want.begin(), want.end(), want.begin(), ::tolower);
+    if (want != actual)
+        cmd.fail(fmt::format("assert_scenario_id failed: expected {}, got {}",
+                             want, actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_scenario_status(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_scenario_status requires STATUS");
+        return;
+    }
+    auto* st = EntityHelper::get_singleton_cmp<ScenarioState>();
+    std::string actual = "none";
+    if (st && st->def()) {
+        actual = st->status == ScenarioStatus::Active   ? "active"
+                 : st->status == ScenarioStatus::Won    ? "won"
+                 : st->status == ScenarioStatus::Failed ? "failed"
+                                                        : "none";
+    }
+    std::string want = cmd.arg(0);
+    std::transform(want.begin(), want.end(), want.begin(), ::tolower);
+    if (want == "inactive") want = "none";
+    if (want != actual)
+        cmd.fail(
+            fmt::format("assert_scenario_status failed: expected {}, got {}",
+                        want, actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_scenario_earned(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_scenario_earned requires OP VALUE");
+        return;
+    }
+    int actual = scenario_earned_progress();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_scenario_earned failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// add_earned VALUE — bank earnings through the real Economy::earn path
+// (cash + total_earned), so the Tycoon counter accumulates like ticket
+// income. VALUE must be >= 0.
+static void cmd_add_earned(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("add_earned requires VALUE");
+        return;
+    }
+    int amount = cmd.arg_as<int>(0);
+    if (amount < 0) {
+        cmd.fail("add_earned: VALUE must be >= 0");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ) econ->earn(amount);
+    cmd.consume();
+}
+
 // buy_land east|south — same path as the land panel button. Consumed
 // even when refused (cap / broke) so the test can assert the toast.
 static void cmd_buy_land(testing::PendingE2ECommand& cmd) {
@@ -3979,6 +4071,11 @@ static void init_e2e_registry() {
     r.add("assert_park_rating", cmd_assert_park_rating);
     r.add("assert_park_rating_trend", cmd_assert_park_rating_trend);
     r.add("assert_spawn_multiplier", cmd_assert_spawn_multiplier);
+    r.add("select_scenario", cmd_select_scenario);
+    r.add("assert_scenario_id", cmd_assert_scenario_id);
+    r.add("assert_scenario_status", cmd_assert_scenario_status);
+    r.add("assert_scenario_earned", cmd_assert_scenario_earned);
+    r.add("add_earned", cmd_add_earned);
     r.add("buy_land", cmd_buy_land);
     r.add("assert_expansions", cmd_assert_expansions);
     r.add("assert_expansion_cost", cmd_assert_expansion_cost);

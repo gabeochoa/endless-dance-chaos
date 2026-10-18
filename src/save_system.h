@@ -22,9 +22,10 @@ static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
 // finance state (loan debt + history bookkeeping) after the v3 rating
 // block. v5 appends per-tile terrain heights after the v4 finance
 // block (the tile block itself stays byte-identical so v1-v4 files
-// still load, with heights defaulting to flat). Increment on schema
-// changes.
-static constexpr uint32_t SAVE_VERSION = 5;
+// still load, with heights defaulting to flat). v6 appends the
+// scenario state (active id, status, start baselines, peaks, B+
+// latch) after the v5 heights block. Increment on schema changes.
+static constexpr uint32_t SAVE_VERSION = 6;
 
 namespace detail {
 inline void write_int(std::ofstream& f, int v) {
@@ -339,6 +340,23 @@ inline bool save_game() {
             detail::write_u8(f, static_cast<uint8_t>(tile.height));
     }
 
+    // ── v6 sections (appended after the v5 heights block) ──────────────────
+    // Scenario state: the active scenario's tracking, so a mid-scenario
+    // save/load keeps progress (baselines, peaks, B+ latch, status).
+    {
+        auto* sc = afterhours::EntityHelper::get_singleton_cmp<ScenarioState>();
+        detail::write_int(f, sc ? sc->active_id : -1);
+        detail::write_int(f, sc ? static_cast<int>(sc->status) : 0);
+        detail::write_int(f, sc ? sc->start_day : 1);
+        detail::write_int(f, sc ? sc->start_earned : 0);
+        detail::write_int(f, sc ? sc->start_deaths : 0);
+        detail::write_int(f, sc ? sc->start_inspections : 0);
+        detail::write_int(f, sc ? sc->seen_inspections : 0);
+        detail::write_int(f, sc ? sc->peak_attendees : 0);
+        detail::write_float(f, sc ? sc->peak_rating : 0.f);
+        detail::write_u8(f, sc && sc->had_good_inspection ? 1 : 0);
+    }
+
     return f.good();
 }
 
@@ -353,9 +371,9 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    // v1 files are a byte-identical prefix of v2/v3/v4/v5: they load,
+    // v1 files are a byte-identical prefix of v2/v3/v4/v5/v6: they load,
     // with the newer-only state (economy, bookings, staff, rating,
-    // heights, ...) left as-is. Anything else is rejected.
+    // heights, scenario, ...) left as-is. Anything else is rejected.
     if (version < 1 || version > SAVE_VERSION) return false;
 
     // Grid tiles
@@ -719,6 +737,53 @@ inline bool load_game() {
                 detail::read_u8(f, h);
                 if (grid) grid->at(x, z).height = static_cast<int>(h);
             }
+        }
+    }
+
+    // ── v6 sections (absent in v1-v5 files: pre-scenario saves carry
+    // no scenario, so a load clears any scenario from the current run
+    // instead of inheriting it) ──
+    if (version >= 6) {
+        int active_id = -1, status = 0, start_day = 1, start_earned = 0,
+            start_deaths = 0, start_inspections = 0, seen = 0, peak = 0;
+        float peak_rating = 0.f;
+        uint8_t had_good = 0;
+        detail::read_int(f, active_id);
+        detail::read_int(f, status);
+        detail::read_int(f, start_day);
+        detail::read_int(f, start_earned);
+        detail::read_int(f, start_deaths);
+        detail::read_int(f, start_inspections);
+        detail::read_int(f, seen);
+        detail::read_int(f, peak);
+        detail::read_float(f, peak_rating);
+        detail::read_u8(f, had_good);
+        if (auto* sc =
+                afterhours::EntityHelper::get_singleton_cmp<ScenarioState>()) {
+            sc->active_id = active_id;
+            sc->status = static_cast<ScenarioStatus>(status);
+            sc->start_day = start_day;
+            sc->start_earned = start_earned;
+            sc->start_deaths = start_deaths;
+            sc->start_inspections = start_inspections;
+            sc->seen_inspections = seen;
+            sc->peak_attendees = peak;
+            sc->peak_rating = peak_rating;
+            sc->had_good_inspection = had_good != 0;
+        }
+    } else {
+        if (auto* sc =
+                afterhours::EntityHelper::get_singleton_cmp<ScenarioState>()) {
+            sc->active_id = -1;
+            sc->status = ScenarioStatus::Inactive;
+            sc->start_day = 1;
+            sc->start_earned = 0;
+            sc->start_deaths = 0;
+            sc->start_inspections = 0;
+            sc->seen_inspections = 0;
+            sc->peak_attendees = 0;
+            sc->peak_rating = 0.f;
+            sc->had_good_inspection = false;
         }
     }
 

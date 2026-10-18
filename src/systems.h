@@ -9,9 +9,12 @@
 
 // Forward-declared: including components.h here would pull rl.h in
 // before afterhours' own headers (vendor type errors in render_systems).
+#include <string>
+#include <vector>
 enum class StaffRole;
 enum class EventType;
 enum class FacilityType;
+struct ScenarioDef;
 
 using namespace afterhours;
 
@@ -61,6 +64,22 @@ float staff_service_time_factor();
 bool guard_near(int gx, int gz);
 // True when a medic is within STAFF_MEDIC_RADIUS of tile (gx, gz).
 bool medic_near(int gx, int gz);
+// Scenarios (scenario_systems.cpp): RCT campaign goals. Selecting
+// restarts objective tracking from the live park state and applies the
+// scenario's starting cash; -1 clears the active scenario (no cash
+// change). The objective-line / status / deadline helpers feed the Park
+// tab and the E2E assertions.
+const ScenarioDef* scenario_def_for(int id);
+const ScenarioDef* scenario_def_for_key(const std::string& key);
+bool select_scenario(int id);
+bool select_scenario_by_key(const std::string& key);
+int scenario_earned_progress();
+int scenario_deaths_since_start();
+std::vector<std::string> scenario_objective_lines();
+std::string scenario_status_text();
+std::string scenario_deadline_text();
+std::string scenario_row_status_text(int id);
+void register_scenario_systems(SystemManager& sm);
 // Event director (event_systems.cpp): fire one event now. Timed events
 // create an ActiveEvent; instant events (inspection / sponsor) apply
 // immediately. `offline_type` is the EquipmentFailure facility (-1 =
