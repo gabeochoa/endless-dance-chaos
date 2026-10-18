@@ -151,6 +151,8 @@ inline constexpr Color TILE_DAY_COLORS[] = {
     {50, 90, 255, 255},    // SecurityPost
     {0, 180, 255, 255},    // WaterStation
     {30, 30, 38, 255},     // Locked (darkened unbought land)
+    {34, 139, 34, 255},    // Tree
+    {160, 120, 80, 255},   // Bench
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
@@ -167,6 +169,8 @@ inline constexpr Color TILE_NIGHT_COLORS[] = {
     {70, 80, 130, 255},   // SecurityPost
     {40, 90, 130, 255},   // WaterStation
     {12, 12, 16, 255},    // Locked (darkened unbought land)
+    {18, 60, 22, 255},    // Tree
+    {70, 52, 35, 255},    // Bench
 };
 
 inline Color tile_day_color(TileType type) {
@@ -218,6 +222,7 @@ struct NewsTicker {
     int last_day = 1;
     bool last_game_over = false;
     int last_staff_quits = 0;
+    int last_thought_hour = -1;  // game hour of the last guest-thought quote
 
     void push_event(const std::string& text) {
         if (text.empty()) return;

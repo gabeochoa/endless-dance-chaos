@@ -255,6 +255,7 @@ struct AgentMovementSystem : System<Agent, Transform> {
         if (skip_game_logic()) return;
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<Collapsed>()) return;  // collapsed: medics or death
+        if (!e.is_missing<RestingOnBench>()) return;  // seated: no movement
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -475,6 +476,8 @@ struct NeedTickSystem : System<Agent, AgentNeeds, Transform> {
         if (!e.is_missing<Collapsed>()) return;
 
         float need_dt = event_flags::heat_active ? dt * 2.0f : dt;
+        // Seated on a Bench: every need grows at BENCH_NEED_MULT.
+        if (!e.is_missing<RestingOnBench>()) need_dt *= BENCH_NEED_MULT;
         needs.bathroom_timer += need_dt;
         needs.food_timer += need_dt;
         needs.bar_timer += need_dt;
@@ -543,6 +546,7 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
         if (!e.is_missing<BeingServiced>()) return;
         if (!e.is_missing<WatchingStage>()) return;
         if (!e.is_missing<Collapsed>()) return;
+        if (!e.is_missing<RestingOnBench>()) return;  // rest runs its course
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -576,6 +580,19 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
 
         auto [cur_gx, cur_gz] =
             grid->world_to_grid(tf.position.x, tf.position.y);
+
+        // Queued agents keep their queue-slot target: StageQueueSystem
+        // owns it. A real need (anything but Stage) pulls them out of
+        // the line and the code below retargets them normally.
+        if (!e.is_missing<QueuedForStage>()) {
+            if (desired == FacilityType::Stage) return;
+            e.removeComponent<QueuedForStage>();
+            agent.queue_admitted = false;
+        } else if (desired != FacilityType::Stage) {
+            // An admitted agent diverted by a need loses its admission:
+            // otherwise it would jump the queue when it comes back.
+            agent.queue_admitted = false;
+        }
 
         if (agent.want == desired && agent.target_grid_x >= 0) {
             if (desired == FacilityType::Stage &&
@@ -650,6 +667,8 @@ struct StageWatchingSystem : System<Agent, Transform> {
         }
 
         if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<QueuedForStage>()) return;  // still in line
+        if (!e.is_missing<RestingOnBench>()) return;
         if (agent.want != FacilityType::Stage) return;
 
         auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
@@ -659,8 +678,28 @@ struct StageWatchingSystem : System<Agent, Transform> {
 
         if (gx != agent.target_grid_x || gz != agent.target_grid_z) return;
 
+        // Watch capacity: when the stage is full, arrivals do not start
+        // watching — StageQueueSystem lines them up instead. An agent
+        // the queue promoted (queue_admitted) was already counted
+        // against the cap, so it may start watching while the line
+        // behind it is still non-empty; everyone else waits for an
+        // empty queue AND a free watch slot.
+        auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>();
+        bool admitted = agent.queue_admitted;
+        if (!admitted) {
+            if (qs && qs->queue_length_cached > 0) return;
+            if (qs && qs->watching_cached >= qs->watch_capacity) return;
+        } else {
+            agent.queue_admitted = false;
+        }
+
         auto& rng = RandomEngine::get();
         e.addComponent<WatchingStage>();
+        // Reserve the slot within this frame so a second arrival in
+        // the same frame cannot also slip under the cap. Promoted
+        // agents were already counted by StageQueueSystem; the queue
+        // system recomputes the exact count next frame.
+        if (!admitted && qs) qs->watching_cached++;
         float duration = rng.get_float(30.f, 120.f);
         // Bar service raises fun: the next set lasts half again as long.
         if (!e.is_missing<AgentNeeds>() &&
@@ -675,6 +714,178 @@ struct StageWatchingSystem : System<Agent, Transform> {
             if (fun > 1.0f) duration *= fun;
         }
         e.get<WatchingStage>().watch_duration = duration;
+    }
+};
+
+// Stage queue: FIFO line of up to STAGE_QUEUE_MAX agents on the stage
+// entrance tiles (STAGE_QUEUE_SLOTS). Runs in the goal phase, before
+// movement, so promotions land before agents move each frame.
+//   - Watching is capped at StageQueueState::watch_capacity. While the cap
+//   holds,
+//     agents who reach their stage spot join the queue instead of
+//     watching; when a watcher leaves, the front of the line is
+//     promoted to a stage spot (queue_admitted) and the rest advance
+//     one slot forward (their targets update, so the line visibly
+//     advances as watchers enter).
+//   - Agents past the queue (overflow) stand at their stage spot until
+//     a queue slot opens, then join the back of the line.
+//   - A queued agent who develops a need leaves via
+//     UpdateAgentGoalSystem, which clears the QueuedForStage component.
+struct StageQueueSystem : System<> {
+    void once(float dt) override {
+        if (skip_game_logic()) return;
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>();
+        if (!grid || !qs) return;
+
+        // Watchers + admitted agents still walking to their spot count
+        // against the cap, so promotion cannot overshoot it.
+        int watching =
+            (int) EntityQuery().whereHasComponent<WatchingStage>().gen_count();
+        {
+            auto in_flight = EntityQuery().whereHasComponent<Agent>().gen();
+            for (Entity& e : in_flight)
+                if (e.get<Agent>().queue_admitted &&
+                    e.is_missing<WatchingStage>())
+                    watching++;
+        }
+
+        // Age the line (longest wait = front) and drop stale entries.
+        // qents must outlive `queued`: the pointers below address its
+        // elements, the same Entity-handle pattern AgentDeathSystem uses.
+        auto qents =
+            EntityQuery().whereHasComponent<Agent, QueuedForStage>().gen();
+        std::vector<Entity*> queued;
+        for (Entity& e : qents) {
+            if (e.get<Agent>().want != FacilityType::Stage) {
+                e.removeComponent<QueuedForStage>();
+                e.get<Agent>().queue_admitted = false;
+                continue;
+            }
+            e.get<QueuedForStage>().wait_timer += dt;
+            queued.push_back(&e);
+        }
+        std::sort(queued.begin(), queued.end(), [](Entity* a, Entity* b) {
+            return a->get<QueuedForStage>().wait_timer >
+                   b->get<QueuedForStage>().wait_timer;
+        });
+
+        // Promote the front while watch slots are free.
+        size_t promoted = 0;
+        while (watching < qs->watch_capacity && promoted < queued.size()) {
+            Entity* e = queued[promoted];
+            e->removeComponent<QueuedForStage>();
+            auto& agent = e->get<Agent>();
+            agent.queue_admitted = true;
+            auto [gx, gz] = grid->world_to_grid(e->get<Transform>().position.x,
+                                                e->get<Transform>().position.y);
+            auto [sx, sz] = best_stage_spot(gx, gz);
+            agent.set_target(sx, sz);
+            watching++;
+            promoted++;
+        }
+
+        // Advance the rest one slot forward (targets update).
+        float wait_total = 0.f;
+        for (size_t i = promoted; i < queued.size(); i++) {
+            Entity* e = queued[i];
+            auto& q = e->get<QueuedForStage>();
+            q.slot = static_cast<int>(i - promoted);
+            auto [qx, qz] = STAGE_QUEUE_SLOTS[q.slot];
+            auto& agent = e->get<Agent>();
+            if (agent.target_grid_x != qx || agent.target_grid_z != qz)
+                agent.set_target(qx, qz);
+            wait_total += q.wait_timer;
+        }
+
+        // Overflow -> queue: agents who arrived at their stage spot
+        // while the stage was full join the back of the line.
+        int joined = 0;
+        int free_slots =
+            STAGE_QUEUE_MAX - static_cast<int>(queued.size() - promoted);
+        if (free_slots > 0 && watching >= qs->watch_capacity) {
+            auto agents =
+                EntityQuery().whereHasComponent<Agent, Transform>().gen();
+            for (Entity& e : agents) {
+                if (free_slots <= 0) break;
+                if (!e.is_missing<QueuedForStage>() ||
+                    !e.is_missing<WatchingStage>() ||
+                    !e.is_missing<BeingServiced>() ||
+                    !e.is_missing<Collapsed>() ||
+                    !e.is_missing<RestingOnBench>())
+                    continue;
+                auto& agent = e.get<Agent>();
+                if (agent.want != FacilityType::Stage || agent.queue_admitted)
+                    continue;
+                auto& tf = e.get<Transform>();
+                auto [gx, gz] =
+                    grid->world_to_grid(tf.position.x, tf.position.y);
+                if (!grid->in_bounds(gx, gz) ||
+                    grid->at(gx, gz).type != TileType::StageFloor)
+                    continue;
+                if (gx != agent.target_grid_x || gz != agent.target_grid_z)
+                    continue;  // still walking to its spot
+                int slot = STAGE_QUEUE_MAX - free_slots;
+                e.addComponent<QueuedForStage>();
+                auto& q = e.get<QueuedForStage>();
+                q.slot = slot;
+                q.wait_timer = 0.f;
+                auto [qx, qz] = STAGE_QUEUE_SLOTS[slot];
+                agent.set_target(qx, qz);
+                free_slots--;
+                joined++;
+            }
+        }
+
+        qs->watching_cached = watching;
+        qs->queue_length_cached =
+            static_cast<int>(queued.size() - promoted) + joined;
+        qs->queue_wait_total = wait_total;
+    }
+};
+
+// Bench rest: agents with rising needs who step onto a Bench sit for
+// BENCH_REST_SECONDS. While seated they do not move (AgentMovementSystem
+// skips RestingOnBench) and NeedTickSystem grows every need timer at
+// BENCH_NEED_MULT. Service/rest patterns are reused: like BeingServiced
+// the agent is held in place; unlike it, needs keep ticking, slowly.
+struct BenchRestSystem : System<Agent, AgentNeeds, Transform> {
+    void for_each_with(Entity& e, Agent&, AgentNeeds& needs, Transform& tf,
+                       float dt) override {
+        if (skip_game_logic()) return;
+
+        if (!e.is_missing<RestingOnBench>()) {
+            auto& rest = e.get<RestingOnBench>();
+            rest.timer -= dt;
+            if (rest.timer <= 0.f) e.removeComponent<RestingOnBench>();
+            return;
+        }
+
+        if (!e.is_missing<BeingServiced>() || !e.is_missing<WatchingStage>() ||
+            !e.is_missing<Collapsed>() || !e.is_missing<QueuedForStage>())
+            return;
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+        auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+        if (!grid->in_bounds(gx, gz) ||
+            grid->at(gx, gz).type != TileType::Bench)
+            return;
+
+        auto ratio = [](float timer, float threshold) {
+            return threshold > 0.f ? timer / threshold : 0.f;
+        };
+        bool rising =
+            needs.needs_bathroom || needs.needs_food || needs.needs_heat ||
+            needs.needs_bar ||
+            ratio(needs.bathroom_timer, needs.bathroom_threshold) >= 0.25f ||
+            ratio(needs.food_timer, needs.food_threshold) >= 0.25f ||
+            ratio(needs.heat_timer, needs.heat_threshold) >= 0.25f ||
+            ratio(needs.bar_timer, needs.bar_threshold) >= 0.25f;
+        if (!rising) return;
+
+        e.addComponent<RestingOnBench>();
+        e.get<RestingOnBench>().timer = BENCH_REST_SECONDS;
     }
 };
 
@@ -792,10 +1003,15 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
 
 void register_agent_goal_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<NeedTickSystem>());
+    // Queue first: promotions / slot advances land before the goal
+    // system reads targets and before movement runs.
+    sm.register_update_system(std::make_unique<StageQueueSystem>());
     sm.register_update_system(std::make_unique<UpdateAgentGoalSystem>());
 }
 
 void register_agent_movement_systems(SystemManager& sm) {
+    // Bench rest first: a sitter must not move on the frame it sits.
+    sm.register_update_system(std::make_unique<BenchRestSystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
     sm.register_update_system(std::make_unique<StageWatchingSystem>());
     sm.register_update_system(std::make_unique<FacilityServiceSystem>());

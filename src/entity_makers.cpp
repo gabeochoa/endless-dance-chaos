@@ -75,6 +75,9 @@ Entity& make_sophie() {
     sophie.addComponent<ParkRatingState>();
     EntityHelper::registerSingleton<ParkRatingState>(sophie);
 
+    sophie.addComponent<StageQueueState>();
+    EntityHelper::registerSingleton<StageQueueState>(sophie);
+
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
     grid_ref.init_perimeter();
@@ -306,6 +309,14 @@ void reset_game_state() {
     // Reset the event director: default seed + fresh day bookkeeping,
     // so a restart never inherits the previous run's event sequence.
     reset_event_director();
+
+    // Reset the stage queue: default capacity, empty line.
+    if (auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>()) {
+        qs->watch_capacity = STAGE_WATCH_CAPACITY;
+        qs->watching_cached = 0;
+        qs->queue_length_cached = 0;
+        qs->queue_wait_total = 0.f;
+    }
 
     // Reset the park rating: 500, no harm, no pressures, yesterday 500.
     if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {

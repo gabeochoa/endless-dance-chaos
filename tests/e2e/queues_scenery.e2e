@@ -1,0 +1,130 @@
+# Queues + scenery + guest thoughts (RCT2).
+# (1) Queue: 18 stage-bound agents -> only STAGE_WATCH_CAPACITY (12)
+# watch at once; excess form a FIFO line (<=6) on the stage entrance
+# tiles (south row of StageFloor). Raising the watch capacity frees
+# watch slots, so the line drains by promotion and watching resumes.
+# (With demand above the cap the steady-state line never empties —
+# ex-watchers rejoin it — so the drain is driven by new capacity.)
+# (2) Scenery: Tree/Bench build tools (Tree $50, Bench $100). 20 spread
+# trees raise the rating measurably via scenery coverage; a bench rest
+# slows the seated agent's heat timer vs a no-bench control.
+# (3) Thoughts: the Guests tab lists the 5 thoughts; forcing a bathroom
+# need makes "I need a toilet" the top thought, and the ticker quotes
+# the top thought ("GUEST: ...") on the next game-hour step.
+
+# --- Stage queue forms at a busy stage ---
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 2
+draw_path_rect 0 24 33 28
+wait_frames 2
+spawn_agents 28 26 6 stage
+spawn_agents 35 27 6 stage
+spawn_agents 28 32 6 stage
+wait 12
+assert_agent_watching gte 10
+assert_queue_length gte 1
+assert_queue_time gte 1
+screenshot queues_scenery_queue
+
+# --- Queue drains as watchers enter ---
+set_watch_capacity 30
+wait 6
+assert_queue_length eq 0
+assert_agent_watching gte 15
+screenshot queues_scenery_drained
+
+# --- Scenery tools + tree rating bonus ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_park_rating eq 500
+select_tool tree
+assert_tool tree
+select_tool bench
+assert_tool bench
+place_building tree 8 8
+place_building tree 18 8
+place_building tree 28 8
+place_building tree 38 8
+place_building tree 48 8
+place_building tree 8 18
+place_building tree 18 18
+place_building tree 28 18
+place_building tree 38 18
+place_building tree 48 18
+place_building tree 8 38
+place_building tree 18 38
+place_building tree 28 38
+place_building tree 38 38
+place_building tree 48 38
+place_building tree 8 48
+place_building tree 18 48
+place_building tree 28 48
+place_building tree 38 48
+place_building tree 48 48
+wait_frames 2
+assert_tile_type 8 8 tree
+assert_tile_type 48 48 tree
+assert_cash eq 9000
+wait 10
+assert_park_rating gt 506
+screenshot queues_scenery_trees
+
+# --- Bench rest slows a need timer vs control ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+place_building bench 25 35
+wait_frames 2
+assert_tile_type 25 35 bench
+assert_cash eq 9900
+spawn_agent 25 35 stage 25 35
+wait_frames 2
+set_heat_threshold 100
+set_heat_timer 50
+wait_frames 2
+assert_resting_count gte 1
+wait 4
+assert_heat_timer lt 52
+screenshot queues_scenery_bench
+
+# Control: same agent, same timers, no bench -> heat grows full-rate.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agent 25 35 stage 25 35
+wait_frames 2
+set_heat_threshold 100
+set_heat_timer 50
+wait 4
+assert_heat_timer gt 53
+
+# --- Thoughts reflect a staged need; ticker quotes it ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agents 28 26 5 stage
+wait_frames 2
+force_need bathroom
+wait_frames 2
+set_window_tab guests
+wait_frames 2
+expect_text "Guest Thoughts:"
+expect_text "I need a toilet"
+assert_thought_count toilet gte 5
+assert_top_thought toilet
+screenshot queues_scenery_thoughts
+
+# Ticker quotes the top thought on the next game-hour step.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agents 28 26 5 stage
+wait_frames 2
+force_need bathroom
+wait_frames 2
+set_time 10 59
+wait 2
+expect_text "GUEST:"

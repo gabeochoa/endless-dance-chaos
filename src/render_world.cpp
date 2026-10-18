@@ -317,9 +317,14 @@ struct RenderIsoSystem : System<> {
                     items.push_back({depth, 2, 2, x, z,
                                      ::tile_color(tile.type, night_t),
                                      th * 0.35f, -1});
+                } else if (tile.type == TileType::Tree) {
+                    // Green blob-tree: canopy ellipse + trunk (kind 6).
+                    items.push_back({depth, 2, 6, x, z,
+                                     ::tile_color(tile.type, night_t), 0, -1});
                 } else if (is_building_tile(tile.type)) {
-                    float h =
-                        tile.type == TileType::Stage ? th * 0.95f : th * 0.55f;
+                    float h = tile.type == TileType::Stage   ? th * 0.95f
+                              : tile.type == TileType::Bench ? th * 0.25f
+                                                             : th * 0.55f;
                     items.push_back({depth, 2, 2, x, z,
                                      ::tile_color(tile.type, night_t), h, -1});
                 }
@@ -518,6 +523,21 @@ struct RenderIsoSystem : System<> {
                     iso_draw_block(s.x, s.y, tw, th, it.h, it.color);
                     break;
                 }
+                case 6: {
+                    // Tree blob: brown trunk + two green canopy blobs.
+                    vec2 s = cam.iso_project(static_cast<float>(it.x),
+                                             static_cast<float>(it.z));
+                    draw_rect(s.x - std::max(tw * 0.03f, 1.0f),
+                              s.y - th * 0.12f, std::max(tw * 0.06f, 2.0f),
+                              th * 0.14f, Color{120, 80, 40, 255});
+                    draw_ellipse(static_cast<int>(s.x),
+                                 static_cast<int>(s.y - th * 0.22f), tw * 0.30f,
+                                 th * 0.30f, darken_color(it.color, 0.25f));
+                    draw_ellipse(static_cast<int>(s.x - tw * 0.04f),
+                                 static_cast<int>(s.y - th * 0.30f), tw * 0.22f,
+                                 th * 0.22f, lighten_color(it.color, 0.15f));
+                    break;
+                }
                 case 3: {
                     const IsoPeep& p = peeps[it.ref];
                     vec2 s = cam.iso_project(p.wx, p.wz);
@@ -613,6 +633,7 @@ static bool is_building_tile(TileType type) {
         case TileType::Bar:
         case TileType::SecurityPost:
         case TileType::WaterStation:
+        case TileType::Bench:  // low block; Tree draws its own blob
             return true;
         default:
             return false;
@@ -647,11 +668,19 @@ struct RenderGridSystem : System<> {
                 Color color = ::tile_color(tile.type, night_t);
                 draw_plane({x * TILESIZE, 0.01f, z * TILESIZE},
                            {tile_size, tile_size}, color);
-                if (is_building_tile(tile.type)) {
+                if (tile.type == TileType::Tree) {
+                    // Blob-tree: trunk cylinder + canopy sphere.
+                    draw_cylinder({x * TILESIZE, 0.0f, z * TILESIZE}, 0.06f,
+                                  0.06f, 0.25f, 6, {120, 80, 40, 255});
+                    draw_sphere({x * TILESIZE, 0.38f, z * TILESIZE}, 0.32f,
+                                color);
+                } else if (is_building_tile(tile.type)) {
                     // Two-tone chunky block: darkened facade sides, lighter
                     // roof face on top. Low enough that agents walking
                     // through a facility stay readable above it.
-                    float h = tile.type == TileType::Stage ? 0.20f : 0.12f;
+                    float h = tile.type == TileType::Stage   ? 0.20f
+                              : tile.type == TileType::Bench ? 0.06f
+                                                             : 0.12f;
                     float w = tile_size * 0.92f;
                     draw_cube({x * TILESIZE, h * 0.5f, z * TILESIZE}, w, h, w,
                               darken_color(color, 0.25f));

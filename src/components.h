@@ -40,9 +40,13 @@ enum class TileType {
     SecurityPost,
     WaterStation,
     // Locked: outside the bought park (land expansion). Blocks movement,
-    // renders darkened. Appended last so TILE_BLOCKS / palette arrays
-    // keep their existing indices.
-    Locked
+    // renders darkened.
+    Locked,
+    // Scenery placeables, appended after Locked so every pre-existing
+    // TileType keeps its value (save files store the raw byte).
+    // Tree blocks movement (a trunk); Bench is walkable (agents sit on it).
+    Tree,
+    Bench
 };
 
 // Single tile in the grid
@@ -101,6 +105,9 @@ struct Grid : afterhours::BaseComponent {
     std::vector<std::pair<int, int>> bar_positions;
     std::vector<std::pair<int, int>> security_positions;
     std::vector<std::pair<int, int>> water_positions;
+
+    // Cached Tree tile positions (scenery coverage for ParkRating).
+    std::vector<std::pair<int, int>> tree_positions;
 
     // Cached StageFloor positions sorted by distance from stage center.
     // Used by best_stage_spot to find closest non-crowded tile to an agent.
@@ -247,6 +254,7 @@ struct Grid : afterhours::BaseComponent {
         bar_positions.clear();
         security_positions.clear();
         water_positions.clear();
+        tree_positions.clear();
         for (int z = 0; z < MAP_SIZE; z++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 switch (at(x, z).type) {
@@ -270,6 +278,9 @@ struct Grid : afterhours::BaseComponent {
                         break;
                     case TileType::WaterStation:
                         water_positions.push_back({x, z});
+                        break;
+                    case TileType::Tree:
+                        tree_positions.push_back({x, z});
                         break;
                     default:
                         break;
@@ -329,6 +340,8 @@ struct Grid : afterhours::BaseComponent {
                 return security_positions;
             case TileType::WaterStation:
                 return water_positions;
+            case TileType::Tree:
+                return tree_positions;
             case TileType::Gate:
                 return gate_positions;
             default:
@@ -495,6 +508,12 @@ struct Agent : afterhours::BaseComponent {
     int move_target_x = -1;
     int move_target_z = -1;
 
+    // Stage-queue admission: set by StageQueueSystem when this agent is
+    // promoted from the queue to a stage spot. StageWatchingSystem lets
+    // an admitted agent start watching even while the queue is non-empty
+    // (it was already counted against the watch capacity), then clears it.
+    bool queue_admitted = false;
+
     // Stuck detection: tracks time without progress toward target.
     // When stuck_timer exceeds STUCK_FORCE_THRESHOLD, the agent forces
     // through crowded tiles (ignoring slowdown and flee) unless lethal.
@@ -550,6 +569,44 @@ struct Collapsed : afterhours::BaseComponent {
 struct WatchingStage : afterhours::BaseComponent {
     float watch_timer = 0.f;
     float watch_duration = 0.f;  // random 30-120 sec
+};
+
+// Attached while an agent waits in the stage queue (StageQueueSystem).
+// `slot` is the agent's place in line (0 = front); `wait_timer` is how
+// long this agent has queued, and feeds the queue-time stat.
+struct QueuedForStage : afterhours::BaseComponent {
+    int slot = -1;
+    float wait_timer = 0.f;
+};
+
+// Attached while an agent sits on a Bench (BenchRestSystem). Need timers
+// grow at BENCH_NEED_MULT while seated; the agent does not move.
+struct RestingOnBench : afterhours::BaseComponent {
+    float timer = 0.f;
+};
+
+// Stage-queue bookkeeping singleton (lives on the Sophie entity).
+// Counts are refreshed every frame by StageQueueSystem: watching =
+// current watchers + admitted agents still walking to their spot, so
+// promotion never overshoots the cap.
+struct StageQueueState : afterhours::BaseComponent {
+    int watch_capacity = STAGE_WATCH_CAPACITY;
+    int watching_cached = 0;
+    int queue_length_cached = 0;
+    float queue_wait_total = 0.f;  // sum of queued agents' wait_timers
+
+    // Average time the agents currently in line have waited.
+    float avg_queue_time() const {
+        return queue_length_cached > 0 ? queue_wait_total / queue_length_cached
+                                       : 0.f;
+    }
+};
+
+// Queue slots: the south row of StageFloor tiles directly in front of
+// the stage building (STAGE_X..STAGE_X+STAGE_SIZE-1, STAGE_Z+STAGE_SIZE
+// = 29, extended two tiles east so the line holds STAGE_QUEUE_MAX = 6).
+inline constexpr std::pair<int, int> STAGE_QUEUE_SLOTS[] = {
+    {30, 29}, {31, 29}, {32, 29}, {33, 29}, {34, 29}, {35, 29},
 };
 
 // Agent health - takes crush damage at critical density
@@ -705,7 +762,9 @@ enum class BuildTool {
     Demolish,
     Bar,
     SecurityPost,
-    WaterStation
+    WaterStation,
+    Tree,
+    Bench
 };
 
 // Economy singleton: tycoon money flows (cash in from tickets, cash out
@@ -788,6 +847,10 @@ inline int build_cost_for_tool(BuildTool tool) {
             return 400;
         case BuildTool::WaterStation:
             return 200;
+        case BuildTool::Tree:
+            return TREE_COST;
+        case BuildTool::Bench:
+            return BENCH_COST;
         default:
             return 0;
     }
@@ -811,6 +874,10 @@ inline int build_cost_for_tile(TileType type) {
             return 400;
         case TileType::WaterStation:
             return 200;
+        case TileType::Tree:
+            return TREE_COST;
+        case TileType::Bench:
+            return BENCH_COST;
         default:
             return 0;
     }

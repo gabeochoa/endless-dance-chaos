@@ -30,8 +30,9 @@ struct PlacementMeta {
 
 // Display names indexed by BuildTool, for the insufficient-funds toast/log.
 static constexpr const char* TOOL_INFO_NAMES[] = {
-    "Path",     "Fence",    "Gate", "Stage",         "Bathroom",      "Food",
-    "Med Tent", "Demolish", "Bar",  "Security Post", "Water Station",
+    "Path",          "Fence",    "Gate",     "Stage", "Bathroom",
+    "Food",          "Med Tent", "Demolish", "Bar",   "Security Post",
+    "Water Station", "Tree",     "Bench",
 };
 
 static const PlacementMeta* get_placement_meta(BuildTool tool) {
@@ -40,6 +41,7 @@ static const PlacementMeta* get_placement_meta(BuildTool tool) {
         {TileType::Bathroom, 2, 2},     {TileType::Food, 2, 2},
         {TileType::MedTent, 2, 2},      {TileType::Bar, 2, 2},
         {TileType::SecurityPost, 1, 1}, {TileType::WaterStation, 1, 1},
+        {TileType::Tree, 1, 1},         {TileType::Bench, 1, 1},
     };
     switch (tool) {
         case BuildTool::Gate:
@@ -58,6 +60,10 @@ static const PlacementMeta* get_placement_meta(BuildTool tool) {
             return &TABLE[6];
         case BuildTool::WaterStation:
             return &TABLE[7];
+        case BuildTool::Tree:
+            return &TABLE[8];
+        case BuildTool::Bench:
+            return &TABLE[9];
         default:
             return nullptr;
     }
@@ -72,16 +78,16 @@ struct PathBuildSystem : System<> {
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         if (!pds || !grid || !bs) return;
 
-        // Tool cycling with [ ] — 11 tools total
+        // Tool cycling with [ ] — 13 tools total
         if (action_pressed(InputAction::PrevTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 10) % 11;
+            t = (t + 12) % 13;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
         if (action_pressed(InputAction::NextTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 1) % 11;
+            t = (t + 1) % 13;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
@@ -147,7 +153,9 @@ struct PathBuildSystem : System<> {
                 case BuildTool::MedTent:
                 case BuildTool::Bar:
                 case BuildTool::SecurityPost:
-                case BuildTool::WaterStation: {
+                case BuildTool::WaterStation:
+                case BuildTool::Tree:
+                case BuildTool::Bench: {
                     auto* meta = get_placement_meta(bs->tool);
                     if (meta && can_place_at(*grid, hx, hz, meta->width,
                                              meta->height)) {
@@ -182,6 +190,8 @@ struct PathBuildSystem : System<> {
                         tile.type == TileType::Bar ||
                         tile.type == TileType::SecurityPost ||
                         tile.type == TileType::WaterStation ||
+                        tile.type == TileType::Tree ||
+                        tile.type == TileType::Bench ||
                         tile.type == TileType::Stage) {
                         bool is_gate = (tile.type == TileType::Gate);
                         if (is_gate && grid->gate_count() <= 1) break;

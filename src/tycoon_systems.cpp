@@ -342,13 +342,54 @@ struct ParkRatingSystem : System<> {
             }
         }
 
+        // Scenery coverage: fraction of playable tiles within
+        // PARK_RATING_SCENERY_RADIUS of a Tree, scaled to
+        // PARK_RATING_SCENERY_MAX. Applies with or without attendees:
+        // a beautiful empty park still reads as beautiful.
+        float scenery = 0.f;
+        if (grid) {
+            grid->ensure_caches();
+            const auto& trees = grid->tree_positions;
+            if (!trees.empty()) {
+                std::array<char, MAP_SIZE * MAP_SIZE> covered{};
+                covered.fill(0);
+                int r = static_cast<int>(std::ceil(PARK_RATING_SCENERY_RADIUS));
+                int covered_count = 0;
+                for (auto [tx, tz] : trees) {
+                    for (int dz = -r; dz <= r; dz++) {
+                        for (int dx = -r; dx <= r; dx++) {
+                            if (dx * dx + dz * dz >
+                                PARK_RATING_SCENERY_RADIUS *
+                                    PARK_RATING_SCENERY_RADIUS)
+                                continue;
+                            int x = tx + dx, z = tz + dz;
+                            if (!grid->in_bounds(x, z) ||
+                                !grid->in_playable(x, z))
+                                continue;
+                            int idx = z * MAP_SIZE + x;
+                            if (!covered[idx]) {
+                                covered[idx] = 1;
+                                covered_count++;
+                            }
+                        }
+                    }
+                }
+                int playable = (grid->play_max_x() - PLAY_MIN + 1) *
+                               (grid->play_max_z() - PLAY_MIN + 1);
+                if (playable > 0)
+                    scenery = PARK_RATING_SCENERY_MAX * covered_count /
+                              static_cast<float>(playable);
+            }
+        }
+
         float inspection =
             insp ? park_rating_inspection_bonus(insp->last_grade) : 0.f;
-        rating->target = std::clamp(
-            PARK_RATING_BASE + coverage + inspection - rating->harm_pool -
-                rating->need_pressure - rating->crowding_pressure,
-            static_cast<float>(PARK_RATING_MIN),
-            static_cast<float>(PARK_RATING_MAX));
+        rating->target =
+            std::clamp(PARK_RATING_BASE + coverage + scenery + inspection -
+                           rating->harm_pool - rating->need_pressure -
+                           rating->crowding_pressure,
+                       static_cast<float>(PARK_RATING_MIN),
+                       static_cast<float>(PARK_RATING_MAX));
 
         rating->rating += (rating->target - rating->rating) *
                           approach_factor(PARK_RATING_APPROACH_RATE, dt);

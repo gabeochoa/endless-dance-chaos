@@ -10,6 +10,7 @@
 #include "components.h"
 #include "entity_makers.h"
 #include "game.h"
+#include "guest_thoughts.h"
 #include "render_helpers.h"
 #include "save_system.h"
 #include "systems.h"
@@ -65,6 +66,8 @@ inline TileType parse_tile_type(const std::string& s) {
     if (lower == "waterstation" || lower == "water_station" || lower == "water")
         return TileType::WaterStation;
     if (lower == "locked") return TileType::Locked;
+    if (lower == "tree") return TileType::Tree;
+    if (lower == "bench") return TileType::Bench;
     return TileType::Grass;
 }
 
@@ -486,7 +489,14 @@ static void cmd_force_need(testing::PendingE2ECommand& cmd) {
             if (needs.heat_threshold <= 0.f) needs.heat_threshold = 90.f;
             needs.heat_timer = needs.heat_threshold - 2.f;
         }
+        // A forced need interrupts watching, queueing, and bench rest
+        // alike: the agent leaves the stage for the facility.
         if (!a.is_missing<WatchingStage>()) a.removeComponent<WatchingStage>();
+        if (!a.is_missing<QueuedForStage>())
+            a.removeComponent<QueuedForStage>();
+        if (!a.is_missing<RestingOnBench>())
+            a.removeComponent<RestingOnBench>();
+        if (!a.is_missing<Agent>()) a.get<Agent>().queue_admitted = false;
     }
     cmd.consume();
 }
@@ -1117,6 +1127,10 @@ static void cmd_select_tool(testing::PendingE2ECommand& cmd) {
         bs->tool = BuildTool::SecurityPost;
     else if (tool == "waterstation" || tool == "water")
         bs->tool = BuildTool::WaterStation;
+    else if (tool == "tree")
+        bs->tool = BuildTool::Tree;
+    else if (tool == "bench")
+        bs->tool = BuildTool::Bench;
     else
         log_warn("select_tool: unknown tool '{}'", tool);
     cmd.consume();
@@ -1136,10 +1150,11 @@ static void cmd_assert_tool(testing::PendingE2ECommand& cmd) {
     std::transform(expected.begin(), expected.end(), expected.begin(),
                    ::tolower);
     static const char* names[] = {
-        "path",    "fence",    "gate", "stage",        "bathroom",    "food",
-        "medtent", "demolish", "bar",  "securitypost", "waterstation"};
+        "path",         "fence",   "gate",     "stage", "bathroom",
+        "food",         "medtent", "demolish", "bar",   "securitypost",
+        "waterstation", "tree",    "bench"};
     int idx = static_cast<int>(bs->tool);
-    std::string actual = (idx >= 0 && idx < 11) ? names[idx] : "unknown";
+    std::string actual = (idx >= 0 && idx < 13) ? names[idx] : "unknown";
     if (actual == expected) {
         log_info("assert_tool PASSED: {}", actual);
         cmd.consume();
@@ -1193,6 +1208,14 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
         h = 1;
     } else if (type == "waterstation" || type == "water") {
         tile_type = TileType::WaterStation;
+        w = 1;
+        h = 1;
+    } else if (type == "tree") {
+        tile_type = TileType::Tree;
+        w = 1;
+        h = 1;
+    } else if (type == "bench") {
+        tile_type = TileType::Bench;
         w = 1;
         h = 1;
     }
@@ -2903,6 +2926,115 @@ static void cmd_set_need_timer(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// ── Stage queue + bench rest + guest thoughts ────────────────────────────
+
+// assert_queue_length OP N — agents currently waiting in the stage queue.
+static void cmd_assert_queue_length(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_queue_length requires OP VALUE");
+        return;
+    }
+    auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>();
+    int actual = qs ? qs->queue_length_cached : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_queue_length failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_queue_time OP SECONDS — average time the agents currently in
+// line have waited (the queue-time stat shown on the Guests tab).
+static void cmd_assert_queue_time(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_queue_time requires OP VALUE");
+        return;
+    }
+    auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>();
+    float actual = qs ? qs->avg_queue_time() : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_queue_time failed: {:.2f} {} {:.2f} (actual: {:.2f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_resting_count OP N — agents currently seated on a Bench.
+static void cmd_assert_resting_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_resting_count requires OP VALUE");
+        return;
+    }
+    int actual =
+        (int) EntityQuery().whereHasComponent<RestingOnBench>().gen_count();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_resting_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_top_thought KEY — the ranked #1 guest thought is KEY (toilet,
+// value, crowded, sick, lineup), per compute_guest_thoughts().
+static void cmd_assert_top_thought(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_top_thought requires KEY");
+        return;
+    }
+    const char* expected = guest_thought_text_for_key(cmd.arg(0));
+    if (!expected) {
+        cmd.fail(
+            fmt::format("assert_top_thought: unknown key '{}'", cmd.arg(0)));
+        return;
+    }
+    auto thoughts = compute_guest_thoughts();
+    if (thoughts.empty() || std::strcmp(thoughts[0].text, expected) != 0)
+        cmd.fail(
+            fmt::format("assert_top_thought failed: expected '{}', got '{}'",
+                        expected, thoughts.empty() ? "-" : thoughts[0].text));
+    else
+        cmd.consume();
+}
+
+// assert_thought_count KEY OP N — count for one canonical thought.
+static void cmd_assert_thought_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(3)) {
+        cmd.fail("assert_thought_count requires KEY OP VALUE");
+        return;
+    }
+    const char* expected = guest_thought_text_for_key(cmd.arg(0));
+    if (!expected) {
+        cmd.fail(
+            fmt::format("assert_thought_count: unknown key '{}'", cmd.arg(0)));
+        return;
+    }
+    int actual = 0;
+    for (const auto& t : compute_guest_thoughts())
+        if (std::strcmp(t.text, expected) == 0) actual = t.count;
+    if (!compare_op(actual, cmd.arg(1), cmd.arg_as<int>(2)))
+        cmd.fail(fmt::format(
+            "assert_thought_count {} failed: {} {} {} (actual: {})", cmd.arg(0),
+            actual, cmd.arg(1), cmd.arg_as<int>(2), actual));
+    else
+        cmd.consume();
+}
+
+// set_watch_capacity N — how many agents may watch at once
+// (default STAGE_WATCH_CAPACITY). Raising it promotes the queue;
+// lowering it stops new watches until the count falls back under.
+static void cmd_set_watch_capacity(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_watch_capacity requires VALUE");
+        return;
+    }
+    auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>();
+    if (qs) qs->watch_capacity = std::max(0, cmd.arg_as<int>(0));
+    cmd.consume();
+}
+
 // ── Park window tabs + money floaters ────────────────────────────────────
 
 // set_window_tab NAME|INDEX — switch the park window's active tab
@@ -3128,6 +3260,12 @@ static void init_e2e_registry() {
     r.add("set_window_tab", cmd_set_window_tab);
     r.add("assert_window_tab", cmd_assert_window_tab);
     r.add("assert_floater_count", cmd_assert_floater_count);
+    r.add("assert_queue_length", cmd_assert_queue_length);
+    r.add("assert_queue_time", cmd_assert_queue_time);
+    r.add("assert_resting_count", cmd_assert_resting_count);
+    r.add("assert_top_thought", cmd_assert_top_thought);
+    r.add("assert_thought_count", cmd_assert_thought_count);
+    r.add("set_watch_capacity", cmd_set_watch_capacity);
 }
 
 void register_e2e_systems(SystemManager& sm) {

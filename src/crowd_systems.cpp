@@ -99,6 +99,12 @@ struct ExodusSystem : System<> {
                 agent.set_target(GATE_X, GATE_Z1);
                 if (!e.is_missing<WatchingStage>())
                     e.removeComponent<WatchingStage>();
+                // Queued / resting agents leave the line / bench too.
+                if (!e.is_missing<QueuedForStage>())
+                    e.removeComponent<QueuedForStage>();
+                if (!e.is_missing<RestingOnBench>())
+                    e.removeComponent<RestingOnBench>();
+                agent.queue_admitted = false;
             }
         }
     }
@@ -326,6 +332,7 @@ struct CollapseRescueSystem : System<Agent, Transform, Collapsed> {
             }
             e.removeComponent<Collapsed>();
             agent.want = FacilityType::Stage;
+            agent.queue_admitted = false;  // rejoin the back, not the front
             auto [rsx, rsz] = best_stage_spot(gx, gz);
             agent.set_target(rsx, rsz);
             return;

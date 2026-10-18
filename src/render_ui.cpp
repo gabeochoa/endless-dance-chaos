@@ -7,6 +7,7 @@
 #include "afterhours/src/plugins/e2e_testing/visible_text.h"
 #include "components.h"
 #include "gfx3d.h"
+#include "guest_thoughts.h"
 #include "render_helpers.h"
 #include "save_system.h"
 #include "systems.h"
@@ -233,8 +234,10 @@ static constexpr ToolInfo TOOL_INFO[] = {
     {"Br", {255, 145, 0, 255}, "Bar"},
     {"SP", {50, 90, 255, 255}, "Security Post"},
     {"W", {0, 180, 255, 255}, "Water Station"},
+    {"Tr", {34, 139, 34, 255}, "Tree"},
+    {"Bn", {160, 120, 80, 255}, "Bench"},
 };
-static constexpr int TOOL_COUNT = 11;
+static constexpr int TOOL_COUNT = 13;
 
 static constexpr float BUILD_BAR_Y = DEFAULT_SCREEN_HEIGHT - 54.f;
 
@@ -654,6 +657,8 @@ void ticker_poll_events() {
         t.last_day = diff ? diff->day_number : 1;
         t.last_game_over = gs && gs->is_game_over();
         t.last_staff_quits = staff_state ? staff_state->quit_count : 0;
+        auto* clock_seed = EntityHelper::get_singleton_cmp<GameClock>();
+        t.last_thought_hour = clock_seed ? clock_seed->get_hour() : -1;
         t.seeded = true;
         return;
     }
@@ -757,11 +762,39 @@ void ticker_poll_events() {
             reset_seen = true;
         }
     }
+    // Guest-thought quote: once per game-hour step, when at least two
+    // guests share the top thought, the ticker quotes it. Gated on
+    // !reset_seen (a reset resyncs the hour below) and on game-over.
+    // Any other hour change (reset, set_time jump, pause skip)
+    // resyncs silently without quoting. Event items still pre-empt
+    // via the normal push_event path; a thought quote is just one
+    // more item.
+    if (!reset_seen) {
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock && gs && !gs->is_game_over()) {
+            int hour = clock->get_hour();
+            if (hour != t.last_thought_hour) {
+                bool step = t.last_thought_hour >= 0 &&
+                            hour == (t.last_thought_hour + 1) % 24;
+                t.last_thought_hour = hour;
+                if (step) {
+                    auto thoughts = compute_guest_thoughts();
+                    if (!thoughts.empty() && thoughts[0].count >= 2) {
+                        t.push_event(
+                            fmt::format("GUEST: \"{}\" ({} guests agree)",
+                                        thoughts[0].text, thoughts[0].count));
+                    }
+                }
+            }
+        }
+    }
     if (reset_seen) {
         t.queue.clear();
         t.current.clear();
         t.scroll_px = 0.f;
         t.flavor_idx = 0;
+        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+        if (clock) t.last_thought_hour = clock->get_hour();
     }
 }
 
@@ -1125,6 +1158,16 @@ static void register_park_window_texts() {
     vtr.register_text(fmt::format("Need Food: {}", gs.need_food));
     vtr.register_text(fmt::format("Need Heat: {}", gs.need_heat));
     vtr.register_text(fmt::format("Need Bar: {}", gs.need_bar));
+    // Guests page: stage-queue stat + the 5 guest thoughts.
+    if (auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>()) {
+        vtr.register_text(
+            fmt::format("Queue: {} ({}s avg)", qs->queue_length_cached,
+                        static_cast<int>(std::round(qs->avg_queue_time()))));
+    }
+    vtr.register_text("Guest Thoughts:");
+    for (const auto& thought : compute_guest_thoughts())
+        vtr.register_text(
+            fmt::format("\"{}\" x{}", thought.text, thought.count));
     // Staff page per-role rows.
     static constexpr StaffRole ROLES[] = {StaffRole::Guard, StaffRole::Medic,
                                           StaffRole::Janitor};
@@ -1201,7 +1244,7 @@ static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
                  Color{0, 0, 0, 255});
 }
 
-// Guests page: counts / needs summary.
+// Guests page: counts / needs summary + stage queue + guest thoughts.
 static void draw_park_window_guests_page() {
     GuestSummary s = park_window_guest_summary();
     float x = PARK_WINDOW_X + 10;
@@ -1217,6 +1260,19 @@ static void draw_park_window_guests_page() {
                  Color{0, 0, 0, 255});
     ui_draw_text(fmt::format("Need Bar: {}", s.need_bar), x, 310, 14,
                  Color{0, 0, 0, 255});
+    if (auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>()) {
+        ui_draw_text(
+            fmt::format("Queue: {} ({}s avg)", qs->queue_length_cached,
+                        static_cast<int>(std::round(qs->avg_queue_time()))),
+            x, 338, 14, Color{0, 0, 0, 255});
+    }
+    ui_draw_text("Guest Thoughts:", x, 366, 14, Color{0, 0, 0, 255});
+    float ty = 384.f;
+    for (const auto& thought : compute_guest_thoughts()) {
+        ui_draw_text(fmt::format("\"{}\" x{}", thought.text, thought.count), x,
+                     ty, 12, Color{0, 0, 0, 255});
+        ty += 16.f;
+    }
 }
 
 // Staff page: roster counts + hire/fire.

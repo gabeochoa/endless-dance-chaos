@@ -114,6 +114,29 @@ constexpr int FACILITY_MAX_AGENTS = 20;  // density cap before "full"
 // Stage watching
 constexpr float STAGE_WATCH_RADIUS = 8.0f;  // tiles from stage center
 
+// Stage queue: at most this many agents watch at once. Agents who arrive
+// after the cap is reached join a FIFO queue (STAGE_QUEUE_MAX slots, the
+// south row of StageFloor tiles in front of the stage) instead of
+// clumping, and advance as watchers leave. Further excess agents stand
+// at their stage spot (overflow) until a queue slot opens.
+constexpr int STAGE_WATCH_CAPACITY = 12;
+constexpr int STAGE_QUEUE_MAX = 6;
+
+// Scenery: Trees beautify the park. ParkRating grants up to
+// PARK_RATING_SCENERY_MAX points, scaled by the fraction of playable
+// tiles within PARK_RATING_SCENERY_RADIUS of a Tree.
+constexpr float PARK_RATING_SCENERY_MAX = 30.0f;
+constexpr float PARK_RATING_SCENERY_RADIUS = 4.0f;
+
+// Scenery build costs (see build_cost_for_tool / build_cost_for_tile).
+constexpr int TREE_COST = 50;
+constexpr int BENCH_COST = 100;
+
+// Bench rest: agents with rising needs who step onto a Bench sit for
+// this long; while seated every need timer grows at BENCH_NEED_MULT.
+constexpr float BENCH_REST_SECONDS = 5.0f;
+constexpr float BENCH_NEED_MULT = 0.25f;
+
 // Economy (tycoon loop)
 constexpr int STARTING_CASH = 10000;
 constexpr int DEFAULT_TICKET_PRICE = 20;
