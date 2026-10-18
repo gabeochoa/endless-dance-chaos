@@ -190,6 +190,25 @@ static void iso_draw_tile(float cx, float cy, float tw, float th, Color color) {
                      std::max(th - 1.0f, 1.0f), color);
 }
 
+// Raised terrain tile: side skirts from the base diamond up to the
+// lifted diamond, so a +1 plot reads as a step, not a floating tile.
+// Left skirt darker, right skirt lighter (same shading as iso blocks).
+static void iso_draw_raised_tile(float cx, float cy, float tw, float th,
+                                 Color color, float h) {
+    float ry = cy - h;  // raised-diamond center
+    vec2 right{cx + tw * 0.5f, ry};
+    vec2 bottom{cx, ry + th * 0.5f};
+    vec2 left{cx - tw * 0.5f, ry};
+    vec2 bottom_base{cx, cy + th * 0.5f};
+    vec2 left_base{cx - tw * 0.5f, cy};
+    vec2 right_base{cx + tw * 0.5f, cy};
+    iso_draw_poly4(left, bottom, bottom_base, left_base,
+                   darken_color(color, 0.35f));
+    iso_draw_poly4(right, bottom, bottom_base, right_base,
+                   darken_color(color, 0.15f));
+    iso_draw_tile(cx, ry, tw, th, color);
+}
+
 // Extruded block: two side faces + a lightened roof diamond. Height is in
 // screen px (see RenderIsoSystem for the per-type heights).
 static void iso_draw_block(float cx, float cy, float tw, float th, float h,
@@ -236,6 +255,9 @@ struct IsoPeep {
     const char* glyph = nullptr;  // thought-bubble glyph, or nullptr
     bool is_staff = false;
     bool is_vip = false;  // gold body + star bubble, not a need glyph
+    // Screen-px lift from the terrain height of the tile underfoot:
+    // visual only, movement stays flat.
+    float lift = 0;
 };
 
 struct IsoPoint {
@@ -248,11 +270,16 @@ struct IsoPoint {
 struct IsoDraw {
     float depth = 0;  // x+z; continuous for agents
     int order = 0;    // tile 0, overlay 1, building 2, peep 3, bubble 4, fx 5
-    int kind = 0;     // 0 tile, 1 overlay, 2 building, 3 peep, 4 bubble, 5 fx
+    // kind: 0 tile, 1 overlay, 2 building, 3 peep, 4 bubble, 5 fx,
+    // 6 tree, 7 lamp
+    int kind = 0;
     int x = 0, z = 0;
     Color color{255, 255, 255, 255};
     float h = 0;   // building height px
     int ref = -1;  // IsoPeep / IsoPoint snapshot index
+    // Screen-px terrain lift for tiles/buildings/trees/lamps on
+    // raised plots (Tile::height * iso_tile_h * 0.35).
+    float lift = 0;
 };
 
 struct RenderIsoSystem : System<> {
@@ -313,31 +340,43 @@ struct RenderIsoSystem : System<> {
             for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
                 float depth = static_cast<float>(x + z);
+                // Raised-plot lift: one height step = 0.35 tile-heights.
+                float lift = tile.height * th * 0.35f;
                 Color weather_color =
                     ::tile_color_weather(tile.type, night_t, weather, shimmer);
-                items.push_back({depth, 0, 0, x, z, weather_color, 0, -1});
+                items.push_back(
+                    {depth, 0, 0, x, z, weather_color, 0, -1, lift});
                 if (tile.type == TileType::Fence) {
                     // Low extruded block so the fence ring reads as a wall.
-                    items.push_back(
-                        {depth, 2, 2, x, z, weather_color, th * 0.35f, -1});
+                    items.push_back({depth, 2, 2, x, z, weather_color,
+                                     th * 0.35f, -1, lift});
                 } else if (tile.type == TileType::Tree) {
                     // Green blob-tree: canopy ellipse + trunk (kind 6).
-                    items.push_back({depth, 2, 6, x, z, weather_color, 0, -1});
+                    items.push_back(
+                        {depth, 2, 6, x, z, weather_color, 0, -1, lift});
+                } else if (tile.type == TileType::Lamp) {
+                    // Lamp post + bulb (kind 7), drawn from the tile
+                    // color so it tints with day/night.
+                    items.push_back(
+                        {depth, 2, 7, x, z, weather_color, 0, -1, lift});
                 } else if (is_building_tile(tile.type)) {
                     float h = tile.type == TileType::Stage   ? th * 0.95f
                               : tile.type == TileType::Bench ? th * 0.25f
                                                              : th * 0.55f;
-                    items.push_back({depth, 2, 2, x, z, weather_color, h, -1});
+                    items.push_back(
+                        {depth, 2, 2, x, z, weather_color, h, -1, lift});
                 }
                 if (stage_glow && tile.type == TileType::Stage) {
-                    items.push_back({depth, 1, 1, x, z, glow_color, 0, -1});
+                    items.push_back(
+                        {depth, 1, 1, x, z, glow_color, 0, -1, lift});
                 }
                 if (tile.agent_count > 0) {
                     if (show_overlay) {
                         float density = tile.agent_count /
                                         static_cast<float>(MAX_AGENTS_PER_TILE);
                         items.push_back({depth, 1, 1, x, z,
-                                         iso_density_color(density), 0, -1});
+                                         iso_density_color(density), 0, -1,
+                                         lift});
                     }
                     if (tile.agent_count >= danger_threshold) {
                         bool critical =
@@ -357,7 +396,8 @@ struct RenderIsoSystem : System<> {
                             alpha = static_cast<unsigned char>(pulse * 80);
                             flash = {255, 140, 0, alpha};
                         }
-                        items.push_back({depth, 1, 1, x, z, flash, 0, -1});
+                        items.push_back(
+                            {depth, 1, 1, x, z, flash, 0, -1, lift});
                     }
                 }
             }
@@ -376,20 +416,22 @@ struct RenderIsoSystem : System<> {
                 for (int z = min_z; z <= max_z; z++)
                     for (int x = min_x; x <= max_x; x++) {
                         if (!grid->in_bounds(x, z)) continue;
-                        bool already_path =
-                            grid->at(x, z).type == TileType::Path;
+                        const Tile& pt = grid->at(x, z);
+                        bool already_path = is_path_tile(pt.type);
                         items.push_back(
                             {static_cast<float>(x + z), 1, 1, x, z,
                              already_path ? PREVIEW_EXISTING : PREVIEW_VALID, 0,
-                             -1});
+                             -1, pt.height * th * 0.35f});
                     }
             }
             if (grid->in_bounds(pds->hover_x, pds->hover_z)) {
+                float hover_lift =
+                    grid->at(pds->hover_x, pds->hover_z).height * th * 0.35f;
                 items.push_back(
                     {static_cast<float>(pds->hover_x + pds->hover_z), 1, 1,
                      pds->hover_x, pds->hover_z,
-                     pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL, 0,
-                     -1});
+                     pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL, 0, -1,
+                     hover_lift});
             }
         }
 
@@ -441,8 +483,14 @@ struct RenderIsoSystem : System<> {
                     glyph = iso_urgent_glyph(&e.get<AgentNeeds>());
                 int desire_idx = static_cast<int>(agent.want);
                 int ref = static_cast<int>(peeps.size());
+                float peep_lift = 0.f;
+                {
+                    auto [pgx, pgz] = grid->world_to_grid(wx, wz);
+                    if (grid->in_bounds(pgx, pgz))
+                        peep_lift = grid->at(pgx, pgz).height * th * 0.35f;
+                }
                 peeps.push_back({wx, wz, bob, body, DESIRE_COLORS[desire_idx],
-                                 glyph, false, is_vip});
+                                 glyph, false, is_vip, peep_lift});
                 items.push_back({wx + wz, 3, 3, 0, 0, {}, 0, ref});
                 // VIPs always get their star bubble; other agents only
                 // get a bubble for an urgent need.
@@ -465,8 +513,15 @@ struct RenderIsoSystem : System<> {
                 Color pip = s.role == StaffRole::Medic ? Color{255, 45, 45, 255}
                                                        : Color{25, 25, 25, 255};
                 int ref = static_cast<int>(peeps.size());
+                float staff_lift = 0.f;
+                {
+                    auto [sgx, sgz] =
+                        grid->world_to_grid(tf.position.x, tf.position.y);
+                    if (grid->in_bounds(sgx, sgz))
+                        staff_lift = grid->at(sgx, sgz).height * th * 0.35f;
+                }
                 peeps.push_back({tf.position.x, tf.position.y, 0, body, pip,
-                                 nullptr, true});
+                                 nullptr, true, false, staff_lift});
                 items.push_back(
                     {tf.position.x + tf.position.y, 3, 3, 0, 0, {}, 0, ref});
             }
@@ -516,25 +571,30 @@ struct RenderIsoSystem : System<> {
                 case 0: {
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
-                    iso_draw_tile(s.x, s.y, tw, th, it.color);
+                    if (it.lift > 0.f)
+                        iso_draw_raised_tile(s.x, s.y, tw, th, it.color,
+                                             it.lift);
+                    else
+                        iso_draw_tile(s.x, s.y, tw, th, it.color);
                     break;
                 }
                 case 1: {
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
-                    iso_draw_diamond(s.x, s.y, tw, th, it.color);
+                    iso_draw_diamond(s.x, s.y - it.lift, tw, th, it.color);
                     break;
                 }
                 case 2: {
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
-                    iso_draw_block(s.x, s.y, tw, th, it.h, it.color);
+                    iso_draw_block(s.x, s.y - it.lift, tw, th, it.h, it.color);
                     break;
                 }
                 case 6: {
                     // Tree blob: brown trunk + two green canopy blobs.
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
+                    s.y -= it.lift;
                     draw_rect(s.x - std::max(tw * 0.03f, 1.0f),
                               s.y - th * 0.12f, std::max(tw * 0.06f, 2.0f),
                               th * 0.14f, Color{120, 80, 40, 255});
@@ -546,10 +606,26 @@ struct RenderIsoSystem : System<> {
                                  th * 0.22f, lighten_color(it.color, 0.15f));
                     break;
                 }
+                case 7: {
+                    // Lamp: dark post + warm bulb, standing on the
+                    // (possibly raised) tile.
+                    vec2 s = cam.iso_project(static_cast<float>(it.x),
+                                             static_cast<float>(it.z));
+                    s.y -= it.lift;
+                    float pole_h = std::max(th * 0.35f, 4.0f);
+                    draw_rect(s.x - std::max(tw * 0.02f, 1.0f), s.y - pole_h,
+                              std::max(tw * 0.04f, 2.0f), pole_h,
+                              Color{60, 60, 70, 255});
+                    draw_circle(static_cast<int>(s.x),
+                                static_cast<int>(s.y - pole_h - 1.0f),
+                                std::max(tw * 0.06f, 2.0f),
+                                Color{255, 240, 150, 255});
+                    break;
+                }
                 case 3: {
                     const IsoPeep& p = peeps[it.ref];
                     vec2 s = cam.iso_project(p.wx, p.wz);
-                    draw_iso_peep(s.x, s.y - p.bob * th, tw, th, p);
+                    draw_iso_peep(s.x, s.y - p.bob * th - p.lift, tw, th, p);
                     break;
                 }
                 case 4: {
@@ -560,9 +636,11 @@ struct RenderIsoSystem : System<> {
                     // identity is the signal; their need still shows
                     // in the gold body + desire pip.
                     if (p.is_vip)
-                        draw_iso_star_bubble(s.x, s.y - p.bob * th, tw, th);
+                        draw_iso_star_bubble(s.x, s.y - p.bob * th - p.lift, tw,
+                                             th);
                     else
-                        draw_iso_bubble(s.x, s.y - p.bob * th, tw, th, p.glyph);
+                        draw_iso_bubble(s.x, s.y - p.bob * th - p.lift, tw, th,
+                                        p.glyph);
                     break;
                 }
                 case 5: {
@@ -770,16 +848,25 @@ struct RenderGridSystem : System<> {
         for (int z = z0; z <= z1; z++) {
             for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
+                // Raised-plot ground offset (iso uses 0.35 tile-heights
+                // of screen lift; 3D uses world units).
+                float hy = tile.height * 0.25f;
                 Color color =
                     ::tile_color_weather(tile.type, night_t, weather, shimmer);
-                draw_plane({x * TILESIZE, 0.01f, z * TILESIZE},
+                draw_plane({x * TILESIZE, 0.01f + hy, z * TILESIZE},
                            {tile_size, tile_size}, color);
                 if (tile.type == TileType::Tree) {
                     // Blob-tree: trunk cylinder + canopy sphere.
-                    draw_cylinder({x * TILESIZE, 0.0f, z * TILESIZE}, 0.06f,
+                    draw_cylinder({x * TILESIZE, hy, z * TILESIZE}, 0.06f,
                                   0.06f, 0.25f, 6, {120, 80, 40, 255});
-                    draw_sphere({x * TILESIZE, 0.38f, z * TILESIZE}, 0.32f,
+                    draw_sphere({x * TILESIZE, 0.38f + hy, z * TILESIZE}, 0.32f,
                                 color);
+                } else if (tile.type == TileType::Lamp) {
+                    // Lamp post + bulb.
+                    draw_cylinder({x * TILESIZE, hy, z * TILESIZE}, 0.03f,
+                                  0.03f, 0.35f, 6, {60, 60, 70, 255});
+                    draw_sphere({x * TILESIZE, 0.38f + hy, z * TILESIZE}, 0.07f,
+                                {255, 240, 150, 255});
                 } else if (is_building_tile(tile.type)) {
                     // Two-tone chunky block: darkened facade sides, lighter
                     // roof face on top. Low enough that agents walking
@@ -788,10 +875,10 @@ struct RenderGridSystem : System<> {
                               : tile.type == TileType::Bench ? 0.06f
                                                              : 0.12f;
                     float w = tile_size * 0.92f;
-                    draw_cube({x * TILESIZE, h * 0.5f, z * TILESIZE}, w, h, w,
-                              darken_color(color, 0.25f));
-                    draw_plane({x * TILESIZE, h + 0.005f, z * TILESIZE}, {w, w},
-                               lighten_color(color, 0.40f));
+                    draw_cube({x * TILESIZE, hy + h * 0.5f, z * TILESIZE}, w, h,
+                              w, darken_color(color, 0.25f));
+                    draw_plane({x * TILESIZE, hy + h + 0.005f, z * TILESIZE},
+                               {w, w}, lighten_color(color, 0.40f));
                 }
             }
         }
@@ -802,22 +889,22 @@ struct RenderGridSystem : System<> {
             float ts = TILESIZE * 0.98f;
             for (int z = z0; z <= z1; z++) {
                 for (int x = x0; x <= x1; x++) {
-                    TileType type = grid->at(x, z).type;
+                    const Tile& gt = grid->at(x, z);
+                    TileType type = gt.type;
+                    float gy = 0.06f + gt.height * 0.25f;
                     if (type == TileType::Stage) {
-                        draw_plane({x * TILESIZE, 0.06f, z * TILESIZE},
-                                   {ts, ts},
+                        draw_plane({x * TILESIZE, gy, z * TILESIZE}, {ts, ts},
                                    {255, 220, 130,
                                     static_cast<unsigned char>(
                                         night_t * NIGHT_GLOW_STAGE_ALPHA)});
                     } else if (type == TileType::StageFloor) {
                         draw_plane(
-                            {x * TILESIZE, 0.06f, z * TILESIZE}, {ts, ts},
+                            {x * TILESIZE, gy, z * TILESIZE}, {ts, ts},
                             {255, 210, 120,
                              static_cast<unsigned char>(
                                  night_t * NIGHT_GLOW_STAGE_FLOOR_ALPHA)});
                     } else if (is_lamp_tile(type)) {
-                        draw_plane({x * TILESIZE, 0.06f, z * TILESIZE},
-                                   {ts, ts},
+                        draw_plane({x * TILESIZE, gy, z * TILESIZE}, {ts, ts},
                                    {255, 190, 90,
                                     static_cast<unsigned char>(
                                         night_t * NIGHT_GLOW_LAMP_ALPHA)});
@@ -1292,19 +1379,23 @@ struct RenderBuildPreviewSystem : System<> {
             for (int z = min_z; z <= max_z; z++) {
                 for (int x = min_x; x <= max_x; x++) {
                     if (!grid->in_bounds(x, z)) continue;
-                    bool already_path = grid->at(x, z).type == TileType::Path;
+                    const Tile& pt = grid->at(x, z);
+                    bool already_path = is_path_tile(pt.type);
                     Color color =
                         already_path ? PREVIEW_EXISTING : PREVIEW_VALID;
-                    draw_plane({x * TILESIZE, preview_y, z * TILESIZE},
+                    draw_plane({x * TILESIZE, preview_y + pt.height * 0.25f,
+                                z * TILESIZE},
                                {tile_size, tile_size}, color);
                 }
             }
         }
 
         Color cursor_color = pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL;
-        draw_plane(
-            {pds->hover_x * TILESIZE, preview_y, pds->hover_z * TILESIZE},
-            {tile_size, tile_size}, cursor_color);
+        float hover_y = preview_y;
+        if (grid->in_bounds(pds->hover_x, pds->hover_z))
+            hover_y += grid->at(pds->hover_x, pds->hover_z).height * 0.25f;
+        draw_plane({pds->hover_x * TILESIZE, hover_y, pds->hover_z * TILESIZE},
+                   {tile_size, tile_size}, cursor_color);
     }
 };
 

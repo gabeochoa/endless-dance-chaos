@@ -28,7 +28,7 @@ struct Transform : afterhours::BaseComponent {
 // TILE_NIGHT_COLORS are indexed by TileType, so they must grow in sync.
 enum class TileType {
     Grass,
-    Path,
+    Path,  // Concrete, the standard path (see PATH_TYPE_INFOS)
     Fence,
     Gate,
     Stage,
@@ -46,12 +46,60 @@ enum class TileType {
     // TileType keeps its value (save files store the raw byte).
     // Tree blocks movement (a trunk); Bench is walkable (agents sit on it).
     Tree,
-    Bench
+    Bench,
+    // Grounds depth, appended after Bench for the same reason.
+    // DirtPath / NeonPath are the other two path types; Lamp is
+    // walkable decor that glows at night.
+    DirtPath,
+    NeonPath,
+    Lamp
 };
+
+// Data-driven footpath table: cost, speed, and pathfinding preference
+// for each path type. Movement, building, and E2E code read this one
+// table instead of switching on path types ad hoc.
+struct PathTypeInfo {
+    TileType type;
+    const char* name;
+    int cost_per_tile;
+    float speed;
+    float preference;
+};
+
+inline constexpr PathTypeInfo PATH_TYPE_INFOS[] = {
+    {TileType::DirtPath, "Dirt", DIRT_PATH_COST_PER_TILE, SPEED_DIRT_PATH,
+     PATH_PREFERENCE_DIRT},
+    {TileType::Path, "Concrete", CONCRETE_PATH_COST_PER_TILE, SPEED_PATH,
+     PATH_PREFERENCE_CONCRETE},
+    {TileType::NeonPath, "Neon", NEON_PATH_COST_PER_TILE, SPEED_NEON_PATH,
+     PATH_PREFERENCE_NEON},
+};
+
+inline const PathTypeInfo* path_info_for(TileType type) {
+    for (const auto& info : PATH_TYPE_INFOS)
+        if (info.type == type) return &info;
+    return nullptr;
+}
+
+inline bool is_path_tile(TileType type) {
+    return path_info_for(type) != nullptr;
+}
+
+// Pathfinding preference bonus for a tile type (0 for non-paths;
+// Gate / StageFloor count as concrete paths — see pick_next_tile).
+inline float path_preference_bonus(TileType type) {
+    if (type == TileType::Gate || type == TileType::StageFloor)
+        return PATH_PREFERENCE_CONCRETE;
+    const PathTypeInfo* info = path_info_for(type);
+    return info ? info->preference : 0.f;
+}
 
 // Single tile in the grid
 struct Tile {
     TileType type = TileType::Grass;
+    // Terrain height step (0 = flat). Set once by the expansion plot
+    // that created the tile; movement ignores it, rendering lifts it.
+    int height = 0;
     int agent_count = 0;
 
     // Per-desire agent counts (indexed by FacilityType enum).
@@ -108,6 +156,10 @@ struct Grid : afterhours::BaseComponent {
 
     // Cached Tree tile positions (scenery coverage for ParkRating).
     std::vector<std::pair<int, int>> tree_positions;
+
+    // Cached Lamp tile positions (scenery coverage counts lamps at
+    // LAMP_SCENERY_WEIGHT; lamps themselves need no other cache).
+    std::vector<std::pair<int, int>> lamp_positions;
 
     // Cached StageFloor positions sorted by distance from stage center.
     // Used by best_stage_spot to find closest non-crowded tile to an agent.
@@ -176,6 +228,10 @@ struct Grid : afterhours::BaseComponent {
             int old_fence_x = fence_x();
             int fz = fence_z();
             expansions_x++;
+            // The 2nd plot on this axis is raised; the 1st stays flat.
+            int plot_height = (expansions_x == EXPANSION_RAISED_PLOT_INDEX)
+                                  ? EXPANSION_RAISED_HEIGHT
+                                  : 0;
             int new_max_x = play_max_x();
             int new_fence_x = fence_x();
             for (int z = 0; z <= fz; z++) {
@@ -189,8 +245,10 @@ struct Grid : afterhours::BaseComponent {
                 at(new_fence_x, z).type = TileType::Fence;
             }
             for (int x = old_fence_x + 1; x <= new_max_x; x++)
-                for (int z = PLAY_MIN; z <= play_max_z(); z++)
+                for (int z = PLAY_MIN; z <= play_max_z(); z++) {
                     at(x, z).type = TileType::Grass;
+                    at(x, z).height = plot_height;
+                }
             for (int x = old_fence_x; x <= new_fence_x; x++) {
                 at(x, 0).type = TileType::Fence;
                 at(x, fz).type = TileType::Fence;
@@ -203,6 +261,9 @@ struct Grid : afterhours::BaseComponent {
             int old_fence_z = fence_z();
             int fx = fence_x();
             expansions_z++;
+            int plot_height = (expansions_z == EXPANSION_RAISED_PLOT_INDEX)
+                                  ? EXPANSION_RAISED_HEIGHT
+                                  : 0;
             int new_max_z = play_max_z();
             int new_fence_z = fence_z();
             for (int x = 0; x <= fx; x++) {
@@ -215,8 +276,10 @@ struct Grid : afterhours::BaseComponent {
                 at(x, new_fence_z).type = TileType::Fence;
             }
             for (int z = old_fence_z + 1; z <= new_max_z; z++)
-                for (int x = PLAY_MIN; x <= play_max_x(); x++)
+                for (int x = PLAY_MIN; x <= play_max_x(); x++) {
                     at(x, z).type = TileType::Grass;
+                    at(x, z).height = plot_height;
+                }
             for (int z = old_fence_z; z <= new_fence_z; z++) {
                 at(0, z).type = TileType::Fence;
                 at(fx, z).type = TileType::Fence;
@@ -255,6 +318,7 @@ struct Grid : afterhours::BaseComponent {
         security_positions.clear();
         water_positions.clear();
         tree_positions.clear();
+        lamp_positions.clear();
         for (int z = 0; z < MAP_SIZE; z++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 switch (at(x, z).type) {
@@ -281,6 +345,9 @@ struct Grid : afterhours::BaseComponent {
                         break;
                     case TileType::Tree:
                         tree_positions.push_back({x, z});
+                        break;
+                    case TileType::Lamp:
+                        lamp_positions.push_back({x, z});
                         break;
                     default:
                         break;
@@ -342,6 +409,8 @@ struct Grid : afterhours::BaseComponent {
                 return water_positions;
             case TileType::Tree:
                 return tree_positions;
+            case TileType::Lamp:
+                return lamp_positions;
             case TileType::Gate:
                 return gate_positions;
             default:
@@ -359,6 +428,7 @@ struct Grid : afterhours::BaseComponent {
         expansions_z = 0;
         for (auto& tile : tiles) {
             tile.type = TileType::Locked;
+            tile.height = 0;
             tile.agent_count = 0;
             tile.pheromone = {0, 0, 0, 0, 0};
         }
@@ -779,7 +849,10 @@ enum class BuildTool {
     SecurityPost,
     WaterStation,
     Tree,
-    Bench
+    Bench,
+    DirtPath,
+    NeonPath,
+    Lamp
 };
 
 // One closed day of finance history: income/expenses are the deltas of
@@ -895,11 +968,17 @@ struct Economy : afterhours::BaseComponent {
     }
 };
 
-// Build costs. Path/Fence/Demolish are free; facilities cost money.
+// Build costs. Fence/Demolish are free; paths charge per tile and
+// facilities cost money.
 // No pre-existing cost table existed, so this is the single table both the
 // real build path (PathBuildSystem) and the E2E place_building helper use.
 inline int build_cost_for_tool(BuildTool tool) {
     switch (tool) {
+        // Per-tile cost for the rect-drag path tools (PathBuildSystem
+        // charges per converted tile, not this value, which is only
+        // used for point placements / toasts).
+        case BuildTool::Path:
+            return CONCRETE_PATH_COST_PER_TILE;
         case BuildTool::Gate:
             return 250;
         case BuildTool::Stage:
@@ -920,6 +999,12 @@ inline int build_cost_for_tool(BuildTool tool) {
             return TREE_COST;
         case BuildTool::Bench:
             return BENCH_COST;
+        case BuildTool::DirtPath:
+            return DIRT_PATH_COST_PER_TILE;
+        case BuildTool::NeonPath:
+            return NEON_PATH_COST_PER_TILE;
+        case BuildTool::Lamp:
+            return LAMP_COST;
         default:
             return 0;
     }
@@ -947,6 +1032,14 @@ inline int build_cost_for_tile(TileType type) {
             return TREE_COST;
         case TileType::Bench:
             return BENCH_COST;
+        case TileType::DirtPath:
+            return DIRT_PATH_COST_PER_TILE;
+        case TileType::Path:
+            return CONCRETE_PATH_COST_PER_TILE;
+        case TileType::NeonPath:
+            return NEON_PATH_COST_PER_TILE;
+        case TileType::Lamp:
+            return LAMP_COST;
         default:
             return 0;
     }

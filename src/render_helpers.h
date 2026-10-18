@@ -141,7 +141,7 @@ inline float get_day_night_t() {
 // saturated hue, grass is vivid green, paths are golden sand.
 inline constexpr Color TILE_DAY_COLORS[] = {
     {80, 200, 100, 255},   // Grass
-    {245, 205, 120, 255},  // Path
+    {245, 205, 120, 255},  // Path (Concrete)
     {150, 95, 50, 255},    // Fence
     {255, 255, 255, 255},  // Gate
     {200, 30, 230, 255},   // Stage
@@ -155,24 +155,30 @@ inline constexpr Color TILE_DAY_COLORS[] = {
     {30, 30, 38, 255},     // Locked (darkened unbought land)
     {34, 139, 34, 255},    // Tree
     {160, 120, 80, 255},   // Bench
+    {176, 141, 88, 255},   // DirtPath
+    {255, 45, 215, 255},   // NeonPath
+    {255, 225, 120, 255},  // Lamp
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
-    {45, 74, 62, 255},    // Grass
-    {42, 42, 58, 255},    // Path
-    {40, 40, 50, 255},    // Fence
-    {68, 136, 170, 255},  // Gate
-    {255, 230, 0, 255},   // Stage
-    {60, 60, 40, 255},    // StageFloor
-    {60, 100, 90, 255},   // Bathroom
-    {120, 80, 80, 255},   // Food
-    {120, 50, 50, 255},   // MedTent
-    {120, 80, 20, 255},   // Bar
-    {70, 80, 130, 255},   // SecurityPost
-    {40, 90, 130, 255},   // WaterStation
-    {12, 12, 16, 255},    // Locked (darkened unbought land)
-    {18, 60, 22, 255},    // Tree
-    {70, 52, 35, 255},    // Bench
+    {45, 74, 62, 255},     // Grass
+    {42, 42, 58, 255},     // Path (Concrete)
+    {40, 40, 50, 255},     // Fence
+    {68, 136, 170, 255},   // Gate
+    {255, 230, 0, 255},    // Stage
+    {60, 60, 40, 255},     // StageFloor
+    {60, 100, 90, 255},    // Bathroom
+    {120, 80, 80, 255},    // Food
+    {120, 50, 50, 255},    // MedTent
+    {120, 80, 20, 255},    // Bar
+    {70, 80, 130, 255},    // SecurityPost
+    {40, 90, 130, 255},    // WaterStation
+    {12, 12, 16, 255},     // Locked (darkened unbought land)
+    {18, 60, 22, 255},     // Tree
+    {70, 52, 35, 255},     // Bench
+    {88, 68, 44, 255},     // DirtPath
+    {190, 30, 160, 255},   // NeonPath
+    {255, 235, 160, 255},  // Lamp
 };
 
 inline Color tile_day_color(TileType type) {
@@ -294,6 +300,7 @@ inline bool is_lamp_tile(TileType type) {
         case TileType::SecurityPost:
         case TileType::WaterStation:
         case TileType::Gate:
+        case TileType::Lamp:
             return true;
         default:
             return false;

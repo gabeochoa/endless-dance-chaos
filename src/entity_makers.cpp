@@ -175,6 +175,7 @@ void reset_game_state() {
     if (grid) {
         for (auto& tile : grid->tiles) {
             tile.type = TileType::Grass;
+            tile.height = 0;
             tile.agent_count = 0;
             tile.pheromone = {0, 0, 0, 0, 0};
         }

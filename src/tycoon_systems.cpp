@@ -345,36 +345,42 @@ struct ParkRatingSystem : System<> {
 
         // Scenery coverage: fraction of playable tiles within
         // PARK_RATING_SCENERY_RADIUS of a Tree, scaled to
-        // PARK_RATING_SCENERY_MAX. Applies with or without attendees:
-        // a beautiful empty park still reads as beautiful.
+        // PARK_RATING_SCENERY_MAX. Lamps count at LAMP_SCENERY_WEIGHT
+        // (half a tree); a tile covered by both caps at 1. Applies
+        // with or without attendees: a beautiful empty park still
+        // reads as beautiful.
         float scenery = 0.f;
         if (grid) {
             grid->ensure_caches();
             const auto& trees = grid->tree_positions;
-            if (!trees.empty()) {
-                std::array<char, MAP_SIZE * MAP_SIZE> covered{};
-                covered.fill(0);
+            const auto& lamps = grid->lamp_positions;
+            if (!trees.empty() || !lamps.empty()) {
+                std::array<float, MAP_SIZE * MAP_SIZE> covered{};
+                covered.fill(0.f);
                 int r = static_cast<int>(std::ceil(PARK_RATING_SCENERY_RADIUS));
-                int covered_count = 0;
-                for (auto [tx, tz] : trees) {
-                    for (int dz = -r; dz <= r; dz++) {
-                        for (int dx = -r; dx <= r; dx++) {
-                            if (dx * dx + dz * dz >
-                                PARK_RATING_SCENERY_RADIUS *
-                                    PARK_RATING_SCENERY_RADIUS)
-                                continue;
-                            int x = tx + dx, z = tz + dz;
-                            if (!grid->in_bounds(x, z) ||
-                                !grid->in_playable(x, z))
-                                continue;
-                            int idx = z * MAP_SIZE + x;
-                            if (!covered[idx]) {
-                                covered[idx] = 1;
-                                covered_count++;
+                auto mark_covered = [&](const auto& positions, float weight) {
+                    for (auto [tx, tz] : positions) {
+                        for (int dz = -r; dz <= r; dz++) {
+                            for (int dx = -r; dx <= r; dx++) {
+                                if (dx * dx + dz * dz >
+                                    PARK_RATING_SCENERY_RADIUS *
+                                        PARK_RATING_SCENERY_RADIUS)
+                                    continue;
+                                int x = tx + dx, z = tz + dz;
+                                if (!grid->in_bounds(x, z) ||
+                                    !grid->in_playable(x, z))
+                                    continue;
+                                int idx = z * MAP_SIZE + x;
+                                covered[idx] =
+                                    std::min(1.f, covered[idx] + weight);
                             }
                         }
                     }
-                }
+                };
+                mark_covered(trees, 1.f);
+                mark_covered(lamps, LAMP_SCENERY_WEIGHT);
+                float covered_count = 0.f;
+                for (float c : covered) covered_count += c;
                 int playable = (grid->play_max_x() - PLAY_MIN + 1) *
                                (grid->play_max_z() - PLAY_MIN + 1);
                 if (playable > 0)

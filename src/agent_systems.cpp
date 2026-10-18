@@ -84,7 +84,7 @@ static std::pair<int, int> pick_next_tile(
     float cur_dist =
         static_cast<float>(std::abs(cur_x - goal_x) + std::abs(cur_z - goal_z));
     float best_score = cur_dist;
-    bool best_is_path = false;
+    float best_bonus = 0.f;
 
     int channel = facility_to_channel(want);
 
@@ -111,19 +111,25 @@ static std::pair<int, int> pick_next_tile(
         float phero =
             channel >= 0 ? Tile::to_strength(grid.at(nx, nz).pheromone[channel])
                          : 0.f;
+        // Path-type preference (data-driven, PATH_TYPE_INFOS): the
+        // bonus only applies to steps that do not move away from the
+        // goal, so a premium path never pulls an agent backwards.
+        // A neon step sideways beats a grass step forward (1.5 > 1).
+        float bonus = path_preference_bonus(type);
         float score = dist - (phero * 2.0f);
+        if (dist <= cur_dist) score -= bonus;
 
-        bool is_path = (type == TileType::Path || type == TileType::Gate ||
+        bool is_path = (is_path_tile(type) || type == TileType::Gate ||
                         type == TileType::StageFloor);
 
         walkable[walkable_count++] = {nx, nz, score, dist, is_path};
 
-        if (score < best_score || (std::abs(score - best_score) < 0.01f &&
-                                   is_path && !best_is_path)) {
+        if (score < best_score ||
+            (std::abs(score - best_score) < 0.01f && bonus > best_bonus)) {
             best_x = nx;
             best_z = nz;
             best_score = score;
-            best_is_path = is_path;
+            best_bonus = bonus;
         }
     }
 
@@ -414,15 +420,22 @@ struct AgentMovementSystem : System<Agent, Transform> {
             if (grid->in_bounds(cur_gx, cur_gz)) {
                 cur_type = grid->at(cur_gx, cur_gz).type;
             }
-            agent.speed =
-                (cur_type == TileType::Path || cur_type == TileType::Gate ||
-                 cur_type == TileType::StageFloor ||
-                 cur_type == TileType::Bathroom || cur_type == TileType::Food ||
-                 cur_type == TileType::MedTent || cur_type == TileType::Bar ||
-                 cur_type == TileType::SecurityPost ||
-                 cur_type == TileType::WaterStation)
-                    ? SPEED_PATH
-                    : SPEED_GRASS;
+            // Per-path-type speed from PATH_TYPE_INFOS (dirt slow,
+            // concrete standard, neon slightly faster). Facilities /
+            // gate / stage floor keep the standard path speed.
+            if (const PathTypeInfo* path_info = path_info_for(cur_type))
+                agent.speed = path_info->speed;
+            else if (cur_type == TileType::Gate ||
+                     cur_type == TileType::StageFloor ||
+                     cur_type == TileType::Bathroom ||
+                     cur_type == TileType::Food ||
+                     cur_type == TileType::MedTent ||
+                     cur_type == TileType::Bar ||
+                     cur_type == TileType::SecurityPost ||
+                     cur_type == TileType::WaterStation)
+                agent.speed = SPEED_PATH;
+            else
+                agent.speed = SPEED_GRASS;
 
             if (!forcing && grid->in_bounds(cur_gx, cur_gz)) {
                 float density = grid->at(cur_gx, cur_gz).agent_count /

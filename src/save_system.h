@@ -20,8 +20,11 @@ static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
 // prefix is byte-identical. v3 appends land-expansion counts and the
 // park-rating state after the v2 active-events block. v4 appends the
 // finance state (loan debt + history bookkeeping) after the v3 rating
-// block. Increment on schema changes.
-static constexpr uint32_t SAVE_VERSION = 4;
+// block. v5 appends per-tile terrain heights after the v4 finance
+// block (the tile block itself stays byte-identical so v1-v4 files
+// still load, with heights defaulting to flat). Increment on schema
+// changes.
+static constexpr uint32_t SAVE_VERSION = 5;
 
 namespace detail {
 inline void write_int(std::ofstream& f, int v) {
@@ -328,6 +331,14 @@ inline bool save_game() {
         }
     }
 
+    // ── v5 sections (appended after the v4 finance block) ─────────────────
+    // Terrain heights, one byte per tile in the same z-major order as
+    // the tile block.
+    {
+        for (const auto& tile : grid->tiles)
+            detail::write_u8(f, static_cast<uint8_t>(tile.height));
+    }
+
     return f.good();
 }
 
@@ -342,11 +353,10 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    // v1 files are a byte-identical prefix of v2/v3/v4: they load, with
-    // the newer-only state (economy, bookings, staff, rating, ...) left
-    // as-is. Anything else is rejected.
-    if (version != SAVE_VERSION && version != 3 && version != 2 && version != 1)
-        return false;
+    // v1 files are a byte-identical prefix of v2/v3/v4/v5: they load,
+    // with the newer-only state (economy, bookings, staff, rating,
+    // heights, ...) left as-is. Anything else is rejected.
+    if (version < 1 || version > SAVE_VERSION) return false;
 
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
@@ -357,6 +367,9 @@ inline bool load_game() {
             uint8_t type;
             f.read(reinterpret_cast<char*>(&type), 1);
             tile.type = static_cast<TileType>(type);
+            // Pre-v5 files carry no heights: default flat here; the
+            // v5 section below overwrites when present.
+            tile.height = 0;
             f.read(reinterpret_cast<char*>(&tile.agent_count), sizeof(int));
             f.read(reinterpret_cast<char*>(tile.pheromone.data()), 5);
         }
@@ -695,6 +708,17 @@ inline bool load_game() {
             econ->day_start_earned = econ->total_earned;
             econ->day_start_spent = econ->total_spent;
             econ->last_finance_day = diff ? diff->day_number : 1;
+        }
+    }
+
+    // ── v5 sections (absent in v1-v4 files: heights stay flat) ──
+    if (version >= 5) {
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                uint8_t h = 0;
+                detail::read_u8(f, h);
+                if (grid) grid->at(x, z).height = static_cast<int>(h);
+            }
         }
     }
 

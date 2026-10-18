@@ -60,9 +60,11 @@ inline void spawn_toast(const std::string& text, float lifetime = 3.0f) {
 // Facilities (Bathroom, Food, MedTent, Bar, SecurityPost, WaterStation) are
 // walkable so agents can enter them. Locked (unbought land) blocks.
 // Tree blocks (a trunk); Bench is walkable (agents sit on it).
+// All three path types and Lamp are walkable.
 // Indexed by TileType enum: Grass=0,Path=1,Fence=2,Gate=3,Stage=4,
 //   StageFloor=5,Bathroom=6,Food=7,MedTent=8,Bar=9,SecurityPost=10,
-//   WaterStation=11,Locked=12,Tree=13,Bench=14
+//   WaterStation=11,Locked=12,Tree=13,Bench=14,DirtPath=15,NeonPath=16,
+//   Lamp=17
 inline constexpr bool TILE_BLOCKS[] = {
     false,  // Grass
     false,  // Path
@@ -79,6 +81,9 @@ inline constexpr bool TILE_BLOCKS[] = {
     true,   // Locked
     true,   // Tree
     false,  // Bench
+    false,  // DirtPath
+    false,  // NeonPath
+    false,  // Lamp
 };
 
 inline bool tile_blocks_movement(TileType type) {

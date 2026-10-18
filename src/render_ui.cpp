@@ -236,8 +236,11 @@ static constexpr ToolInfo TOOL_INFO[] = {
     {"W", {0, 180, 255, 255}, "Water Station"},
     {"Tr", {34, 139, 34, 255}, "Tree"},
     {"Bn", {160, 120, 80, 255}, "Bench"},
+    {"Di", {176, 141, 88, 255}, "Dirt Path"},
+    {"Ne", {255, 45, 215, 255}, "Neon Path"},
+    {"Lp", {255, 225, 120, 255}, "Lamp"},
 };
-static constexpr int TOOL_COUNT = 13;
+static constexpr int TOOL_COUNT = 16;
 
 static constexpr float BUILD_BAR_Y = DEFAULT_SCREEN_HEIGHT - 54.f;
 
@@ -439,8 +442,10 @@ struct RenderBuildBarSystem : System<> {
 
         auto mouse = input::get_mouse_position();
         bool mouse_clicked = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
-        float icon_size = 36.f;
-        float gap = 6.f;
+        // 16 tools at 30px + 4px gaps = 540px total: the same bar
+        // footprint as the old 13 tools at 36px + 6px gaps.
+        float icon_size = 30.f;
+        float gap = 4.f;
         float total_w = TOOL_COUNT * icon_size + (TOOL_COUNT - 1) * gap;
         float start_x = (DEFAULT_SCREEN_WIDTH - 150 - total_w) / 2.f;
         for (int i = 0; i < TOOL_COUNT; i++) {

@@ -51,7 +51,14 @@ inline TileType parse_tile_type(const std::string& s) {
     std::string lower = s;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
     if (lower == "grass") return TileType::Grass;
-    if (lower == "path") return TileType::Path;
+    if (lower == "path" || lower == "concrete" || lower == "concretepath" ||
+        lower == "concrete_path")
+        return TileType::Path;
+    if (lower == "dirt" || lower == "dirtpath" || lower == "dirt_path")
+        return TileType::DirtPath;
+    if (lower == "neon" || lower == "neonpath" || lower == "neon_path")
+        return TileType::NeonPath;
+    if (lower == "lamp") return TileType::Lamp;
     if (lower == "fence") return TileType::Fence;
     if (lower == "gate") return TileType::Gate;
     if (lower == "stage") return TileType::Stage;
@@ -224,6 +231,7 @@ static void cmd_clear_map(testing::PendingE2ECommand& cmd) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 if (!grid->in_playable(x, z)) continue;
                 grid->at(x, z).type = TileType::Grass;
+                grid->at(x, z).height = 0;
                 grid->at(x, z).agent_count = 0;
             }
         }
@@ -348,11 +356,21 @@ static void cmd_assert_tile_type(testing::PendingE2ECommand& cmd) {
 
 static void cmd_draw_path_rect(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(4)) {
-        cmd.fail("draw_path_rect requires X1 Z1 X2 Z2");
+        cmd.fail("draw_path_rect requires X1 Z1 X2 Z2 [TYPE]");
         return;
     }
     int x1 = cmd.arg_as<int>(0), z1 = cmd.arg_as<int>(1);
     int x2 = cmd.arg_as<int>(2), z2 = cmd.arg_as<int>(3);
+    // Free staging helper (like set_tile): no economy. Charging
+    // placement is place_path_rect. Default type is concrete (Path).
+    TileType fill = TileType::Path;
+    if (cmd.has_args(5)) {
+        fill = parse_tile_type(cmd.arg(4));
+        if (!is_path_tile(fill)) {
+            cmd.fail("draw_path_rect: TYPE must be a path type");
+            return;
+        }
+    }
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     if (!grid) {
         cmd.fail("draw_path_rect: no grid");
@@ -363,9 +381,103 @@ static void cmd_draw_path_rect(testing::PendingE2ECommand& cmd) {
     for (int z = min_z; z <= max_z; z++)
         for (int x = min_x; x <= max_x; x++)
             if (grid->in_bounds(x, z) && grid->at(x, z).type == TileType::Grass)
-                grid->at(x, z).type = TileType::Path;
+                grid->at(x, z).type = fill;
     grid->mark_tiles_dirty();
     cmd.consume();
+}
+
+// place_path_rect X1 Z1 X2 Z2 TYPE — charging path placement, same
+// rule as the real drag tool: only Grass tiles convert, cost is
+// per-tile from PATH_TYPE_INFOS, whole rect refused if unaffordable.
+static void cmd_place_path_rect(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(5)) {
+        cmd.fail("place_path_rect requires X1 Z1 X2 Z2 TYPE");
+        return;
+    }
+    int x1 = cmd.arg_as<int>(0), z1 = cmd.arg_as<int>(1);
+    int x2 = cmd.arg_as<int>(2), z2 = cmd.arg_as<int>(3);
+    TileType fill = parse_tile_type(cmd.arg(4));
+    const PathTypeInfo* info = path_info_for(fill);
+    if (!info) {
+        cmd.fail("place_path_rect: TYPE must be a path type");
+        return;
+    }
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid) {
+        cmd.fail("place_path_rect: no grid");
+        return;
+    }
+    int min_x = std::min(x1, x2), min_z = std::min(z1, z2);
+    int max_x = std::max(x1, x2), max_z = std::max(z1, z2);
+    int converts = 0;
+    for (int z = min_z; z <= max_z; z++)
+        for (int x = min_x; x <= max_x; x++)
+            if (grid->in_bounds(x, z) && grid->at(x, z).type == TileType::Grass)
+                converts++;
+    int cost = converts * info->cost_per_tile;
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ && !econ->try_spend(cost)) {
+        spawn_toast(fmt::format("Not enough cash! {} path costs ${}",
+                                info->name, cost));
+        log_warn(
+            "[E2E] place_path_rect refused: {} path costs ${}, cash "
+            "is ${}",
+            info->name, cost, econ->cash);
+        cmd.consume();
+        return;
+    }
+    for (int z = min_z; z <= max_z; z++)
+        for (int x = min_x; x <= max_x; x++)
+            if (grid->in_bounds(x, z) && grid->at(x, z).type == TileType::Grass)
+                grid->at(x, z).type = fill;
+    grid->mark_tiles_dirty();
+    cmd.consume();
+}
+
+// assert_tile_height X Z OP VALUE — terrain height step of one tile.
+static void cmd_assert_tile_height(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(4)) {
+        cmd.fail("assert_tile_height requires X Z OP VALUE");
+        return;
+    }
+    int x = cmd.arg_as<int>(0), z = cmd.arg_as<int>(1);
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid || !grid->in_bounds(x, z)) {
+        cmd.fail("assert_tile_height: out of bounds");
+        return;
+    }
+    int actual = grid->at(x, z).height;
+    if (!compare_op(actual, cmd.arg(2), cmd.arg_as<int>(3)))
+        cmd.fail(fmt::format(
+            "assert_tile_height at ({},{}) failed: {} {} {} (actual: {})", x, z,
+            actual, cmd.arg(2), cmd.arg_as<int>(3), actual));
+    else
+        cmd.consume();
+}
+
+// assert_lamp_glow X Z — the tile is a Lamp and night glow is active,
+// i.e. the lamp's glow pool is drawing (night_t > 0.5).
+static void cmd_assert_lamp_glow(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_lamp_glow requires X Z");
+        return;
+    }
+    int x = cmd.arg_as<int>(0), z = cmd.arg_as<int>(1);
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    if (!grid || !grid->in_bounds(x, z)) {
+        cmd.fail("assert_lamp_glow: out of bounds");
+        return;
+    }
+    bool is_lamp = grid->at(x, z).type == TileType::Lamp;
+    bool glow = night_glow_active();
+    if (!is_lamp || !glow)
+        cmd.fail(
+            fmt::format("assert_lamp_glow at ({},{}) FAILED: lamp={}, glow={}",
+                        x, z, is_lamp ? "yes" : "no", glow ? "on" : "off"));
+    else {
+        log_info("assert_lamp_glow PASSED: ({},{})", x, z);
+        cmd.consume();
+    }
 }
 
 static void cmd_move_to_grid(testing::PendingE2ECommand& cmd) {
@@ -1215,8 +1327,14 @@ static void cmd_select_tool(testing::PendingE2ECommand& cmd) {
     }
     std::string tool = cmd.args[0];
     std::transform(tool.begin(), tool.end(), tool.begin(), ::tolower);
-    if (tool == "path")
+    if (tool == "path" || tool == "concrete" || tool == "concretepath")
         bs->tool = BuildTool::Path;
+    else if (tool == "dirtpath" || tool == "dirt")
+        bs->tool = BuildTool::DirtPath;
+    else if (tool == "neonpath" || tool == "neon")
+        bs->tool = BuildTool::NeonPath;
+    else if (tool == "lamp")
+        bs->tool = BuildTool::Lamp;
     else if (tool == "fence")
         bs->tool = BuildTool::Fence;
     else if (tool == "gate")
@@ -1260,11 +1378,12 @@ static void cmd_assert_tool(testing::PendingE2ECommand& cmd) {
     std::transform(expected.begin(), expected.end(), expected.begin(),
                    ::tolower);
     static const char* names[] = {
-        "path",         "fence",   "gate",     "stage", "bathroom",
-        "food",         "medtent", "demolish", "bar",   "securitypost",
-        "waterstation", "tree",    "bench"};
+        "path",     "fence",        "gate",         "stage",
+        "bathroom", "food",         "medtent",      "demolish",
+        "bar",      "securitypost", "waterstation", "tree",
+        "bench",    "dirtpath",     "neonpath",     "lamp"};
     int idx = static_cast<int>(bs->tool);
-    std::string actual = (idx >= 0 && idx < 13) ? names[idx] : "unknown";
+    std::string actual = (idx >= 0 && idx < 16) ? names[idx] : "unknown";
     if (actual == expected) {
         log_info("assert_tool PASSED: {}", actual);
         cmd.consume();
@@ -1328,6 +1447,10 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
         tile_type = TileType::Bench;
         w = 1;
         h = 1;
+    } else if (type == "lamp") {
+        tile_type = TileType::Lamp;
+        w = 1;
+        h = 1;
     }
     if (w == 0) {
         cmd.consume();
@@ -1346,7 +1469,7 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
                 break;
             }
             TileType t = grid->at(tx, tz).type;
-            if (t != TileType::Grass && t != TileType::Path &&
+            if (t != TileType::Grass && !is_path_tile(t) &&
                 t != TileType::StageFloor) {
                 placeable = false;
                 break;
@@ -3719,6 +3842,9 @@ static void init_e2e_registry() {
     r.add("assert_density", cmd_assert_density);
     r.add("assert_tile_type", cmd_assert_tile_type);
     r.add("draw_path_rect", cmd_draw_path_rect);
+    r.add("place_path_rect", cmd_place_path_rect);
+    r.add("assert_tile_height", cmd_assert_tile_height);
+    r.add("assert_lamp_glow", cmd_assert_lamp_glow);
     r.add("move_to_grid", cmd_move_to_grid);
     r.add("click_grid", cmd_click_grid);
     r.add("assert_agent_near", cmd_assert_agent_near);

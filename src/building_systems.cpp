@@ -15,7 +15,7 @@ static bool can_place_at(const Grid& grid, int x, int z, int w, int h) {
             int tx = x + dx, tz = z + dz;
             if (!grid.in_playable(tx, tz)) return false;
             TileType t = grid.at(tx, tz).type;
-            if (t != TileType::Grass && t != TileType::Path &&
+            if (t != TileType::Grass && !is_path_tile(t) &&
                 t != TileType::StageFloor)
                 return false;
         }
@@ -30,9 +30,10 @@ struct PlacementMeta {
 
 // Display names indexed by BuildTool, for the insufficient-funds toast/log.
 static constexpr const char* TOOL_INFO_NAMES[] = {
-    "Path",          "Fence",    "Gate",     "Stage", "Bathroom",
-    "Food",          "Med Tent", "Demolish", "Bar",   "Security Post",
-    "Water Station", "Tree",     "Bench",
+    "Path",     "Fence",         "Gate",          "Stage",
+    "Bathroom", "Food",          "Med Tent",      "Demolish",
+    "Bar",      "Security Post", "Water Station", "Tree",
+    "Bench",    "Dirt Path",     "Neon Path",     "Lamp",
 };
 
 static const PlacementMeta* get_placement_meta(BuildTool tool) {
@@ -42,6 +43,7 @@ static const PlacementMeta* get_placement_meta(BuildTool tool) {
         {TileType::MedTent, 2, 2},      {TileType::Bar, 2, 2},
         {TileType::SecurityPost, 1, 1}, {TileType::WaterStation, 1, 1},
         {TileType::Tree, 1, 1},         {TileType::Bench, 1, 1},
+        {TileType::Lamp, 1, 1},
     };
     switch (tool) {
         case BuildTool::Gate:
@@ -64,6 +66,8 @@ static const PlacementMeta* get_placement_meta(BuildTool tool) {
             return &TABLE[8];
         case BuildTool::Bench:
             return &TABLE[9];
+        case BuildTool::Lamp:
+            return &TABLE[10];
         default:
             return nullptr;
     }
@@ -78,16 +82,16 @@ struct PathBuildSystem : System<> {
         auto* bs = EntityHelper::get_singleton_cmp<BuilderState>();
         if (!pds || !grid || !bs) return;
 
-        // Tool cycling with [ ] — 13 tools total
+        // Tool cycling with [ ] — 16 tools total
         if (action_pressed(InputAction::PrevTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 12) % 13;
+            t = (t + 15) % 16;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
         if (action_pressed(InputAction::NextTool)) {
             int t = static_cast<int>(bs->tool);
-            t = (t + 1) % 13;
+            t = (t + 1) % 16;
             bs->tool = static_cast<BuildTool>(t);
             pds->is_drawing = false;
         }
@@ -121,6 +125,8 @@ struct PathBuildSystem : System<> {
 
             switch (bs->tool) {
                 case BuildTool::Path:
+                case BuildTool::DirtPath:
+                case BuildTool::NeonPath:
                 case BuildTool::Fence: {
                     if (!pds->is_drawing) {
                         pds->start_x = hx;
@@ -129,9 +135,43 @@ struct PathBuildSystem : System<> {
                     } else {
                         int min_x, min_z, max_x, max_z;
                         pds->get_rect(min_x, min_z, max_x, max_z);
-                        TileType fill = (bs->tool == BuildTool::Path)
-                                            ? TileType::Path
-                                            : TileType::Fence;
+                        TileType fill = (bs->tool == BuildTool::Fence)
+                                            ? TileType::Fence
+                                        : bs->tool == BuildTool::DirtPath
+                                            ? TileType::DirtPath
+                                        : bs->tool == BuildTool::NeonPath
+                                            ? TileType::NeonPath
+                                            : TileType::Path;
+                        // Paths charge per newly converted tile (only
+                        // Grass tiles convert); the whole rect is
+                        // refused when unaffordable, like facilities.
+                        // Fence stays free.
+                        if (is_path_tile(fill)) {
+                            const PathTypeInfo* info = path_info_for(fill);
+                            int converts = 0;
+                            for (int z = min_z; z <= max_z; z++)
+                                for (int x = min_x; x <= max_x; x++)
+                                    if (grid->in_bounds(x, z) &&
+                                        grid->at(x, z).type == TileType::Grass)
+                                        converts++;
+                            int cost =
+                                converts * (info ? info->cost_per_tile : 0);
+                            auto* econ =
+                                EntityHelper::get_singleton_cmp<Economy>();
+                            if (econ && !econ->try_spend(cost)) {
+                                spawn_toast(fmt::format(
+                                    "Not enough cash! {} path costs ${}",
+                                    TOOL_INFO_NAMES[static_cast<int>(bs->tool)],
+                                    cost));
+                                log_warn(
+                                    "Build refused: {} path costs ${}, cash "
+                                    "is ${}",
+                                    TOOL_INFO_NAMES[static_cast<int>(bs->tool)],
+                                    cost, econ->cash);
+                                pds->is_drawing = false;
+                                break;
+                            }
+                        }
                         for (int z = min_z; z <= max_z; z++) {
                             for (int x = min_x; x <= max_x; x++) {
                                 if (!grid->in_bounds(x, z)) continue;
@@ -155,7 +195,8 @@ struct PathBuildSystem : System<> {
                 case BuildTool::SecurityPost:
                 case BuildTool::WaterStation:
                 case BuildTool::Tree:
-                case BuildTool::Bench: {
+                case BuildTool::Bench:
+                case BuildTool::Lamp: {
                     auto* meta = get_placement_meta(bs->tool);
                     if (meta && can_place_at(*grid, hx, hz, meta->width,
                                              meta->height)) {
@@ -182,7 +223,7 @@ struct PathBuildSystem : System<> {
                 }
                 case BuildTool::Demolish: {
                     Tile& tile = grid->at(hx, hz);
-                    if (tile.type == TileType::Path ||
+                    if (is_path_tile(tile.type) ||
                         tile.type == TileType::Fence ||
                         tile.type == TileType::Bathroom ||
                         tile.type == TileType::Food ||
@@ -192,6 +233,7 @@ struct PathBuildSystem : System<> {
                         tile.type == TileType::WaterStation ||
                         tile.type == TileType::Tree ||
                         tile.type == TileType::Bench ||
+                        tile.type == TileType::Lamp ||
                         tile.type == TileType::Stage) {
                         bool is_gate = (tile.type == TileType::Gate);
                         if (is_gate && grid->gate_count() <= 1) break;

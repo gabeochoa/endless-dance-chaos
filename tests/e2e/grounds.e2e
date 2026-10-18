@@ -1,0 +1,222 @@
+# Grounds depth (RCT2 scenery/footpath depth).
+# (1) FOOTPATH VARIETY: dirt ($5/tile, slow, weakest preference),
+# concrete/Path ($10/tile, standard), neon ($25/tile, fastest, strongest
+# preference). Placement charges per converted tile; a rect the player
+# cannot afford is refused whole. A/B: one agent at a fork with two
+# equal-length (23-tile) L-shaped routes — neon north-then-east vs dirt
+# east-then-north — chooses the neon route.
+# (2) TERRAIN HEIGHT: the 2nd expansion plot on an axis is raised +1
+# (Tile.height); the 1st stays flat. Placement works on raised plots
+# and height survives under buildings. Movement ignores height: an
+# agent walks the raised -> flat step on flat pathfinding.
+# (3) DECOR: lamps ($150) are placeable, glow at night via the existing
+# lamp logic, and count toward scenery coverage at half a tree.
+# Path coverage per type in Guests thoughts is intentionally skipped.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# --- (1) Path types place + costs deducted (charging placement) ---
+place_path_rect 10 10 13 10 neon
+wait_frames 2
+assert_tile_type 10 10 neonpath
+assert_tile_type 13 10 neonpath
+assert_tile_type 14 10 grass
+assert_cash eq 9900
+
+place_path_rect 10 12 13 12 dirt
+wait_frames 2
+assert_tile_type 10 12 dirtpath
+assert_cash eq 9880
+
+place_path_rect 10 14 13 14 path
+wait_frames 2
+assert_tile_type 10 14 path
+assert_cash eq 9840
+
+# Refused when broke: the whole rect stays grass, cash untouched.
+# (20,20) is the bathroom, so the refused rect uses all-grass (20,40).
+set_cash 10
+wait_frames 2
+place_path_rect 20 40 23 40 neon
+wait_frames 2
+assert_cash eq 10
+assert_tile_type 20 40 grass
+assert_tile_type 23 40 grass
+
+# New tools select by name.
+select_tool dirtpath
+assert_tool dirtpath
+select_tool neonpath
+assert_tool neonpath
+select_tool lamp
+assert_tool lamp
+select_tool path
+assert_tool path
+
+# Real drag tool charges too (same click pattern as 02_path_drawing).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+select_tool neon
+wait_frames 2
+click_grid 40 40
+wait_frames 3
+click_grid 43 40
+wait_frames 3
+assert_tile_type 40 40 neonpath
+assert_tile_type 41 40 neonpath
+assert_tile_type 43 40 neonpath
+assert_cash eq 9900
+screenshot grounds_neon_drag
+
+# --- (1) A/B: agent chooses the neon route over the dirt route ---
+# Fork at (5,30), goal (20,22), cur_dist 23. Both first steps reduce
+# dist to 22, so the path bonus applies to both (pick_next_tile only
+# bonuses non-retreating steps): north onto neon scores 22 - 1.5 = 20.5,
+# east onto dirt scores 22 - 0.25 = 21.75, so neon wins by 1.25.
+# The neon L (north 8 + east 15) and the dirt L (east 14 + north 8 +
+# east 1) are both 23 tiles; the agent stays on neon (each north step
+# beats the grass step east by the 1.5 bonus) and never steps on dirt.
+# The old straight-line fork could not work: a sideways step AWAY from
+# a due-east goal gets no bonus by design, and rows near the stage hit
+# the StageFloor ring / MedTent. Arrival in 11s also needs neon speed:
+# the same 23 tiles on grass (0.25) would take 18.4s at 5x.
+reset_game
+set_spawn_enabled 0
+set_move_speed 5
+wait_frames 5
+draw_path_rect 5 22 5 30 neon
+draw_path_rect 5 22 20 22 neon
+draw_path_rect 5 30 19 30 dirt
+draw_path_rect 19 22 19 30 dirt
+wait_frames 2
+assert_tile_type 5 22 neonpath
+assert_tile_type 20 22 neonpath
+assert_tile_type 10 30 dirtpath
+assert_tile_type 19 29 dirtpath
+spawn_agent 5 30 stage 20 22
+wait_frames 2
+assert_agent_count eq 1
+wait 3
+assert_agents_on_tiletype neonpath >= 1
+assert_agents_on_tiletype dirtpath eq 0
+screenshot grounds_neon_choice
+wait 8
+assert_agent_near 20 22 3
+
+# --- (2) Terrain height: 2nd plot on an axis is raised +1 ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_tile_height 60 30 eq 0
+buy_land east
+wait_frames 2
+assert_cash eq 5000
+assert_tile_height 60 30 eq 0
+assert_tile_type 60 30 grass
+set_cash 20000
+wait_frames 2
+buy_land east
+wait_frames 2
+assert_cash eq 10000
+assert_tile_height 80 30 eq 1
+assert_tile_type 80 30 grass
+assert_tile_height 60 30 eq 0
+# Placement works on the raised plot; height survives under buildings.
+place_building waterstation 80 30
+wait_frames 2
+assert_tile_type 80 30 waterstation
+assert_tile_height 80 30 eq 1
+assert_cash eq 9800
+# South axis: plot 1 flat, plot 2 raised.
+set_cash 60000
+wait_frames 2
+buy_land south
+wait_frames 2
+assert_tile_height 30 60 eq 0
+assert_tile_type 30 60 grass
+buy_land south
+wait_frames 2
+assert_tile_height 30 80 eq 1
+assert_tile_type 30 80 grass
+screenshot grounds_height
+# Movement ignores height: agent crosses the raised -> flat step.
+set_move_speed 5
+spawn_agent 78 30 stage 74 30
+wait 5
+assert_agent_near 74 30 2
+
+# --- Save/load keeps heights ---
+delete_save
+save_game
+assert_save_exists
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_tile_height 80 30 eq 0
+load_game
+wait_frames 5
+assert_tile_height 80 30 eq 1
+assert_tile_height 30 80 eq 1
+assert_tile_height 60 30 eq 0
+delete_save
+
+# --- (3) Lamps: placeable, cost, glow at night only ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+select_tool lamp
+assert_tool lamp
+place_building lamp 10 10
+wait_frames 2
+assert_tile_type 10 10 lamp
+assert_cash eq 9850
+set_time 12 0
+wait_frames 2
+assert_night_glow off
+set_time 20 0
+wait_frames 2
+assert_night_glow on
+assert_lamp_glow 10 10
+screenshot grounds_lamp_night
+demolish_at 10 10
+wait_frames 2
+assert_tile_type 10 10 grass
+
+# --- (3) Lamps count toward scenery at half a tree ---
+# 20 lamps on the same 10-apart spread as the 20 trees in
+# queues_scenery (disc radius 4, no overlap): full-weight trees target
+# ~+11 rating (500 -> ~511); half-weight lamps target ~+5.6
+# (500 -> ~505.6), so after the same wait 10 the rating sits above 502
+# but below 507. Full-weight lamps would read ~510 and fail the cap.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_park_rating eq 500
+place_building lamp 8 8
+place_building lamp 18 8
+place_building lamp 28 8
+place_building lamp 38 8
+place_building lamp 48 8
+place_building lamp 8 18
+place_building lamp 18 18
+place_building lamp 28 18
+place_building lamp 38 18
+place_building lamp 48 18
+place_building lamp 8 38
+place_building lamp 18 38
+place_building lamp 28 38
+place_building lamp 38 38
+place_building lamp 48 38
+place_building lamp 8 48
+place_building lamp 18 48
+place_building lamp 28 48
+place_building lamp 38 48
+place_building lamp 48 48
+wait_frames 2
+assert_cash eq 7000
+wait 10
+assert_park_rating gt 502
+assert_park_rating lt 507
+screenshot grounds_lamp_scenery

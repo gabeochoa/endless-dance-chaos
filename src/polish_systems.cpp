@@ -13,7 +13,7 @@ static bool any_path_placed() {
     if (!grid) return false;
     for (int z = PLAY_MIN; z <= PLAY_MAX; z++)
         for (int x = PLAY_MIN; x <= PLAY_MAX; x++)
-            if (grid->at(x, z).type == TileType::Path) return true;
+            if (is_path_tile(grid->at(x, z).type)) return true;
     return false;
 }
 

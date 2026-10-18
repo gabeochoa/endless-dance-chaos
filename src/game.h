@@ -95,6 +95,39 @@ constexpr int STAGE_SIZE = 4;  // 4x4 footprint
 constexpr float SPEED_PATH = 0.5f;
 constexpr float SPEED_GRASS = 0.25f;
 
+// Footpaths: 3 placeable types, one data-driven table (PATH_TYPE_INFOS
+// in components.h). Path == Concrete, the standard. Dirt is cheap and
+// slow (no wear/decay mechanic: "slow" is its whole downside). Neon is
+// premium: agents prefer it (largest pathfinding bonus) and move
+// slightly faster on it.
+constexpr int DIRT_PATH_COST_PER_TILE = 5;
+constexpr int CONCRETE_PATH_COST_PER_TILE = 10;
+constexpr int NEON_PATH_COST_PER_TILE = 25;
+constexpr float SPEED_DIRT_PATH = 0.35f;
+constexpr float SPEED_NEON_PATH = 0.60f;
+// Pathfinding bonus: subtracted from a neighbor tile's score when the
+// step does not move away from the goal, so a bonus never pulls an
+// agent backwards. Equal-length routes resolve toward the higher bonus.
+constexpr float PATH_PREFERENCE_DIRT = 0.25f;
+constexpr float PATH_PREFERENCE_CONCRETE = 0.5f;
+constexpr float PATH_PREFERENCE_NEON = 1.5f;
+
+// Lamps: placeable decor. A lamp tile glows at night via the existing
+// lamp logic (is_lamp_tile) and counts toward scenery coverage at half
+// a tree's weight. No separate night-only rating bonus: the scenery
+// coverage term is the lamp's rating effect.
+constexpr int LAMP_COST = 150;
+constexpr float LAMP_SCENERY_WEIGHT = 0.5f;
+
+// Terrain height: fixed per expansion plot, no terraforming tool.
+// The 2nd plot bought on an axis is raised +1 step; the 1st plot on an
+// axis stays flat. Tile::height stores the step. Movement ignores
+// height entirely (flat pathfinding/speed/targeting); height only
+// lifts the rendered tile, its buildings/trees/lamps, and the peeps
+// standing on it.
+constexpr int EXPANSION_RAISED_PLOT_INDEX = 2;
+constexpr int EXPANSION_RAISED_HEIGHT = 1;
+
 // Spawn rate
 constexpr float DEFAULT_SPAWN_INTERVAL = 2.0f;  // seconds between spawns
 
