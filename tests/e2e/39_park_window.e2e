@@ -1,0 +1,76 @@
+# RCT2 park window: one floating tabbed window (Park / Finances /
+# Guests / Staff / Lineup) with title bar. Tabs switch content pages;
+# tab clicks and set_window_tab agree; per-page buttons still work.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- Title bar + default tab (Park) ---
+expect_text "Endless Dance Chaos"
+assert_window_tab park
+expect_text "Tier: Local Fair"
+expect_text "Rating: 500"
+expect_text "Deaths: 0/10"
+
+# --- Finances tab by click: cash/ticket/earned/spent + price buttons ---
+click 1098 145
+wait_frames 2
+assert_window_tab finances
+expect_text "Cash: $10000"
+expect_text "Ticket: $20"
+expect_text "Earned: $0"
+expect_text "Spent: $0"
+# Price + button (centre 1190,204) raises the ticket to $25.
+click 1190 204
+wait_frames 2
+assert_ticket_price eq 25
+expect_text "Ticket: $25"
+# Price - button (centre 1162,204) lowers it back.
+click 1162 204
+wait_frames 2
+assert_ticket_price eq 20
+
+# --- Guests tab by command: counts / needs summary ---
+set_window_tab guests
+wait_frames 2
+assert_window_tab guests
+expect_text "Attendees: 0"
+expect_text "Watching stage: 0"
+spawn_agents 25 25 3 stage
+wait_frames 2
+expect_text "Attendees: 3"
+
+# --- Staff tab by click: roster + hire/fire buttons ---
+click 1206 145
+wait_frames 2
+assert_window_tab staff
+expect_text "Staff: G0 M0 J0"
+# Guard hire "+" (centre 1172,209), then fire "-" (centre 1224,209).
+click 1172 209
+wait_frames 3
+assert_staff_count guard eq 1
+assert_cash eq 9700
+expect_text "Guard 1"
+click 1224 209
+wait_frames 3
+assert_staff_count guard eq 0
+assert_cash eq 9700
+
+# --- Lineup tab by click: timeline + BOOK ACTS, panel click books ---
+click 1254 145
+wait_frames 2
+assert_window_tab lineup
+expect_text "LINEUP"
+expect_text "BOOK ACTS"
+expect_text "Next: -"
+click 1248 402
+wait_frames 3
+assert_booked_count eq 1
+assert_booked_act poets
+expect_text "Next: PottyPoets"
+screenshot 39_park_window_lineup
+
+# --- Reset restores the default tab (Park) ---
+reset_game
+wait_frames 2
+assert_window_tab park

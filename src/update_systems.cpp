@@ -127,6 +127,19 @@ struct UpdateToastsSystem : System<ToastMessage> {
     }
 };
 
+// Age money floaters and drop expired ones. Plain-vector state (not
+// ECS), so this is a System<> over the static list, not a per-entity
+// system like toasts.
+struct UpdateMoneyFloatersSystem : System<> {
+    void once(float dt) override {
+        auto& items = money_floaters().items;
+        for (auto& f : items) f.elapsed += dt;
+        std::erase_if(items, [](const MoneyFloater& f) {
+            return f.elapsed >= f.lifetime;
+        });
+    }
+};
+
 // Check if death count has reached max -> game over.
 // Also fires when the health inspector triggers a shutdown.
 struct CheckGameOverSystem : System<> {
@@ -252,6 +265,7 @@ void register_update_systems(SystemManager& sm) {
 
     // Core late
     sm.register_update_system(std::make_unique<UpdateToastsSystem>());
+    sm.register_update_system(std::make_unique<UpdateMoneyFloatersSystem>());
     sm.register_update_system(std::make_unique<CheckGameOverSystem>());
     sm.register_update_system(std::make_unique<RestartGameSystem>());
 

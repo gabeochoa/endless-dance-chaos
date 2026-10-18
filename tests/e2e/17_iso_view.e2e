@@ -6,6 +6,10 @@ wait_frames 2
 
 # Default view is iso (reset restores it).
 assert_view iso
+# Default framing: distance 18 => 80px tiles, 32 tile-steps across the
+# full 1280px width (~28 across the 1130px main view), so buildings and
+# peeps read clearly instead of the whole 52x52 park at once.
+assert_zoom == 18
 screenshot 17_iso_default
 
 # Mouse placement through the iso projection: click_grid converts the

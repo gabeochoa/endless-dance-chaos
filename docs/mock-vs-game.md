@@ -23,6 +23,23 @@ Real-game capture: tests/e2e/screenshots/tycoon_02_built_festival.png.
 
 Next chunks: (1) iso projection pass, (2) peep bubbles, (3) window-framed panels.
 
+## Update 2026-10-18 (iso framing + RCT2 windows + money floaters)
+
+- Gap #1 framing: default iso zoom is now distance 18 (80px tiles,
+  ~32 tile-steps across 1280px / ~28 across the 1130px main view),
+  centred on the park centre; `reset_game` restores zoom + target so
+  `17_iso_default` is deterministic. Wheel / pinch zoom unchanged.
+- Gap #3 windows: the stacked sidebar blocks are one floating tabbed
+  window (Park / Finances / Guests / Staff / Lineup) with a title bar
+  (`Endless Dance Chaos`, FPS, close/minimize deco). All prior labels
+  + buttons kept (booking rows, hire/fire, price buttons); the bottom
+  bar stays the toolbar with a rating + cash + day readout at its
+  right, over the minimap's Locked-land strip.
+- Gap #5 floaters: `+$N` rising/fading text at the gate on ticket
+  sale and at the Bar on service, via world->screen in the active
+  projection; at most 4 alive, same-anchor sales within 1s merge
+  (amounts sum). E2E: `expect_text "+$N"` or `assert_floater_count`.
+
 ## Update 2026-10-17 (real mock renders)
 Mock PNGs rendered on devvm48270 (swiftshader-webgl; single-file bundles
 for capture, repo mocks stay modular). The iso grid, tabbed windows,

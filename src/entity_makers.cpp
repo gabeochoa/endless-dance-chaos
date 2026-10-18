@@ -6,7 +6,9 @@
 #include "engine/random_engine.h"
 #include "game.h"
 #include "input_mapping.h"
+#include "render_helpers.h"
 #include "systems.h"
+#include "update_helpers.h"
 
 using namespace afterhours;
 
@@ -110,6 +112,10 @@ Entity& make_agent(int grid_x, int grid_z, FacilityType want, int target_x,
         grid->at(grid_x, grid_z).type == TileType::Gate) {
         if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
             econ->earn(econ->ticket_price);
+            // Ticket sale: +$N floater at the gate (throttled/merged
+            // by spawn_money_floater).
+            spawn_money_floater(grid_x * TILESIZE, grid_z * TILESIZE,
+                                econ->ticket_price);
         }
         // Paid arrivals count toward attendee milestones.
         if (auto* gs = EntityHelper::get_singleton_cmp<GameState>()) {
@@ -155,6 +161,8 @@ void reset_game_state() {
     for (Entity& ev : events) ev.cleanup = true;
     auto markers = EntityQuery().whereHasComponent<DeathMarker>().gen();
     for (Entity& m : markers) m.cleanup = true;
+    // Money floaters are plain data (see components.h), not entities.
+    money_floaters().items.clear();
     auto staff = EntityQuery().whereHasComponent<StaffMember>().gen();
     for (Entity& s : staff) s.cleanup = true;
     EntityHelper::cleanup();
@@ -280,11 +288,20 @@ void reset_game_state() {
         lineup->active.clear();
     }
 
-    // Reset the view mode to the default (iso ON). Rotation and pan
-    // target are intentionally left alone (existing behavior).
+    // Reset the view to the default framing: iso ON, default zoom
+    // (distance), camera re-centred on the park centre. Rotation is
+    // intentionally left alone (existing behavior). Without the
+    // distance/target reset, a previous run's zoomed-out camera would
+    // leak into the fresh game (e.g. 17_iso_default captured at the
+    // pinch test's distance 50 instead of the default 18).
     if (auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>()) {
         cam->cam.iso_mode = true;
+        cam->cam.target = {(PLAY_MAX + 1) / 2.0f, 0, (PLAY_MAX + 1) / 2.0f};
+        cam->cam.set_distance(IsometricCamera::DEFAULT_DISTANCE);
     }
+
+    // Reset the park window to its default tab (Park).
+    park_window_active_tab() = 0;
 
     // Reset the event director: default seed + fresh day bookkeeping,
     // so a restart never inherits the previous run's event sequence.

@@ -714,6 +714,10 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
                     if (auto* econ =
                             EntityHelper::get_singleton_cmp<Economy>()) {
                         econ->earn(BAR_DRINK_PRICE);
+                        // Drink sale: +$N floater at the bar.
+                        spawn_money_floater(bs.facility_grid_x * TILESIZE,
+                                            bs.facility_grid_z * TILESIZE,
+                                            BAR_DRINK_PRICE);
                     }
                     needs.needs_bar = false;
                     needs.bar_timer = 0.f;

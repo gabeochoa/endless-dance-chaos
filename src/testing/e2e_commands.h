@@ -2903,6 +2903,82 @@ static void cmd_set_need_timer(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// ── Park window tabs + money floaters ────────────────────────────────────
+
+// set_window_tab NAME|INDEX — switch the park window's active tab
+// (park 0, finances 1, guests 2, staff 3, lineup 4). Same effect as
+// clicking the tab row; reset_game restores Park.
+static int parse_window_tab(const std::string& arg, bool& ok) {
+    std::string lower = arg;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    ok = true;
+    if (lower == "park") return 0;
+    if (lower == "finances" || lower == "finance") return 1;
+    if (lower == "guests" || lower == "guest") return 2;
+    if (lower == "staff") return 3;
+    if (lower == "lineup" || lower == "line-up") return 4;
+    try {
+        int idx = std::stoi(lower);
+        if (idx >= 0 && idx < 5) return idx;
+    } catch (...) {
+    }
+    ok = false;
+    return -1;
+}
+
+static void cmd_set_window_tab(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_window_tab requires NAME|INDEX");
+        return;
+    }
+    bool ok = false;
+    int tab = parse_window_tab(cmd.arg(0), ok);
+    if (!ok) {
+        cmd.fail(fmt::format("set_window_tab: unknown tab '{}'", cmd.arg(0)));
+        return;
+    }
+    park_window_active_tab() = tab;
+    cmd.consume();
+}
+
+static void cmd_assert_window_tab(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_window_tab requires NAME|INDEX");
+        return;
+    }
+    bool ok = false;
+    int expected = parse_window_tab(cmd.arg(0), ok);
+    if (!ok) {
+        cmd.fail(
+            fmt::format("assert_window_tab: unknown tab '{}'", cmd.arg(0)));
+        return;
+    }
+    int actual = park_window_active_tab();
+    if (actual != expected)
+        cmd.fail(fmt::format("assert_window_tab failed: expected {}, got {}",
+                             expected, actual));
+    else
+        cmd.consume();
+}
+
+// assert_floater_count OP VALUE — live money floaters (the
+// visibility-independent floater assert; expect_text "+$N" is the
+// visible-text one).
+static void cmd_assert_floater_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_floater_count requires OP VALUE");
+        return;
+    }
+    int actual = (int) money_floaters().items.size();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_floater_count failed: {} {} {} "
+                        "(actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -3049,6 +3125,9 @@ static void init_e2e_registry() {
     r.add("set_view", cmd_set_view);
     r.add("assert_view", cmd_assert_view);
     r.add("set_need_timer", cmd_set_need_timer);
+    r.add("set_window_tab", cmd_set_window_tab);
+    r.add("assert_window_tab", cmd_assert_window_tab);
+    r.add("assert_floater_count", cmd_assert_floater_count);
 }
 
 void register_e2e_systems(SystemManager& sm) {

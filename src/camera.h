@@ -25,8 +25,18 @@ struct IsometricCamera {
     static constexpr float ISO_CENTER_X = (DEFAULT_SCREEN_WIDTH - 150) / 2.0f;
     static constexpr float ISO_CENTER_Y = (44.0f + 644.0f) / 2.0f;
 
+    // Default iso zoom: tiles spanning the screen width, measured as
+    // tile-steps across the width (dx-dz range = 2 * width / tile_w).
+    // At distance 18 the tile is 80px wide, so the full 1280px width
+    // spans 32 tile-steps and the 1130px main view spans ~28 — i.e.
+    // ~28-34 tiles across, a zoomed-in framing where buildings and
+    // peeps read clearly instead of the whole 52x52 park at once
+    // (~53 steps at the old distance of 30). The player can still
+    // zoom out to the whole park (distance 50) via wheel / pinch.
+    static constexpr float DEFAULT_DISTANCE = 18.0f;
+
     // Camera distance and angle settings
-    float distance = 30.0f;
+    float distance = DEFAULT_DISTANCE;
     float min_distance = 5.0f;
     float max_distance = 50.0f;
     float scroll_sensitivity = 2.0f;
@@ -101,8 +111,8 @@ struct IsometricCamera {
     }
 
     // ── 2D iso projection ──────────────────────────────────────────
-    // Tile size in px, driven by the shared zoom (distance): 48px at the
-    // default distance of 30, 2:1 diamonds (TILE_H = TILE_W / 2).
+    // Tile size in px, driven by the shared zoom (distance): 80px at the
+    // default distance of 18, 2:1 diamonds (TILE_H = TILE_W / 2).
     float iso_tile_w() const { return 1440.0f / distance; }
     float iso_tile_h() const { return iso_tile_w() * 0.5f; }
 

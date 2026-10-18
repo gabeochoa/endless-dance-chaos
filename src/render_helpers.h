@@ -236,3 +236,12 @@ inline NewsTicker& news_ticker() {
 // Edge-detects game events (inspection verdicts, milestones, deaths,
 // injuries, day rollovers, shutdown) and feeds them to the ticker queue.
 void ticker_poll_events();
+
+// Active tab of the RCT2 park window (render_ui.cpp): 0 Park,
+// 1 Finances, 2 Guests, 3 Staff, 4 Lineup. Default Park. E2E
+// set_window_tab / assert_window_tab and reset_game_state share it
+// through this accessor so no render-only static leaks into tests.
+inline int& park_window_active_tab() {
+    static int tab = 0;
+    return tab;
+}

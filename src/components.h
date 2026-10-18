@@ -608,6 +608,55 @@ struct GameState : afterhours::BaseComponent {
     bool is_game_over() const { return status == GameStatus::GameOver; }
 };
 
+// Floating +$N popup on ticket sales (gate) and bar service (bar).
+// Rendered by RenderMoneyFloatersSystem from world->screen of its
+// anchor in the active projection; aged by UpdateMoneyFloatersSystem.
+// Plain data in a static vector, NOT ECS entities: spawn_money_floater
+// runs inside make_agent, while the just-created agent still sits in
+// temp — an EntityQuery there would abort (query-while-temp-pending).
+struct MoneyFloater {
+    float world_x = 0.f;
+    float world_z = 0.f;
+    int amount = 0;
+    float elapsed = 0.f;
+    float lifetime = 1.5f;
+};
+
+struct MoneyFloaterState {
+    std::vector<MoneyFloater> items;
+};
+
+inline MoneyFloaterState& money_floaters() {
+    static MoneyFloaterState state;
+    return state;
+}
+
+// Money floater: +$N popup at (world_x, world_z) on a ticket sale or
+// bar service. Throttle: at most 4 alive. Sales at the same anchor
+// within 1s merge into the live floater (amounts sum, so a busy gate
+// shows one "+$100" instead of five "+$20"s); once at capacity a new
+// sale merges into the oldest floater instead of spawning a fifth.
+inline void spawn_money_floater(float world_x, float world_z, int amount) {
+    auto& items = money_floaters().items;
+    for (auto& f : items) {
+        if (f.world_x == world_x && f.world_z == world_z && f.elapsed < 1.0f) {
+            f.amount += amount;
+            return;
+        }
+    }
+    if (items.size() >= 4) {
+        MoneyFloater* oldest = nullptr;
+        for (auto& f : items) {
+            if (!oldest || f.elapsed > oldest->elapsed) oldest = &f;
+        }
+        if (oldest) {
+            oldest->amount += amount;
+            return;
+        }
+    }
+    items.push_back(MoneyFloater{world_x, world_z, amount, 0.f, 1.5f});
+}
+
 // Toast notification (fades after a few seconds)
 struct ToastMessage : afterhours::BaseComponent {
     std::string text;
@@ -847,7 +896,7 @@ inline float park_rating_inspection_bonus(char grade) {
 }
 
 // ── Lineup booking + festival tiers ──────────────────────────────────────
-// Bookable acts: the data table for the sidebar booking panel. `draw_mult`
+// Bookable acts: the data table for the window booking panel. `draw_mult`
 // multiplies next-day arrivals (spawn rate), `fun_mult` multiplies
 // stage-watch duration while the act is playing. `min_tier` gates the act
 // in the booking panel until the festival reaches that tier.
@@ -856,7 +905,7 @@ inline float park_rating_inspection_bonus(char grade) {
 struct BookableAct {
     const char* id;          // single-token E2E / lookup key, e.g. "cardboard"
     const char* name;        // full satirical name, shown in toasts
-    const char* short_name;  // sidebar row label
+    const char* short_name;  // window row label
     const char* genre;
     const char* flavor;  // one-line satirical blurb (booking tooltip)
     int fee;             // cash paid at booking time, never refunded

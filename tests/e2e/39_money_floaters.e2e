@@ -1,0 +1,67 @@
+# Money floaters (mock-vs-game gap #5): +$N popups on ticket sales
+# (gate) and bar service, throttled to 4 alive with same-anchor
+# aggregation (sum per second).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- Gate sale: one agent through the gate pops +$20 ---
+assert_floater_count eq 0
+spawn_agent 0 26 stage
+expect_text "+$20"
+assert_floater_count gte 1
+assert_cash eq 10020
+
+# --- Aggregation: 5 gate sales in one burst sum into one "+$100" ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agents 0 26 5 stage
+expect_text "+$100"
+assert_floater_count eq 1
+assert_cash eq 10100
+
+# --- Bar service: a served drink pops +$8 at the bar ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+place_building bar 40 10
+wait_frames 2
+spawn_agent 40 10 bar
+wait_frames 2
+force_need bar
+# Service takes ~1s; the floater then lives 1.5s, so at wait 2 it is
+# mid-life (expect_text only retries 30 frames, it cannot wait out
+# the service itself).
+wait 2
+expect_text "+$8"
+assert_floater_count gte 1
+assert_cash eq 9408
+
+# --- Cap: 5 simultaneous bar sales at 5 bars -> at most 4 alive,
+# the 5th merges into the oldest, which then reads "+$16" ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+place_building bar 40 10
+place_building bar 40 14
+place_building bar 40 18
+place_building bar 40 22
+place_building bar 40 26
+wait_frames 2
+spawn_agent 40 10 bar
+spawn_agent 40 14 bar
+spawn_agent 40 18 bar
+spawn_agent 40 22 bar
+spawn_agent 40 26 bar
+wait_frames 2
+force_need bar
+# Same wait as above: services complete at ~1s, floaters live 1.5s.
+wait 2
+expect_text "+$16"
+assert_floater_count eq 4
+
+# --- Reset clears floaters ---
+reset_game
+wait_frames 2
+assert_floater_count eq 0

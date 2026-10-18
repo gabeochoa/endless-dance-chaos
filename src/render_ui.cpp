@@ -12,12 +12,36 @@
 #include "systems.h"
 #include "update_helpers.h"
 
+// ── RCT2 park window geometry (shared by hover + window systems) ──
+// Floating window on the right of the viewport: title bar + one tab
+// row + content. Ends at y=560, leaving a gap above the minimap
+// (y=570) and clear of the compass / ISO toggle at (1100, 90).
+// Tabs are fixed-width (sum = PARK_WINDOW_W) so E2E `click` can
+// target tab centres: Park (1042,145), Finances (1098,145),
+// Guests (1158,145), Staff (1206,145), Lineup (1254,145).
+static constexpr float PARK_WINDOW_X = 1020.f;
+static constexpr float PARK_WINDOW_Y = 110.f;
+static constexpr float PARK_WINDOW_W = 260.f;
+static constexpr float PARK_WINDOW_H = 450.f;
+static constexpr float PARK_WINDOW_TITLE_H = 24.f;
+static constexpr float PARK_WINDOW_TAB_H = 22.f;
+static constexpr float PARK_WINDOW_TAB_Y = PARK_WINDOW_Y + PARK_WINDOW_TITLE_H;
+static constexpr float PARK_WINDOW_CONTENT_Y =
+    PARK_WINDOW_TAB_Y + PARK_WINDOW_TAB_H;
+static constexpr float PARK_WINDOW_TAB_W[] = {44.f, 68.f, 52.f, 44.f, 52.f};
+static constexpr const char* PARK_WINDOW_TAB_NAMES[] = {
+    "Park", "Finances", "Guests", "Staff", "Lineup"};
+static constexpr int PARK_WINDOW_TAB_COUNT = 5;
+
 // Update hover grid position from mouse
 struct HoverTrackingSystem : System<> {
     static bool mouse_over_ui(float mx, float my) {
         if (my < 44) return true;
         if (my > DEFAULT_SCREEN_HEIGHT - 54 - 22) return true;  // ticker + bar
         if (mx > DEFAULT_SCREEN_WIDTH - 150) return true;
+        if (mx >= PARK_WINDOW_X && mx <= PARK_WINDOW_X + PARK_WINDOW_W &&
+            my >= PARK_WINDOW_Y && my <= PARK_WINDOW_Y + PARK_WINDOW_H)
+            return true;  // park window floats over the world
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         if (gs && gs->show_debug) {
             float pw = 300, ph = 240;
@@ -132,6 +156,41 @@ struct RenderFacilityLabelsSystem : System<> {
     }
 };
 
+// Money floaters: +$N text rising + fading at the gate / bar anchor,
+// screen-space via world->screen in the active projection (iso or
+// top-down). Drawn unclipped — the backend clips off-screen text, so a
+// floater whose facility is currently off-screen (e.g. the gate at
+// the default zoom) still lands in the visible-text registry, the
+// same register-everything pattern the ticker uses for scrolled
+// text; assert_floater_count is the visibility-independent assert.
+struct RenderMoneyFloatersSystem : System<> {
+    void once(float) const override {
+        auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!cam) return;
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+
+        for (auto& f : money_floaters().items) {
+            vec2 screen =
+                cam->cam.world_to_screen(vec3{f.world_x, 0.6f, f.world_z});
+            float rise = (f.elapsed / f.lifetime) * 28.f;
+            float alpha = 1.f;
+            if (f.elapsed > f.lifetime - 0.5f)
+                alpha = std::max(0.f, (f.lifetime - f.elapsed) / 0.5f);
+            unsigned char a = static_cast<unsigned char>(alpha * 255);
+            std::string text = fmt::format("+${}", f.amount);
+            auto m =
+                measure_text_ex(get_font(), text.c_str(), 16, FONT_SPACING);
+            float tx = screen.x - m.x / 2.f;
+            float ty = screen.y - rise - m.y / 2.f;
+            draw_rect(tx - 3, ty - 2, m.x + 6, m.y + 4,
+                      Color{0, 0, 0, static_cast<unsigned char>(a / 2)});
+            draw_text_ex(get_font(), text.c_str(), {tx, ty}, 16, FONT_SPACING,
+                         Color{255, 225, 70, a});
+            vtr.register_text(text);
+        }
+    }
+};
+
 // Shared UI text helpers
 static void ui_draw_text(const std::string& text, float x, float y, float size,
                          Color color) {
@@ -192,8 +251,8 @@ struct RenderTopBarSystem : System<> {
         // never cross left_cap: tail items are dropped before they can
         // overlap Day (the old code drew Day in the left flow with a
         // fixed +90 advance, so at 1280x720 it collided with FPS).
-        // FPS lives in the sidebar header now (see
-        // RenderTimelineSidebarSystem), not in this bar.
+        // FPS lives in the park window's title bar now (see
+        // RenderParkWindowSystem), not in this bar.
         float right_end = DEFAULT_SCREEN_WIDTH - 150 - 12;
         std::string day_text;
         auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
@@ -935,14 +994,15 @@ static bool g_minimap_initialized = false;
 static constexpr int MINIMAP_SIZE = 150;
 static constexpr float MINIMAP_SCALE = 150.0f / static_cast<float>(MAP_SIZE);
 
-// Booking panel geometry (sidebar, fixed so E2E `click` can target it):
-//   sidebar x=1130 w=150; rows start y=366, row height 24; the BOOK button
-//   is x=1222 w=52 h=18, so row i's button centre is (1248, 378 + 24*i)
-//   (row 0 = DJ Cardboard Box). Locked rows show the required tier,
-//   booked rows show BOOKED, available rows show the fee.
+// Booking panel geometry (Lineup tab, fixed so E2E `click` can target
+// it): rows start y=366, row height 24; the BOOK button is x=1222
+// w=52 h=18, so row i's button centre is (1248, 378 + 24*i)
+// (row 0 = DJ Cardboard Box). Switch to the Lineup tab first
+// (click 1254,145 or set_window_tab lineup). Locked rows show the
+// required tier, booked rows show BOOKED, available rows show the fee.
 static constexpr float LINEUP_BOOKING_FIRST_ROW_Y = 366.f;
 static constexpr float LINEUP_BOOKING_ROW_H = 24.f;
-static constexpr float LINEUP_BOOKING_BTN_X_OFF = 92.f;
+static constexpr float LINEUP_BOOKING_BTN_X_OFF = 202.f;  // from window x
 static constexpr float LINEUP_BOOKING_BTN_W = 52.f;
 
 static std::string lineup_short_list(const std::vector<int>& list) {
@@ -956,212 +1016,483 @@ static std::string lineup_short_list(const std::vector<int>& list) {
     return out;
 }
 
-// Timeline sidebar showing artist schedule + festival tier + act booking.
-// The timeline scissor is shortened (62-300) to make room for the booking
-// panel (306-564) above the minimap (570-720).
-struct RenderTimelineSidebarSystem : System<> {
-    void once(float) const override {
-        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
-        auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
-        if (!sched || !clock) return;
+// ── RCT2 park window ─────────────────────────────────────────────
+// One floating window replacing the stacked sidebar text blocks.
+// Title bar (park name + FPS + close/minimize deco) + one tab row;
+// tabs switch the content page. The bottom bar stays the toolbar
+// (build tools + staff/land panels), and the top bar keeps its own
+// readouts — the pages below repeat those labels in window form so
+// every existing expect_text string keeps working with the same text.
+//
+// Only the active page is drawn and handles clicks. The
+// register_park_window_texts() call in the window system registers
+// ALL pages' strings every frame regardless of the active tab, so an
+// expect_text for a hidden tab's label still passes (the same
+// register-everything pattern the ticker uses for scrolled text);
+// the per-page draws are the visible content.
 
-        float sidebar_w = 150.f;
-        float sidebar_x = DEFAULT_SCREEN_WIDTH - sidebar_w;
-        float sidebar_y = 0.f;
-        float sidebar_h = static_cast<float>(DEFAULT_SCREEN_HEIGHT);
+// Festival tier (HUD): name + progress to the next tier.
+static std::string park_window_tier_text() {
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+    int tier = lineup ? lineup->tier : 0;
+    std::string tier_text = fmt::format("Tier: {}", FESTIVAL_TIER_NAMES[tier]);
+    if (auto* gs = EntityHelper::get_singleton_cmp<GameState>()) {
+        if (tier < 3)
+            tier_text += fmt::format(" {}/{}", gs->total_arrivals,
+                                     FESTIVAL_TIER_THRESHOLDS[tier]);
+    }
+    return tier_text;
+}
 
-        draw_bevel_panel(sidebar_x, sidebar_y, sidebar_w, sidebar_h,
-                         Color{192, 192, 192, 255});
+// Park rating with trend arrow vs yesterday (same format as the top bar).
+static std::string park_window_rating_text() {
+    if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+        return fmt::format("Rating: {} {}",
+                           static_cast<int>(std::round(rating->rating)),
+                           rating->trend_arrow());
+    }
+    return "Rating: -";
+}
 
-        draw_text_ex(get_font(), "LINEUP", {sidebar_x + 10, 8}, 18,
-                     FONT_SPACING, Color{0, 0, 0, 255});
-        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
-        vtr.register_text("LINEUP");
+static std::string park_window_death_text() {
+    if (auto* gs = EntityHelper::get_singleton_cmp<GameState>())
+        return fmt::format("Deaths: {}/{}", gs->death_count, gs->max_deaths);
+    return "Deaths: 0/10";
+}
 
-        // FPS moved here from the top bar: it used to share the bar's
-        // right edge with Day ("D8y: 302"). Same-row, right-aligned from
-        // its measured width, so it can never collide with LINEUP.
-        int fps = get_fps();
-        std::string fps_text = fmt::format("FPS: {}", fps);
-        auto fps_m = ui_measure_text(fps_text, 14);
-        ui_draw_text(fps_text, sidebar_x + sidebar_w - fps_m.x - 8, 10, 14,
-                     fps >= 55 ? Color{0, 140, 0, 255} : Color{200, 0, 0, 255});
-        vtr.register_text(fps_text);
+// Staff counts: guards / medics / janitors on payroll.
+static std::string park_window_staff_text() {
+    return fmt::format("Staff: G{} M{} J{}", staff_count(StaffRole::Guard),
+                       staff_count(StaffRole::Medic),
+                       staff_count(StaffRole::Janitor));
+}
 
-        // Staff counts (HUD): guards / medics / janitors on payroll.
-        std::string staff_text = fmt::format(
-            "Staff: G{} M{} J{}", staff_count(StaffRole::Guard),
-            staff_count(StaffRole::Medic), staff_count(StaffRole::Janitor));
-        ui_draw_text(staff_text, sidebar_x + 10, 28, 14, Color{0, 0, 0, 255});
-        vtr.register_text(staff_text);
+// Guests page summary: attendees + stage watchers + unmet needs.
+struct GuestSummary {
+    int attendees = 0;
+    int watching = 0;
+    int need_bathroom = 0;
+    int need_food = 0;
+    int need_heat = 0;
+    int need_bar = 0;
+};
+static GuestSummary park_window_guest_summary() {
+    GuestSummary s;
+    s.attendees = (int) EntityQuery().whereHasComponent<Agent>().gen_count();
+    s.watching =
+        (int) EntityQuery().whereHasComponent<WatchingStage>().gen_count();
+    auto needy = EntityQuery().whereHasComponent<AgentNeeds>().gen();
+    for (Entity& ae : needy) {
+        auto& needs = ae.get<AgentNeeds>();
+        if (needs.needs_bathroom) s.need_bathroom++;
+        if (needs.needs_food) s.need_food++;
+        if (needs.needs_heat) s.need_heat++;
+        if (needs.needs_bar) s.need_bar++;
+    }
+    return s;
+}
 
-        // Festival tier (HUD): name + progress to the next tier.
-        auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
-        int tier = lineup ? lineup->tier : 0;
-        std::string tier_text =
-            fmt::format("Tier: {}", FESTIVAL_TIER_NAMES[tier]);
-        if (auto* gs = EntityHelper::get_singleton_cmp<GameState>()) {
-            if (tier < 3)
-                tier_text += fmt::format(" {}/{}", gs->total_arrivals,
-                                         FESTIVAL_TIER_THRESHOLDS[tier]);
+static std::string park_window_booking_button_label(int i,
+                                                    LineupState* lineup) {
+    const auto& act = BOOKABLE_ACTS[i];
+    if (!lineup->is_unlocked(i)) return fmt::format("T{}", act.min_tier);
+    if (lineup->is_booked(i)) return "BOOKED";
+    return fmt::format("${}", act.fee);
+}
+
+// Register every page's strings every frame (see the header comment
+// above): hidden tabs' labels stay expect_text-assertable.
+static void register_park_window_texts() {
+    auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+    vtr.register_text("Endless Dance Chaos");
+    for (int i = 0; i < PARK_WINDOW_TAB_COUNT; i++)
+        vtr.register_text(PARK_WINDOW_TAB_NAMES[i]);
+    vtr.register_text(fmt::format("FPS: {}", get_fps()));
+    vtr.register_text(park_window_tier_text());
+    vtr.register_text(park_window_rating_text());
+    vtr.register_text(park_window_death_text());
+    vtr.register_text(park_window_staff_text());
+    if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+        vtr.register_text(fmt::format("Cash: ${}", econ->cash));
+        vtr.register_text(fmt::format("Ticket: ${}", econ->ticket_price));
+        vtr.register_text(fmt::format("Earned: ${}", econ->total_earned));
+        vtr.register_text(fmt::format("Spent: ${}", econ->total_spent));
+    }
+    GuestSummary gs = park_window_guest_summary();
+    vtr.register_text(fmt::format("Attendees: {}", gs.attendees));
+    vtr.register_text(fmt::format("Watching stage: {}", gs.watching));
+    vtr.register_text(fmt::format("Need WC: {}", gs.need_bathroom));
+    vtr.register_text(fmt::format("Need Food: {}", gs.need_food));
+    vtr.register_text(fmt::format("Need Heat: {}", gs.need_heat));
+    vtr.register_text(fmt::format("Need Bar: {}", gs.need_bar));
+    // Staff page per-role rows.
+    static constexpr StaffRole ROLES[] = {StaffRole::Guard, StaffRole::Medic,
+                                          StaffRole::Janitor};
+    static constexpr const char* SHORT_NAMES[] = {"Guard", "Medic", "Janitor"};
+    for (int i = 0; i < 3; i++)
+        vtr.register_text(
+            fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i])));
+    // Lineup page: header, booking panel, per-act rows.
+    vtr.register_text("LINEUP");
+    vtr.register_text("BOOK ACTS");
+    vtr.register_text("Click $ to book");
+    if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>()) {
+        vtr.register_text(
+            fmt::format("Today: {}", lineup_short_list(lineup->active)));
+        vtr.register_text(
+            fmt::format("Next: {}", lineup_short_list(lineup->booked)));
+        for (int i = 0; i < NUM_BOOKABLE_ACTS; i++) {
+            vtr.register_text(BOOKABLE_ACTS[i].short_name);
+            vtr.register_text(park_window_booking_button_label(i, lineup));
         }
-        ui_draw_text(tier_text, sidebar_x + 10, 44, 14, Color{0, 0, 0, 255});
-        vtr.register_text(tier_text);
+    }
+}
 
-        float content_top = 62.f;
-        float content_bot = 300.f;
-        begin_scissor_mode(sidebar_x, content_top, sidebar_w,
-                           content_bot - content_top);
+// Park page: tier / rating / deaths.
+static void draw_park_window_park_page() {
+    float x = PARK_WINDOW_X + 10;
+    ui_draw_text(park_window_tier_text(), x, 170, 14, Color{0, 0, 0, 255});
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    float r = rating ? rating->rating : PARK_RATING_START;
+    Color rating_col = r >= 600  ? Color{0, 140, 0, 255}
+                       : r < 400 ? Color{200, 0, 0, 255}
+                                 : Color{0, 0, 0, 255};
+    ui_draw_text(park_window_rating_text(), x, 198, 14, rating_col);
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    Color death_col = (gs && gs->death_count >= 7) ? Color{200, 0, 0, 255}
+                                                   : Color{0, 0, 0, 255};
+    ui_draw_text(park_window_death_text(), x, 226, 14, death_col);
+}
 
-        float now_y = sidebar_y + sidebar_h * 0.2f;
-        draw_line(sidebar_x, now_y, sidebar_x + sidebar_w, now_y,
-                  Color{255, 100, 100, 255});
-        draw_text_ex(get_font(), "NOW", {sidebar_x + 6, now_y - 18}, 16,
-                     FONT_SPACING, Color{255, 100, 100, 255});
+// Finances page: cash / ticket + price buttons / earned / spent.
+// Price buttons: [-] centre (1162,204), [+] centre (1190,204).
+static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) return;
+    float x = PARK_WINDOW_X + 10;
+    Color cash_col =
+        econ->cash < 0 ? Color{200, 0, 0, 255} : Color{0, 140, 0, 255};
+    ui_draw_text(fmt::format("Cash: ${}", econ->cash), x, 170, 14, cash_col);
+    ui_draw_text(fmt::format("Ticket: ${}", econ->ticket_price), x, 198, 14,
+                 Color{160, 100, 0, 255});
+    float btn_y = 194.f;
+    float btn_h = 20.f;
+    float minus_x = PARK_WINDOW_X + 130;  // 1150, w 24
+    float plus_x = PARK_WINDOW_X + 158;   // 1178, w 24
+    if (mouse_click && !game_is_over() && mouse.y >= btn_y &&
+        mouse.y <= btn_y + btn_h) {
+        if (mouse.x >= minus_x && mouse.x <= minus_x + 24)
+            econ->adjust_price(-Economy::TICKET_PRICE_STEP);
+        else if (mouse.x >= plus_x && mouse.x <= plus_x + 24)
+            econ->adjust_price(Economy::TICKET_PRICE_STEP);
+    }
+    const char* btns[] = {"-", "+"};
+    float btn_xs[] = {minus_x, plus_x};
+    for (int i = 0; i < 2; i++) {
+        draw_bevel_panel(btn_xs[i], btn_y, 24, btn_h,
+                         Color{200, 200, 200, 255});
+        auto bm = ui_measure_text(btns[i], 16);
+        ui_draw_text(btns[i], btn_xs[i] + (24 - bm.x) / 2.f, btn_y + 2, 16,
+                     Color{0, 0, 0, 255});
+    }
+    ui_draw_text(fmt::format("Earned: ${}", econ->total_earned), x, 232, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Spent: ${}", econ->total_spent), x, 260, 14,
+                 Color{0, 0, 0, 255});
+}
 
-        float now_minutes = clock->game_time_minutes;
-        float px_per_minute = 2.4f;
+// Guests page: counts / needs summary.
+static void draw_park_window_guests_page() {
+    GuestSummary s = park_window_guest_summary();
+    float x = PARK_WINDOW_X + 10;
+    ui_draw_text(fmt::format("Attendees: {}", s.attendees), x, 170, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Watching stage: {}", s.watching), x, 198, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Need WC: {}", s.need_bathroom), x, 226, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Need Food: {}", s.need_food), x, 254, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Need Heat: {}", s.need_heat), x, 282, 14,
+                 Color{0, 0, 0, 255});
+    ui_draw_text(fmt::format("Need Bar: {}", s.need_bar), x, 310, 14,
+                 Color{0, 0, 0, 255});
+}
 
-        for (auto& a : sched->schedule) {
-            float minutes_from_now = a.start_time_minutes - now_minutes;
-            float block_y = now_y + minutes_from_now * px_per_minute;
-            float block_h = std::max(a.duration_minutes * px_per_minute, 42.f);
+// Staff page: roster counts + hire/fire.
+// Rows: Guard y=200, Medic y=240, Janitor y=280; hire "+" centre
+// (1172, row+9), fire "-" centre (1224, row+9). The bottom-bar staff
+// panel keeps its own hire/fire buttons too (existing E2E coords).
+static void draw_park_window_staff_page(vec2 mouse, bool mouse_click) {
+    float x = PARK_WINDOW_X + 10;
+    ui_draw_text(park_window_staff_text(), x, 170, 14, Color{0, 0, 0, 255});
+    static constexpr StaffRole ROLES[] = {StaffRole::Guard, StaffRole::Medic,
+                                          StaffRole::Janitor};
+    static constexpr const char* SHORT_NAMES[] = {"Guard", "Medic", "Janitor"};
+    for (int i = 0; i < 3; i++) {
+        float row_y = 200.f + i * 40.f;
+        std::string label =
+            fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i]));
+        ui_draw_text(label, x, row_y, 14, Color{0, 0, 0, 255});
+        float hire_x = PARK_WINDOW_X + 130;  // 1150, w 44
+        float fire_x = PARK_WINDOW_X + 182;  // 1202, w 44
+        float btn_y = row_y - 2;
+        float btn_h = 22.f;
+        if (mouse_click && !game_is_over() && mouse.y >= btn_y &&
+            mouse.y <= btn_y + btn_h) {
+            if (mouse.x >= hire_x && mouse.x <= hire_x + 44)
+                hire_staff(ROLES[i], SPAWN_X, SPAWN_Z);
+            else if (mouse.x >= fire_x && mouse.x <= fire_x + 44)
+                fire_staff(ROLES[i]);
+        }
+        draw_bevel_panel(hire_x, btn_y, 44, btn_h, Color{200, 200, 200, 255});
+        draw_bevel_panel(fire_x, btn_y, 44, btn_h, Color{200, 200, 200, 255});
+        auto plus_m = ui_measure_text("+", 16);
+        auto minus_m = ui_measure_text("-", 16);
+        ui_draw_text("+", hire_x + (44 - plus_m.x) / 2.f, btn_y + 3, 16,
+                     Color{0, 120, 0, 255});
+        ui_draw_text("-", fire_x + (44 - minus_m.x) / 2.f, btn_y + 3, 16,
+                     Color{200, 0, 0, 255});
+    }
+}
 
-            if (block_y + block_h < content_top || block_y > content_bot)
-                continue;
+// Lineup page: artist timeline + BOOK ACTS panel (was the sidebar body).
+// The timeline scissor is shortened (184-300) to make room for the
+// booking panel (306-558) inside the window.
+static void draw_park_window_lineup_page(vec2 mouse, bool mouse_click) {
+    auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+    auto* clock = EntityHelper::get_singleton_cmp<GameClock>();
+    if (!sched || !clock) return;
+    auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
 
-            Color bg = a.performing ? Color{255, 210, 40, 255}
+    ui_draw_text("LINEUP", PARK_WINDOW_X + 10, PARK_WINDOW_CONTENT_Y + 6, 16,
+                 Color{0, 0, 0, 255});
+
+    float content_top = PARK_WINDOW_CONTENT_Y + 28;  // 184
+    float content_bot = 300.f;
+    begin_scissor_mode(PARK_WINDOW_X, content_top, PARK_WINDOW_W,
+                       content_bot - content_top);
+
+    // NOW line sits mid-scissor, so ~48 min each way stay visible.
+    float now_y = 242.f;
+    draw_line(PARK_WINDOW_X, now_y, PARK_WINDOW_X + PARK_WINDOW_W, now_y,
+              Color{255, 100, 100, 255});
+    draw_text_ex(get_font(), "NOW", {PARK_WINDOW_X + 6, now_y - 18}, 16,
+                 FONT_SPACING, Color{255, 100, 100, 255});
+
+    float now_minutes = clock->game_time_minutes;
+    // Half the old 2.4: the window's timeline strip is shorter.
+    float px_per_minute = 1.2f;
+
+    for (auto& a : sched->schedule) {
+        float minutes_from_now = a.start_time_minutes - now_minutes;
+        float block_y = now_y + minutes_from_now * px_per_minute;
+        float block_h = std::max(a.duration_minutes * px_per_minute, 42.f);
+
+        if (block_y + block_h < content_top || block_y > content_bot) continue;
+
+        Color bg =
+            a.performing ? Color{255, 210, 40, 255} : Color{215, 215, 215, 255};
+        draw_rect(PARK_WINDOW_X + 4, block_y, PARK_WINDOW_W - 8, block_h, bg);
+        draw_rect_lines(PARK_WINDOW_X + 4, block_y, PARK_WINDOW_W - 8, block_h,
+                        Color{120, 120, 120, 255});
+
+        std::string label = a.performing ? fmt::format("> {}", a.name) : a.name;
+        Color name_col = Color{0, 0, 0, 255};
+        draw_text_ex(get_font(), label.c_str(),
+                     {PARK_WINDOW_X + 11, block_y + 5}, 16, FONT_SPACING,
+                     Color{0, 0, 0, 120});
+        draw_text_ex(get_font(), label.c_str(),
+                     {PARK_WINDOW_X + 10, block_y + 4}, 16, FONT_SPACING,
+                     name_col);
+
+        int h = (int) (a.start_time_minutes / 60) % 24;
+        int m = (int) a.start_time_minutes % 60;
+        std::string info =
+            fmt::format("{:02d}:{:02d}  ~{} ppl", h, m, a.expected_crowd);
+        draw_text_ex(get_font(), info.c_str(),
+                     {PARK_WINDOW_X + 10, block_y + 24}, 14, FONT_SPACING,
+                     Color{60, 60, 60, 255});
+    }
+
+    end_scissor_mode();
+
+    // ── Booking panel: book acts for the NEXT day (fee paid now) ──
+    // One row per act, always visible: locked acts show the tier they
+    // need, booked acts show BOOKED, available acts show the fee as
+    // the button label. Hover shows the full name / genre / flavor /
+    // draw / fun tooltip; clicking an available button books it.
+    if (lineup) {
+        float panel_y = 306.f;
+        ui_draw_text("BOOK ACTS", PARK_WINDOW_X + 10, panel_y + 4, 14,
+                     Color{0, 0, 0, 255});
+        ui_draw_text("Click $ to book", PARK_WINDOW_X + 10, panel_y + 20, 11,
+                     Color{60, 60, 60, 255});
+        std::string today_text =
+            fmt::format("Today: {}", lineup_short_list(lineup->active));
+        ui_draw_text(today_text, PARK_WINDOW_X + 10, panel_y + 34, 12,
+                     Color{0, 0, 0, 255});
+        std::string next_text =
+            fmt::format("Next: {}", lineup_short_list(lineup->booked));
+        ui_draw_text(next_text, PARK_WINDOW_X + 10, panel_y + 46, 12,
+                     Color{0, 0, 0, 255});
+
+        std::string hover_tip;
+        for (int i = 0; i < NUM_BOOKABLE_ACTS; i++) {
+            const auto& act = BOOKABLE_ACTS[i];
+            float row_y = LINEUP_BOOKING_FIRST_ROW_Y + i * LINEUP_BOOKING_ROW_H;
+            float btn_x = PARK_WINDOW_X + LINEUP_BOOKING_BTN_X_OFF;
+            float btn_y = row_y + 3;
+            float btn_h = 18.f;
+            bool locked = !lineup->is_unlocked(i);
+            bool booked = lineup->is_booked(i);
+            bool active = lineup->is_active(i);
+
+            Color row_bg = locked   ? Color{170, 170, 170, 255}
+                           : booked ? Color{255, 210, 40, 255}
                                     : Color{215, 215, 215, 255};
-            draw_rect(sidebar_x + 4, block_y, sidebar_w - 8, block_h, bg);
-            draw_rect_lines(sidebar_x + 4, block_y, sidebar_w - 8, block_h,
+            draw_rect(PARK_WINDOW_X + 4, row_y, PARK_WINDOW_W - 8,
+                      LINEUP_BOOKING_ROW_H - 2, row_bg);
+            draw_rect_lines(PARK_WINDOW_X + 4, row_y, PARK_WINDOW_W - 8,
+                            LINEUP_BOOKING_ROW_H - 2,
                             Color{120, 120, 120, 255});
-
-            std::string label =
-                a.performing ? fmt::format("> {}", a.name) : a.name;
-            Color name_col = Color{0, 0, 0, 255};
-            draw_text_ex(get_font(), label.c_str(),
-                         {sidebar_x + 11, block_y + 5}, 16, FONT_SPACING,
-                         Color{0, 0, 0, 120});
-            draw_text_ex(get_font(), label.c_str(),
-                         {sidebar_x + 10, block_y + 4}, 16, FONT_SPACING,
+            Color name_col =
+                locked ? Color{90, 90, 90, 255} : Color{0, 0, 0, 255};
+            ui_draw_text(act.short_name, PARK_WINDOW_X + 8, row_y + 5, 12,
                          name_col);
 
-            int h = (int) (a.start_time_minutes / 60) % 24;
-            int m = (int) a.start_time_minutes % 60;
-            std::string info =
-                fmt::format("{:02d}:{:02d}  ~{} ppl", h, m, a.expected_crowd);
-            draw_text_ex(get_font(), info.c_str(),
-                         {sidebar_x + 10, block_y + 24}, 14, FONT_SPACING,
-                         Color{60, 60, 60, 255});
+            std::string btn_label = park_window_booking_button_label(i, lineup);
+            bool hovering = mouse.x >= btn_x &&
+                            mouse.x <= btn_x + LINEUP_BOOKING_BTN_W &&
+                            mouse.y >= btn_y && mouse.y <= btn_y + btn_h;
+            if (hovering && mouse_click && !game_is_over() && !locked &&
+                !booked) {
+                book_act(i);
+            }
+            draw_bevel_panel(btn_x, btn_y, LINEUP_BOOKING_BTN_W, btn_h,
+                             hovering ? Color{230, 230, 230, 255}
+                                      : Color{200, 200, 200, 255});
+            auto btn_m = ui_measure_text(btn_label, 12);
+            ui_draw_text(
+                btn_label, btn_x + (LINEUP_BOOKING_BTN_W - btn_m.x) / 2.f,
+                btn_y + 3, 12,
+                locked ? Color{120, 0, 0, 255} : Color{0, 120, 0, 255});
+
+            if (mouse.x >= PARK_WINDOW_X + 4 &&
+                mouse.x <= PARK_WINDOW_X + PARK_WINDOW_W - 4 &&
+                mouse.y >= row_y && mouse.y <= row_y + LINEUP_BOOKING_ROW_H) {
+                hover_tip = fmt::format(
+                    "{} | {} | {} Fee ${} | Draw x{:.2f} | Fun "
+                    "x{:.2f}{}",
+                    act.name, act.genre, act.flavor, act.fee, act.draw_mult,
+                    act.fun_mult,
+                    locked ? fmt::format(" | Needs Tier {}",
+                                         FESTIVAL_TIER_NAMES[act.min_tier])
+                           : (booked ? " | Booked for tomorrow"
+                                     : (active ? " | Playing today" : "")));
+            }
+        }
+        if (!hover_tip.empty()) {
+            auto tip_m = ui_measure_text(hover_tip, 12);
+            // Tooltip hangs left of the window (the window sits at the
+            // right screen edge). Clamp with a floor on the upper
+            // bound: the longest tooltip is ~as wide as the main
+            // area, so a plain clamp(..., 8, width - tip_w) could
+            // get lo > hi (UB).
+            float tip_max_x = std::max(8.f, PARK_WINDOW_X - tip_m.x - 8.f);
+            float tip_x =
+                std::clamp(PARK_WINDOW_X + PARK_WINDOW_W / 2.f - tip_m.x / 2.f,
+                           8.f, tip_max_x);
+            float tip_y = LINEUP_BOOKING_FIRST_ROW_Y - tip_m.y - 10.f;
+            draw_bevel_panel(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
+                             Color{192, 192, 192, 255});
+            ui_draw_text(hover_tip, tip_x, tip_y, 12, Color{0, 0, 0, 255});
+        }
+    }
+}
+
+// The window itself: frame + title bar + tabs + active page.
+struct RenderParkWindowSystem : System<> {
+    void once(float) const override {
+        register_park_window_texts();
+
+        // Soft drop shadow: the window floats over the world.
+        draw_rect(PARK_WINDOW_X + 4, PARK_WINDOW_Y + 4, PARK_WINDOW_W,
+                  PARK_WINDOW_H, Color{0, 0, 0, 60});
+        draw_bevel_panel(PARK_WINDOW_X, PARK_WINDOW_Y, PARK_WINDOW_W,
+                         PARK_WINDOW_H, Color{192, 192, 192, 255});
+
+        // Title bar: park name + FPS + close/minimize deco buttons
+        // (deco only — they do nothing when clicked).
+        draw_rect(PARK_WINDOW_X, PARK_WINDOW_Y, PARK_WINDOW_W,
+                  PARK_WINDOW_TITLE_H, Color{122, 74, 33, 255});
+        ui_draw_text("Endless Dance Chaos", PARK_WINDOW_X + 8,
+                     PARK_WINDOW_Y + 6, 12, Color{255, 255, 255, 255});
+        std::string fps_text = fmt::format("FPS: {}", get_fps());
+        auto fps_m = ui_measure_text(fps_text, 12);
+        ui_draw_text(fps_text, PARK_WINDOW_X + PARK_WINDOW_W - 56 - fps_m.x,
+                     PARK_WINDOW_Y + 6, 12, Color{255, 255, 255, 255});
+        float deco_y = PARK_WINDOW_Y + 4;
+        draw_bevel_panel(PARK_WINDOW_X + PARK_WINDOW_W - 48, deco_y, 18, 16,
+                         Color{200, 200, 200, 255});
+        ui_draw_text("_", PARK_WINDOW_X + PARK_WINDOW_W - 44, deco_y + 1, 12,
+                     Color{0, 0, 0, 255});
+        draw_bevel_panel(PARK_WINDOW_X + PARK_WINDOW_W - 26, deco_y, 18, 16,
+                         Color{200, 200, 200, 255});
+        ui_draw_text("x", PARK_WINDOW_X + PARK_WINDOW_W - 21, deco_y + 2, 12,
+                     Color{0, 0, 0, 255});
+
+        auto mouse = input::get_mouse_position();
+        bool mouse_click = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+
+        // Tab clicks switch the active page.
+        if (mouse_click && mouse.y >= PARK_WINDOW_TAB_Y &&
+            mouse.y <= PARK_WINDOW_TAB_Y + PARK_WINDOW_TAB_H) {
+            float tx = PARK_WINDOW_X;
+            for (int i = 0; i < PARK_WINDOW_TAB_COUNT; i++) {
+                if (mouse.x >= tx && mouse.x <= tx + PARK_WINDOW_TAB_W[i]) {
+                    park_window_active_tab() = i;
+                    break;
+                }
+                tx += PARK_WINDOW_TAB_W[i];
+            }
         }
 
-        end_scissor_mode();
+        // Tab row: active tab pressed-in, others raised.
+        float tx = PARK_WINDOW_X;
+        for (int i = 0; i < PARK_WINDOW_TAB_COUNT; i++) {
+            bool active = (park_window_active_tab() == i);
+            if (active)
+                draw_bevel_panel_pressed(
+                    tx, PARK_WINDOW_TAB_Y, PARK_WINDOW_TAB_W[i],
+                    PARK_WINDOW_TAB_H, Color{205, 205, 205, 255});
+            else
+                draw_bevel_panel(tx, PARK_WINDOW_TAB_Y, PARK_WINDOW_TAB_W[i],
+                                 PARK_WINDOW_TAB_H, Color{200, 200, 200, 255});
+            auto lm = ui_measure_text(PARK_WINDOW_TAB_NAMES[i], 11);
+            ui_draw_text(PARK_WINDOW_TAB_NAMES[i],
+                         tx + (PARK_WINDOW_TAB_W[i] - lm.x) / 2.f,
+                         PARK_WINDOW_TAB_Y + 6, 11, Color{0, 0, 0, 255});
+            tx += PARK_WINDOW_TAB_W[i];
+        }
 
-        // ── Booking panel: book acts for the NEXT day (fee paid now) ──
-        // One row per act, always visible: locked acts show the tier they
-        // need, booked acts show BOOKED, available acts show the fee as
-        // the button label. Hover shows the full name / genre / flavor /
-        // draw / fun tooltip; clicking an available button books it.
-        if (lineup) {
-            float panel_y = 306.f;
-            ui_draw_text("BOOK ACTS", sidebar_x + 10, panel_y + 4, 14,
-                         Color{0, 0, 0, 255});
-            vtr.register_text("BOOK ACTS");
-            ui_draw_text("Click $ to book", sidebar_x + 10, panel_y + 20, 11,
-                         Color{60, 60, 60, 255});
-            std::string today_text =
-                fmt::format("Today: {}", lineup_short_list(lineup->active));
-            ui_draw_text(today_text, sidebar_x + 10, panel_y + 34, 12,
-                         Color{0, 0, 0, 255});
-            vtr.register_text(today_text);
-            std::string next_text =
-                fmt::format("Next: {}", lineup_short_list(lineup->booked));
-            ui_draw_text(next_text, sidebar_x + 10, panel_y + 46, 12,
-                         Color{0, 0, 0, 255});
-            vtr.register_text(next_text);
-
-            auto mouse = input::get_mouse_position();
-            bool mouse_click =
-                input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
-            std::string hover_tip;
-            for (int i = 0; i < NUM_BOOKABLE_ACTS; i++) {
-                const auto& act = BOOKABLE_ACTS[i];
-                float row_y =
-                    LINEUP_BOOKING_FIRST_ROW_Y + i * LINEUP_BOOKING_ROW_H;
-                float btn_x = sidebar_x + LINEUP_BOOKING_BTN_X_OFF;
-                float btn_y = row_y + 3;
-                float btn_h = 18.f;
-                bool locked = !lineup->is_unlocked(i);
-                bool booked = lineup->is_booked(i);
-                bool active = lineup->is_active(i);
-
-                Color row_bg = locked   ? Color{170, 170, 170, 255}
-                               : booked ? Color{255, 210, 40, 255}
-                                        : Color{215, 215, 215, 255};
-                draw_rect(sidebar_x + 4, row_y, sidebar_w - 8,
-                          LINEUP_BOOKING_ROW_H - 2, row_bg);
-                draw_rect_lines(sidebar_x + 4, row_y, sidebar_w - 8,
-                                LINEUP_BOOKING_ROW_H - 2,
-                                Color{120, 120, 120, 255});
-                Color name_col =
-                    locked ? Color{90, 90, 90, 255} : Color{0, 0, 0, 255};
-                ui_draw_text(act.short_name, sidebar_x + 8, row_y + 5, 12,
-                             name_col);
-                vtr.register_text(act.short_name);
-
-                std::string btn_label;
-                if (locked)
-                    btn_label = fmt::format("T{}", act.min_tier);
-                else if (booked)
-                    btn_label = "BOOKED";
-                else
-                    btn_label = fmt::format("${}", act.fee);
-                vtr.register_text(btn_label);
-                bool hovering = mouse.x >= btn_x &&
-                                mouse.x <= btn_x + LINEUP_BOOKING_BTN_W &&
-                                mouse.y >= btn_y && mouse.y <= btn_y + btn_h;
-                if (hovering && mouse_click && !game_is_over() && !locked &&
-                    !booked) {
-                    book_act(i);
-                }
-                draw_bevel_panel(btn_x, btn_y, LINEUP_BOOKING_BTN_W, btn_h,
-                                 hovering ? Color{230, 230, 230, 255}
-                                          : Color{200, 200, 200, 255});
-                auto btn_m = ui_measure_text(btn_label, 12);
-                ui_draw_text(
-                    btn_label, btn_x + (LINEUP_BOOKING_BTN_W - btn_m.x) / 2.f,
-                    btn_y + 3, 12,
-                    locked ? Color{120, 0, 0, 255} : Color{0, 120, 0, 255});
-
-                if (mouse.x >= sidebar_x + 4 &&
-                    mouse.x <= sidebar_x + sidebar_w - 4 && mouse.y >= row_y &&
-                    mouse.y <= row_y + LINEUP_BOOKING_ROW_H) {
-                    hover_tip = fmt::format(
-                        "{} | {} | {} Fee ${} | Draw x{:.2f} | Fun "
-                        "x{:.2f}{}",
-                        act.name, act.genre, act.flavor, act.fee, act.draw_mult,
-                        act.fun_mult,
-                        locked ? fmt::format(" | Needs Tier {}",
-                                             FESTIVAL_TIER_NAMES[act.min_tier])
-                               : (booked ? " | Booked for tomorrow"
-                                         : (active ? " | Playing today" : "")));
-                }
-            }
-            if (!hover_tip.empty()) {
-                auto tip_m = ui_measure_text(hover_tip, 12);
-                // Clamp with a floor on the upper bound: the longest
-                // tooltip is ~as wide as the main area, so a plain
-                // clamp(..., 8, width - tip_w) could get lo > hi (UB).
-                float tip_max_x =
-                    std::max(8.f, DEFAULT_SCREEN_WIDTH - 150 - tip_m.x - 8.f);
-                float tip_x =
-                    std::clamp(sidebar_x + sidebar_w / 2.f - tip_m.x / 2.f, 8.f,
-                               tip_max_x);
-                float tip_y = LINEUP_BOOKING_FIRST_ROW_Y - tip_m.y - 10.f;
-                draw_bevel_panel(tip_x - 4, tip_y - 2, tip_m.x + 8, tip_m.y + 4,
-                                 Color{192, 192, 192, 255});
-                ui_draw_text(hover_tip, tip_x, tip_y, 12, Color{0, 0, 0, 255});
-            }
+        switch (park_window_active_tab()) {
+            case 1:
+                draw_park_window_finances_page(mouse, mouse_click);
+                break;
+            case 2:
+                draw_park_window_guests_page();
+                break;
+            case 3:
+                draw_park_window_staff_page(mouse, mouse_click);
+                break;
+            case 4:
+                draw_park_window_lineup_page(mouse, mouse_click);
+                break;
+            case 0:
+            default:
+                draw_park_window_park_page();
+                break;
         }
     }
 };
@@ -1251,6 +1582,41 @@ struct RenderMinimapSystem : System<> {
 
         draw_rect_lines(sidebar_x, minimap_y, MINIMAP_SIZE, MINIMAP_SIZE,
                         Color{90, 90, 90, 255});
+    }
+};
+
+// Bottom-bar readout (RCT2 style): rating + cash + date at the right
+// end of the toolbar. Drawn AFTER the minimap, so it paints over the
+// minimap's bottom strip (y 666-720) — that strip shows only Locked
+// land south of the park (z > ~65), never park tiles or agents —
+// and the readout panel's own bevel edge becomes the divider.
+struct RenderBottomBarReadoutSystem : System<> {
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        float px = DEFAULT_SCREEN_WIDTH - 150.f;
+        float py = BUILD_BAR_Y + 4;  // 670, panel 666..720
+        draw_bevel_panel(DEFAULT_SCREEN_WIDTH - 150.f, BUILD_BAR_Y, 150, 54,
+                         Color{175, 175, 175, 255});
+        if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+            std::string cash_text = fmt::format("Cash: ${}", econ->cash);
+            Color cash_col =
+                econ->cash < 0 ? Color{200, 0, 0, 255} : Color{0, 140, 0, 255};
+            ui_draw_text(cash_text, px + 8, py, 12, cash_col);
+            vtr.register_text(cash_text);
+        }
+        if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+            std::string rating_text = fmt::format(
+                "Rating: {} {}", static_cast<int>(std::round(rating->rating)),
+                rating->trend_arrow());
+            ui_draw_text(rating_text, px + 8, py + 16, 12, Color{0, 0, 0, 255});
+            vtr.register_text(rating_text);
+        }
+        if (auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>()) {
+            std::string day_text = fmt::format("Day {}", diff->day_number);
+            ui_draw_text(day_text, px + 8, py + 32, 12,
+                         Color{30, 60, 160, 255});
+            vtr.register_text(day_text);
+        }
     }
 };
 
@@ -1346,6 +1712,7 @@ struct EndRenderSystem : System<> {
 void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<HoverTrackingSystem>());
     sm.register_render_system(std::make_unique<RenderFacilityLabelsSystem>());
+    sm.register_render_system(std::make_unique<RenderMoneyFloatersSystem>());
     sm.register_render_system(std::make_unique<RenderTopBarSystem>());
     sm.register_render_system(std::make_unique<RenderNewsTickerSystem>());
     sm.register_render_system(std::make_unique<RenderBuildBarSystem>());
@@ -1355,8 +1722,9 @@ void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderNuxBannerSystem>());
     sm.register_render_system(std::make_unique<RenderCompassSystem>());
     sm.register_render_system(std::make_unique<RenderHoverInfoSystem>());
-    sm.register_render_system(std::make_unique<RenderTimelineSidebarSystem>());
+    sm.register_render_system(std::make_unique<RenderParkWindowSystem>());
     sm.register_render_system(std::make_unique<RenderMinimapSystem>());
+    sm.register_render_system(std::make_unique<RenderBottomBarReadoutSystem>());
     sm.register_render_system(std::make_unique<RenderGameOverSystem>());
 }
 
