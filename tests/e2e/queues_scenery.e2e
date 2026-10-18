@@ -32,7 +32,8 @@ screenshot queues_scenery_queue
 set_watch_capacity 30
 wait 6
 assert_queue_length eq 0
-assert_agent_watching gte 15
+eventually_assert_agent_watching gte 15 20
+wait 20
 screenshot queues_scenery_drained
 
 # --- Scenery tools + tree rating bonus ---

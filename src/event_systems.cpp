@@ -26,7 +26,8 @@
 // movement consumes that stream every frame, so director picks would
 // otherwise depend on crowd behaviour.
 static std::mt19937& event_rng() {
-    static std::mt19937 rng{std::hash<std::string>{}("default_seed")};
+    static std::mt19937 rng{static_cast<std::mt19937::result_type>(
+        std::hash<std::string>{}("default_seed"))};
     return rng;
 }
 
