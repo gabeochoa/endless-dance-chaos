@@ -32,7 +32,9 @@ static void flood_exit_pheromone(Grid& grid) {
             int nx = x + dx, nz = z + dz;
             if (!grid.in_bounds(nx, nz)) continue;
             TileType type = grid.at(nx, nz).type;
-            if (type == TileType::Fence || type == TileType::Stage) continue;
+            if (type == TileType::Fence || type == TileType::Stage ||
+                type == TileType::Locked)
+                continue;
             if (grid.at(nx, nz).pheromone[Tile::PHERO_EXIT] < current - 5) {
                 grid.at(nx, nz).pheromone[Tile::PHERO_EXIT] = current - 5;
                 frontier.push({nx, nz});

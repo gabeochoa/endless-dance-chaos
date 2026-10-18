@@ -58,10 +58,10 @@ inline void spawn_toast(const std::string& text, float lifetime = 3.0f) {
 
 // Lookup table: true if tile blocks agent movement (fences + stage structure).
 // Facilities (Bathroom, Food, MedTent, Bar, SecurityPost, WaterStation) are
-// walkable so agents can enter them.
+// walkable so agents can enter them. Locked (unbought land) blocks.
 // Indexed by TileType enum: Grass=0,Path=1,Fence=2,Gate=3,Stage=4,
 //   StageFloor=5,Bathroom=6,Food=7,MedTent=8,Bar=9,SecurityPost=10,
-//   WaterStation=11
+//   WaterStation=11,Locked=12
 inline constexpr bool TILE_BLOCKS[] = {
     false,  // Grass
     false,  // Path
@@ -75,6 +75,7 @@ inline constexpr bool TILE_BLOCKS[] = {
     false,  // Bar
     false,  // SecurityPost
     false,  // WaterStation
+    true,   // Locked
 };
 
 inline bool tile_blocks_movement(TileType type) {

@@ -150,6 +150,7 @@ inline constexpr Color TILE_DAY_COLORS[] = {
     {255, 145, 0, 255},    // Bar
     {50, 90, 255, 255},    // SecurityPost
     {0, 180, 255, 255},    // WaterStation
+    {30, 30, 38, 255},     // Locked (darkened unbought land)
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
@@ -165,6 +166,7 @@ inline constexpr Color TILE_NIGHT_COLORS[] = {
     {120, 80, 20, 255},   // Bar
     {70, 80, 130, 255},   // SecurityPost
     {40, 90, 130, 255},   // WaterStation
+    {12, 12, 16, 255},    // Locked (darkened unbought land)
 };
 
 inline Color tile_day_color(TileType type) {

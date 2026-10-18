@@ -64,6 +64,7 @@ inline TileType parse_tile_type(const std::string& s) {
         return TileType::SecurityPost;
     if (lower == "waterstation" || lower == "water_station" || lower == "water")
         return TileType::WaterStation;
+    if (lower == "locked") return TileType::Locked;
     return TileType::Grass;
 }
 
@@ -208,9 +209,14 @@ static void cmd_clear_map(testing::PendingE2ECommand& cmd) {
     EntityHelper::cleanup();
     auto* grid = EntityHelper::get_singleton_cmp<Grid>();
     if (grid) {
-        for (auto& tile : grid->tiles) {
-            tile.type = TileType::Grass;
-            tile.agent_count = 0;
+        // Only the bought (playable) rectangle clears to grass: the
+        // fence ring and Locked land outside it survive.
+        for (int z = 0; z < MAP_SIZE; z++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                if (!grid->in_playable(x, z)) continue;
+                grid->at(x, z).type = TileType::Grass;
+                grid->at(x, z).agent_count = 0;
+            }
         }
         grid->mark_tiles_dirty();
     }
@@ -1187,6 +1193,31 @@ static void cmd_place_building(testing::PendingE2ECommand& cmd) {
         h = 1;
     }
     if (w == 0) {
+        cmd.consume();
+        return;
+    }
+    // Same placement rule as the real build path (PathBuildSystem):
+    // every footprint tile must be inside the bought park and on
+    // grass / path / stage floor. Locked land is unbuildable, and a
+    // refused placement charges nothing.
+    bool placeable = true;
+    for (int dz = 0; dz < h && placeable; dz++) {
+        for (int dx = 0; dx < w; dx++) {
+            int tx = x + dx, tz = z + dz;
+            if (!grid->in_playable(tx, tz)) {
+                placeable = false;
+                break;
+            }
+            TileType t = grid->at(tx, tz).type;
+            if (t != TileType::Grass && t != TileType::Path &&
+                t != TileType::StageFloor) {
+                placeable = false;
+                break;
+            }
+        }
+    }
+    if (!placeable) {
+        log_info("[E2E] place_building refused: ({},{}) not buildable", x, z);
         cmd.consume();
         return;
     }
@@ -2623,6 +2654,165 @@ static void cmd_assert_act_unlocked(testing::PendingE2ECommand& cmd) {
                              cmd.arg(0)));
 }
 
+// ── Park rating + land expansion ──────────────────────────────────────────
+
+// set_park_rating VALUE — direct setter for deterministic tests. The
+// rating then drifts toward its signal-derived target as usual.
+static void cmd_set_park_rating(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_park_rating requires VALUE");
+        return;
+    }
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    if (!rating) {
+        cmd.fail("set_park_rating: no ParkRatingState");
+        return;
+    }
+    rating->rating =
+        std::clamp(cmd.arg_as<float>(0), static_cast<float>(PARK_RATING_MIN),
+                   static_cast<float>(PARK_RATING_MAX));
+    cmd.consume();
+}
+
+static void cmd_assert_park_rating(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_park_rating requires OP VALUE");
+        return;
+    }
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    float actual = rating ? rating->rating : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_park_rating failed: {:.2f} {} {:.2f} (actual: {:.2f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_park_rating_trend(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_park_rating_trend requires up|down|flat");
+        return;
+    }
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    int actual = rating ? rating->trend() : 0;
+    int want = cmd.arg(0) == "up" ? 1 : cmd.arg(0) == "down" ? -1 : 0;
+    if (actual != want)
+        cmd.fail(
+            fmt::format("assert_park_rating_trend failed: expected {}, got {} "
+                        "(rating {:.1f}, yesterday {:.1f})",
+                        cmd.arg(0),
+                        actual > 0   ? "up"
+                        : actual < 0 ? "down"
+                                     : "flat",
+                        rating ? rating->rating : 0.f,
+                        rating ? rating->yesterday_rating : 0.f));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_spawn_multiplier(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_spawn_multiplier requires OP VALUE");
+        return;
+    }
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    float actual = rating ? rating->spawn_multiplier() : 1.0f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format(
+            "assert_spawn_multiplier failed: {:.3f} {} {:.3f} (actual: {:.3f})",
+            actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+// buy_land east|south — same path as the land panel button. Consumed
+// even when refused (cap / broke) so the test can assert the toast.
+static void cmd_buy_land(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("buy_land requires east|south");
+        return;
+    }
+    std::string dir = cmd.arg(0);
+    std::transform(dir.begin(), dir.end(), dir.begin(), ::tolower);
+    if (dir == "east")
+        buy_land_expansion(0);
+    else if (dir == "south")
+        buy_land_expansion(1);
+    else {
+        cmd.fail(fmt::format("buy_land: unknown direction '{}'", cmd.arg(0)));
+        return;
+    }
+    cmd.consume();
+}
+
+static void cmd_assert_expansions(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_expansions requires OP VALUE");
+        return;
+    }
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    int actual = grid ? grid->total_expansions() : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_expansions failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_expansion_cost(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_expansion_cost requires OP VALUE");
+        return;
+    }
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    int actual = grid ? grid->next_expansion_cost() : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_expansion_cost failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// set_camera_target X Z — the CameraInputSystem clamps the target to
+// the bought park's fence rectangle on the next frame.
+static void cmd_set_camera_target(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("set_camera_target requires X Z");
+        return;
+    }
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("set_camera_target: no camera");
+        return;
+    }
+    cam->cam.target.x = cmd.arg_as<float>(0);
+    cam->cam.target.z = cmd.arg_as<float>(1);
+    cmd.consume();
+}
+
+static void cmd_assert_camera_target(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_camera_target requires X Z");
+        return;
+    }
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("assert_camera_target: no camera");
+        return;
+    }
+    float want_x = cmd.arg_as<float>(0), want_z = cmd.arg_as<float>(1);
+    if (!compare_op_f(cam->cam.target.x, "eq", want_x) ||
+        !compare_op_f(cam->cam.target.z, "eq", want_z))
+        cmd.fail(fmt::format(
+            "assert_camera_target failed: expected ({:.1f}, {:.1f}), got "
+            "({:.1f}, {:.1f})",
+            want_x, want_z, cam->cam.target.x, cam->cam.target.z));
+    else
+        cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -2757,6 +2947,15 @@ static void init_e2e_registry() {
     r.add("assert_lineup_fun", cmd_assert_lineup_fun);
     r.add("assert_spawn_cap", cmd_assert_spawn_cap);
     r.add("assert_act_unlocked", cmd_assert_act_unlocked);
+    r.add("set_park_rating", cmd_set_park_rating);
+    r.add("assert_park_rating", cmd_assert_park_rating);
+    r.add("assert_park_rating_trend", cmd_assert_park_rating_trend);
+    r.add("assert_spawn_multiplier", cmd_assert_spawn_multiplier);
+    r.add("buy_land", cmd_buy_land);
+    r.add("assert_expansions", cmd_assert_expansions);
+    r.add("assert_expansion_cost", cmd_assert_expansion_cost);
+    r.add("set_camera_target", cmd_set_camera_target);
+    r.add("assert_camera_target", cmd_assert_camera_target);
 }
 
 void register_e2e_systems(SystemManager& sm) {

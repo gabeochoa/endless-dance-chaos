@@ -1,0 +1,282 @@
+# Park rating (0-999, continuous) + land expansion.
+# Rating signals: need satisfaction, deaths/injuries (instant + harm pool
+# decaying over days), facility coverage per 100 attendees, inspection
+# memory, critical-density time. HUD: top-bar rating + trend arrow vs
+# yesterday (rollover). Effects: spawn multiplier rating/500 clamped
+# 0.5-1.5; price-penalty threshold scales with rating (+$10 at >=750).
+# Land: purchasable East/South plots, cost doubles per plot.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- HUD: rating starts at 500, flat trend, land panel shows $5000 ---
+assert_park_rating eq 500
+assert_park_rating_trend flat
+assert_spawn_multiplier eq 1.0
+expect_text "Rating: 500"
+expect_text "Land Expand: $5000"
+expect_text "East +25"
+
+# --- Deaths / injuries: instant big drop (death -70, injury -8) ---
+add_death_count 1
+wait_frames 2
+assert_park_rating eq 430
+add_injury_count 1
+wait_frames 2
+assert_park_rating eq 422
+
+# --- Inspection memory: clean inspection -> A (+60) -> rating rises ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+run_inspection
+wait_frames 3
+assert_inspection_grade A
+wait 10
+assert_park_rating gt 540
+assert_park_rating lt 580
+
+# --- Facility coverage: 100 spread agents, bathroom+food covered,
+# no water station -> target 580, rating rises toward it ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agents 10 10 25 stage
+spawn_agents 40 10 25 stage
+spawn_agents 10 40 25 stage
+spawn_agents 40 40 25 stage
+wait_frames 2
+assert_agent_count eq 100
+wait 6
+assert_park_rating gt 540
+assert_park_rating lt 600
+
+# --- Need satisfaction: every agent needy (facilities demolished so
+# needs never clear) -> rating falls ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+demolish_at 20 20
+demolish_at 21 20
+demolish_at 20 21
+demolish_at 21 21
+demolish_at 20 30
+demolish_at 21 30
+demolish_at 20 31
+demolish_at 21 31
+spawn_agents 45 45 10 stage
+wait_frames 2
+force_need bathroom
+wait 3
+assert_park_rating lt 470
+assert_park_rating gt 300
+
+# --- Critical-density time: 40 agents caged on one critical tile ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_tile 24 25 fence
+set_tile 26 25 fence
+set_tile 25 24 fence
+set_tile 25 26 fence
+spawn_agents 25 25 40 stage
+wait_frames 2
+assert_death_count eq 0
+wait 4
+assert_park_rating lt 490
+assert_park_rating gt 350
+assert_death_count eq 0
+
+# --- Harm decays over days: death + 10 injuries (rating 350), then a
+# rollover halves the harm pool (150 -> 75). Inspection that day is C
+# (score 62), so no inspection bonus masks the recovery: target 425. ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+add_death_count 1
+add_injury_count 10
+wait_frames 2
+assert_park_rating eq 350
+set_day_number 2
+wait_frames 5
+assert_day_number eq 2
+wait 10
+assert_park_rating gt 400
+assert_park_rating lt 450
+assert_park_rating_trend down
+
+# --- Trend up: high rating, roll over -> yesterday was 500 ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_park_rating 800
+wait_frames 2
+set_day_number 2
+wait_frames 5
+assert_park_rating_trend up
+expect_text "↑"
+expect_text "Rating: 79"
+
+# --- Spawn multiplier: rating/500 clamped [0.5, 1.5], via interval ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_park_rating 900
+wait_frames 2
+assert_spawn_multiplier eq 1.5
+assert_spawn_interval eq 1.333
+set_park_rating 200
+wait_frames 2
+assert_spawn_multiplier eq 0.5
+assert_spawn_interval eq 4.0
+set_park_rating 750
+wait_frames 2
+# 750 lands on the 750 band (1.5); a few points of drift toward the
+# 500 target drops it to the 700 band (1.4), so assert the band range.
+assert_spawn_multiplier gte 1.4
+assert_spawn_multiplier lte 1.5
+set_park_rating 500
+wait_frames 2
+assert_spawn_multiplier eq 1.0
+assert_spawn_interval eq 2.0
+
+# --- Price tolerance: at 500, $30 costs a 1.5x interval; at 800, $30
+# is tolerated (same interval as $20), $40 still costs 40/30 ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_park_rating 500
+set_ticket_price 30
+wait_frames 2
+assert_spawn_interval eq 3.0
+set_park_rating 800
+wait_frames 2
+assert_spawn_interval eq 1.333
+set_ticket_price 20
+wait_frames 2
+assert_spawn_interval eq 1.333
+set_ticket_price 40
+wait_frames 2
+assert_spawn_interval eq 1.778
+set_ticket_price 20
+set_park_rating 500
+wait_frames 2
+assert_spawn_interval eq 2.0
+
+# --- Land: locked by default, unbuildable, unwalkable ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_tile_type 60 30 locked
+assert_tile_type 30 60 locked
+assert_tile_type 80 80 locked
+assert_tile_type 51 51 fence
+assert_expansions eq 0
+assert_expansion_cost eq 5000
+place_building bathroom 60 30
+wait_frames 2
+assert_tile_type 60 30 locked
+assert_cash eq 10000
+spawn_agent 48 30 stage 70 30
+wait 3
+assert_agents_on_tiletype locked eq 0
+
+# --- Buy refused when broke ---
+set_cash 100
+wait_frames 2
+buy_land east
+wait_frames 2
+assert_cash eq 100
+assert_expansions eq 0
+assert_toast_contains "Not enough cash"
+
+# --- Buy East ($5000): fence moves, new land buildable, cost doubles ---
+set_cash 10000
+wait_frames 2
+buy_land east
+wait_frames 2
+assert_cash eq 5000
+assert_expansions eq 1
+assert_expansion_cost eq 10000
+assert_tile_type 51 30 grass
+assert_tile_type 60 30 grass
+assert_tile_type 76 30 fence
+assert_tile_type 77 30 locked
+assert_toast_contains "Land expanded East"
+place_building waterstation 60 30
+wait_frames 2
+assert_tile_type 60 30 waterstation
+assert_cash eq 4800
+
+# --- Panel click buys South; next-cost label updates ---
+click 234 702
+wait_frames 3
+assert_cash eq 4800
+assert_expansions eq 1
+assert_toast_contains "Not enough cash"
+set_cash 20000
+wait_frames 2
+click 234 702
+wait_frames 3
+assert_cash eq 10000
+assert_expansions eq 2
+assert_expansion_cost eq 20000
+assert_tile_type 30 60 grass
+assert_tile_type 30 76 fence
+assert_tile_type 30 77 locked
+expect_text "Land Expand: $20000"
+
+# --- Save/load keeps expansion + rating ---
+delete_save
+set_park_rating 700
+wait_frames 2
+save_game
+assert_save_exists
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_expansions eq 0
+assert_tile_type 60 30 locked
+assert_park_rating eq 500
+load_game
+wait_frames 5
+assert_expansions eq 2
+assert_tile_type 60 30 waterstation
+assert_tile_type 30 60 grass
+assert_cash eq 10000
+assert_park_rating gt 650
+assert_park_rating lt 750
+delete_save
+
+# --- Cost scaling to the cap: $20000, $40000, then both sides maxed ---
+set_cash 100000
+wait_frames 2
+buy_land east
+wait_frames 2
+assert_cash eq 80000
+assert_expansions eq 3
+assert_expansion_cost eq 40000
+buy_land south
+wait_frames 2
+assert_cash eq 40000
+assert_expansions eq 4
+assert_expansion_cost eq 80000
+assert_tile_type 100 100 grass
+assert_tile_type 101 101 fence
+expect_text "Land: MAXED"
+buy_land east
+wait_frames 2
+assert_cash eq 40000
+assert_expansions eq 4
+assert_toast_contains "maxed"
+
+# --- Camera bounds grow with the park, and shrink back on reset ---
+set_camera_target 200 200
+wait_frames 2
+assert_camera_target 101 101
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+set_camera_target 200 200
+wait_frames 2
+assert_camera_target 51 51

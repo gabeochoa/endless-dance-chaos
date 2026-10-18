@@ -124,20 +124,35 @@ struct UpdateArtistScheduleSystem : System<> {
             auto* current = sched->get_current();
             auto* next = sched->get_next();
             // Higher ticket price => longer interval => fewer arrivals.
+            // Price penalty uses the rating-scaled willingness threshold;
+            // the rating spawn multiplier (rating/500, clamped 0.5-1.5)
+            // divides the interval: a beloved park spawns faster.
             float price_factor = 1.f;
-            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>())
-                price_factor = econ->price_spawn_factor();
+            float rating_mult = 1.f;
+            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+                float rating = PARK_RATING_START;
+                if (auto* pr =
+                        EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+                    rating = pr->rating;
+                    rating_mult = pr->spawn_multiplier();
+                }
+                price_factor = Economy::price_spawn_factor_for_rating(
+                    econ->ticket_price, rating);
+            }
 
             if (current) {
                 float mult = current->expected_crowd / 100.0f;
                 if (mult < 0.5f) mult = 0.5f;
-                ss->interval = 1.f / (base_rate * mult) * price_factor;
+                ss->interval =
+                    1.f / (base_rate * mult) * price_factor / rating_mult;
             } else if (next && now > next->start_time_minutes - 15.f) {
                 float mult = next->expected_crowd / 100.0f;
                 if (mult < 0.5f) mult = 0.5f;
-                ss->interval = 1.f / (base_rate * mult) * price_factor;
+                ss->interval =
+                    1.f / (base_rate * mult) * price_factor / rating_mult;
             } else {
-                ss->interval = DEFAULT_SPAWN_INTERVAL * price_factor;
+                ss->interval =
+                    DEFAULT_SPAWN_INTERVAL * price_factor / rating_mult;
             }
         }
     }
@@ -195,12 +210,22 @@ struct DifficultyScalingSystem : System<> {
         if (!spawn->manual_override) {
             // Runs after the artist schedule each frame, so this is the
             // interval that sticks. Ticket price scales it: $40 tickets
-            // spawn half as often as $20 tickets.
+            // spawn half as often as $20 tickets. The rating spawn
+            // multiplier divides it (see UpdateArtistScheduleSystem).
             float price_factor = 1.f;
-            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>())
-                price_factor = econ->price_spawn_factor();
-            spawn->interval =
-                DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult * price_factor;
+            float rating_mult = 1.f;
+            if (auto* econ = EntityHelper::get_singleton_cmp<Economy>()) {
+                float rating = PARK_RATING_START;
+                if (auto* pr =
+                        EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+                    rating = pr->rating;
+                    rating_mult = pr->spawn_multiplier();
+                }
+                price_factor = Economy::price_spawn_factor_for_rating(
+                    econ->ticket_price, rating);
+            }
+            spawn->interval = DEFAULT_SPAWN_INTERVAL / diff->spawn_rate_mult *
+                              price_factor / rating_mult;
         }
     }
 };

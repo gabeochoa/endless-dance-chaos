@@ -299,17 +299,6 @@ struct RenderTopBarSystem : System<> {
             }
             bar_x += 6;
         }
-        if (gs) {
-            std::string inj_text = fmt::format("Inj: {}", gs->injury_count);
-            float inj_w = ui_measure_text(inj_text, 20).x;
-            if (bar_x + inj_w <= left_cap) {
-                Color inj_col = gs->injury_count > 0 ? Color{200, 100, 0, 255}
-                                                     : Color{0, 0, 0, 255};
-                ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
-                vtr.register_text(inj_text);
-                bar_x += inj_w + 12;
-            }
-        }
         if (auto* insp = EntityHelper::get_singleton_cmp<InspectionState>()) {
             std::string insp_text =
                 fmt::format("Insp: {}", std::string(1, insp->last_grade));
@@ -320,6 +309,36 @@ struct RenderTopBarSystem : System<> {
                 ui_draw_text(insp_text, bar_x, 11, 20, insp_col);
                 vtr.register_text(insp_text);
                 bar_x += insp_w + 12;
+            }
+        }
+        // Park rating with trend arrow vs yesterday (rollover snapshot).
+        // Drawn after Insp (which existing tests assert) but before Inj:
+        // the bar cannot fit all three tail items at 1280px, so Inj —
+        // never text-asserted — is the one dropped when crowded.
+        if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+            std::string rating_text = fmt::format(
+                "Rating: {} {}", static_cast<int>(std::round(rating->rating)),
+                rating->trend_arrow());
+            float rating_w = ui_measure_text(rating_text, 20).x;
+            if (bar_x + rating_w <= left_cap) {
+                Color rating_col = rating->rating >= 600 ? Color{0, 140, 0, 255}
+                                   : rating->rating < 400
+                                       ? Color{200, 0, 0, 255}
+                                       : Color{0, 0, 0, 255};
+                ui_draw_text(rating_text, bar_x, 11, 20, rating_col);
+                vtr.register_text(rating_text);
+                bar_x += rating_w + 12;
+            }
+        }
+        if (gs) {
+            std::string inj_text = fmt::format("Inj: {}", gs->injury_count);
+            float inj_w = ui_measure_text(inj_text, 20).x;
+            if (bar_x + inj_w <= left_cap) {
+                Color inj_col = gs->injury_count > 0 ? Color{200, 100, 0, 255}
+                                                     : Color{0, 0, 0, 255};
+                ui_draw_text(inj_text, bar_x, 11, 20, inj_col);
+                vtr.register_text(inj_text);
+                bar_x += inj_w + 12;
             }
         }
         // Right cluster: Day, drawn from its measured width so it can
@@ -474,6 +493,67 @@ struct RenderStaffPanelSystem : System<> {
                 ui_draw_text(tip, tip_x, tip_y, 14, Color{0, 0, 0, 255});
             }
         }
+    }
+};
+
+// Land expansion panel, build-bar style: docked into the build bar's
+// left margin (build tools start at x~337), mirroring the staff panel.
+// Geometry is fixed so E2E `click` can target the buttons:
+//   panel x=8 w=320; East button centre (86, 702), South (234, 702).
+// Each plot adds +25 buildable tiles on its side; cost doubles per plot
+// bought (5000 / 10000 / 20000 / 40000). Maxed sides show MAX.
+static constexpr float LAND_PANEL_X = 8.f;
+static constexpr float LAND_PANEL_W = 320.f;
+
+struct RenderLandPanelSystem : System<> {
+    void once(float) const override {
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        auto mouse = input::get_mouse_position();
+        bool mouse_click = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+        if (game_is_over()) return;
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+
+        float px = LAND_PANEL_X;
+        float py = BUILD_BAR_Y + 4;
+        draw_bevel_panel(px, py, LAND_PANEL_W, 46, Color{175, 175, 175, 255});
+
+        bool east_maxed = grid->expansions_x >= EXPANSION_MAX_PER_AXIS;
+        bool south_maxed = grid->expansions_z >= EXPANSION_MAX_PER_AXIS;
+        std::string label =
+            (east_maxed && south_maxed)
+                ? "Land: MAXED"
+                : fmt::format("Land Expand: ${}", grid->next_expansion_cost());
+        ui_draw_text(label, px + 8, py + 4, 13, Color{0, 0, 0, 255});
+        vtr.register_text(label);
+
+        float btn_y = py + 22;
+        float btn_h = 20.f;
+        float btn_w = 140.f;
+        float east_x = px + 8;
+        float south_x = px + 156;
+        const char* east_label = east_maxed ? "East MAX" : "East +25";
+        const char* south_label = south_maxed ? "South MAX" : "South +25";
+        if (mouse_click && mouse.y >= btn_y && mouse.y <= btn_y + btn_h &&
+            !game_is_over()) {
+            if (!east_maxed && mouse.x >= east_x && mouse.x <= east_x + btn_w)
+                buy_land_expansion(0);
+            else if (!south_maxed && mouse.x >= south_x &&
+                     mouse.x <= south_x + btn_w)
+                buy_land_expansion(1);
+        }
+        draw_bevel_panel(east_x, btn_y, btn_w, btn_h,
+                         Color{200, 200, 200, 255});
+        draw_bevel_panel(south_x, btn_y, btn_w, btn_h,
+                         Color{200, 200, 200, 255});
+        auto east_m = ui_measure_text(east_label, 14);
+        auto south_m = ui_measure_text(south_label, 14);
+        ui_draw_text(east_label, east_x + (btn_w - east_m.x) / 2.f, btn_y + 3,
+                     14, Color{0, 120, 0, 255});
+        ui_draw_text(south_label, south_x + (btn_w - south_m.x) / 2.f,
+                     btn_y + 3, 14, Color{0, 120, 0, 255});
+        vtr.register_text(east_label);
+        vtr.register_text(south_label);
     }
 };
 
@@ -826,7 +906,7 @@ struct RenderHoverInfoSystem : System<> {
 static afterhours::graphics::RenderTextureType g_minimap_texture = {};
 static bool g_minimap_initialized = false;
 static constexpr int MINIMAP_SIZE = 150;
-static constexpr float MINIMAP_SCALE = 150.0f / 52.0f;
+static constexpr float MINIMAP_SCALE = 150.0f / static_cast<float>(MAP_SIZE);
 
 // Booking panel geometry (sidebar, fixed so E2E `click` can target it):
 //   sidebar x=1130 w=150; rows start y=366, row height 24; the BOOK button
@@ -1243,6 +1323,7 @@ void register_render_ui_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<RenderNewsTickerSystem>());
     sm.register_render_system(std::make_unique<RenderBuildBarSystem>());
     sm.register_render_system(std::make_unique<RenderStaffPanelSystem>());
+    sm.register_render_system(std::make_unique<RenderLandPanelSystem>());
     sm.register_render_system(std::make_unique<RenderToastsSystem>());
     sm.register_render_system(std::make_unique<RenderNuxBannerSystem>());
     sm.register_render_system(std::make_unique<RenderCompassSystem>());

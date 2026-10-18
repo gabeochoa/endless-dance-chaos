@@ -10,10 +10,72 @@ constexpr int DEFAULT_SCREEN_HEIGHT = 720;
 
 // Game constants
 constexpr float TILESIZE = 1.0f;
-constexpr int MAP_SIZE = 52;          // 52x52 total (including fence ring)
+// Preallocated grid: 102x102. The initial park is the original 52x52
+// (fence ring at 0/51, playable 1..50); the rest is Locked tiles until a
+// land expansion buys it (see Grid::expansions_x/z). True resize was
+// rejected: MAP_SIZE is baked into fixed-size arrays (Grid::tiles,
+// event-system scratch arrays, save format), so expansion unlocks a
+// region of this larger preallocated grid instead of reallocating it.
+// Max: 2 expansions per axis * 25 tiles = 50 tiles per axis, so
+// 52 + 50 = 102 exactly fits the fence at the far edge.
+constexpr int MAP_SIZE = 102;
 constexpr int PLAY_MIN = 1;           // playable area starts at (1,1)
-constexpr int PLAY_MAX = 50;          // playable area ends at (50,50)
+constexpr int PLAY_MAX = 50;          // playable area ends at (50,50) initially
 constexpr int TILE_RENDER_SIZE = 32;  // pixels at 1x zoom
+
+// Land expansion: one bought plot adds +25 buildable tiles in +x (East)
+// or +z (South), up to 2 plots per axis. Cost doubles per plot bought,
+// regardless of axis: 5000, 10000, 20000, 40000.
+constexpr int EXPANSION_TILES = 25;
+constexpr int EXPANSION_MAX_PER_AXIS = 2;
+constexpr int EXPANSION_BASE_COST = 5000;
+
+// Park rating: 0-999, starts at 500. Target = base + coverage +
+// inspection memory - harm (death/injury) - need - crowding pressures.
+constexpr int PARK_RATING_MIN = 0;
+constexpr int PARK_RATING_MAX = 999;
+constexpr float PARK_RATING_START = 500.0f;
+constexpr float PARK_RATING_BASE = 500.0f;
+// Coverage: +40 per facility type (bathroom/food/water) at >=1 facility
+// per 100 attendees, scaling linearly below that.
+constexpr float PARK_RATING_COVERAGE_PER_TYPE = 40.0f;
+constexpr float PARK_RATING_COVERAGE_IDEAL_PER_100 = 1.0f;
+// Inspection memory (last grade only): A +60, B +30, C 0, D -50, F -100.
+constexpr float PARK_RATING_INSPECTION_A = 60.0f;
+constexpr float PARK_RATING_INSPECTION_B = 30.0f;
+constexpr float PARK_RATING_INSPECTION_D = -50.0f;
+constexpr float PARK_RATING_INSPECTION_F = -100.0f;
+// Harm: a death applies its penalty instantly to the rating and to the
+// harm pool; an injury adds a smaller amount to the same pool. The pool
+// halves at each day rollover (decays over days), so the rating recovers.
+constexpr float PARK_RATING_DEATH_PENALTY = 70.0f;
+constexpr float PARK_RATING_INJURY_PENALTY = 8.0f;
+constexpr float PARK_RATING_HARM_CAP = 400.0f;
+constexpr float PARK_RATING_HARM_DECAY_PER_DAY = 0.5f;
+// Need / crowding pressures: EWMA toward an instantaneous penalty
+// (max 180 / 150) once the unmet-need fraction exceeds the 0.25 baseline
+// or agents sit on critically dense tiles. Rating approaches its target
+// exponentially at this rate (per second).
+constexpr float PARK_RATING_NEED_MAX_PENALTY = 180.0f;
+constexpr float PARK_RATING_NEED_BASELINE = 0.25f;
+constexpr float PARK_RATING_CROWDING_MAX_PENALTY = 150.0f;
+constexpr float PARK_RATING_PRESSURE_RATE = 0.5f;
+constexpr float PARK_RATING_APPROACH_RATE = 0.25f;
+// Price tolerance: guests tolerate +$10 over the base ticket price at
+// rating >= 750. The tolerance ramps linearly from rating 500 to 750
+// and stays capped at +10 above that.
+constexpr float PARK_RATING_TOLERANCE_START = 500.0f;
+constexpr float PARK_RATING_TOLERANCE_FULL = 750.0f;
+constexpr float PARK_RATING_TOLERANCE_MAX = 10.0f;
+// Spawn multiplier: rating / 500, clamped to [0.5, 1.5]. A 500-rated
+// park spawns at the base rate; 999 spawns 1.5x as fast. The multiplier
+// is evaluated on the 50-point band floor (575 counts as 550), so
+// small rating wobble from a fresh inspection grade does not jitter
+// the spawn interval frame to frame; it is exact at band boundaries.
+constexpr float PARK_RATING_SPAWN_DIVISOR = 500.0f;
+constexpr float PARK_RATING_SPAWN_MIN = 0.5f;
+constexpr float PARK_RATING_SPAWN_MAX = 1.5f;
+constexpr float PARK_RATING_SPAWN_BAND = 50.0f;
 
 // Gate position (2x1 opening in left fence)
 constexpr int GATE_X = 0;

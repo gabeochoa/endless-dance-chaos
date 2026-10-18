@@ -17,8 +17,10 @@ static constexpr const char* META_FILE = "saves/meta.dat";
 static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
 // v2 appends economy, lineup, staff, GameState extras, inspection,
 // director, and active events AFTER the v1 agent block, so the v1
-// prefix is byte-identical. Increment on schema changes.
-static constexpr uint32_t SAVE_VERSION = 2;
+// prefix is byte-identical. v3 appends land-expansion counts and the
+// park-rating state after the v2 active-events block. Increment on
+// schema changes.
+static constexpr uint32_t SAVE_VERSION = 3;
 
 namespace detail {
 inline void write_int(std::ofstream& f, int v) {
@@ -279,6 +281,32 @@ inline bool save_game() {
         }
     }
 
+    // ── v3 sections (appended after the v2 active-events block) ─────────
+    // Land expansions: the fence positions in the tile block already
+    // encode them, but in_playable() reads these counts, so persist them.
+    {
+        detail::write_int(f, grid ? grid->expansions_x : 0);
+        detail::write_int(f, grid ? grid->expansions_z : 0);
+    }
+    // Park rating state (the rating itself, pressures, harm pool, and
+    // the rollover bookkeeping that feeds the HUD trend arrow).
+    {
+        auto* rating =
+            afterhours::EntityHelper::get_singleton_cmp<ParkRatingState>();
+        detail::write_float(f, rating ? rating->rating : PARK_RATING_START);
+        detail::write_float(f, rating ? rating->target : PARK_RATING_START);
+        detail::write_float(f, rating ? rating->harm_pool : 0.f);
+        detail::write_float(f, rating ? rating->need_pressure : 0.f);
+        detail::write_float(f, rating ? rating->crowding_pressure : 0.f);
+        detail::write_float(
+            f, rating ? rating->yesterday_rating : PARK_RATING_START);
+        detail::write_float(
+            f, rating ? rating->day_start_rating : PARK_RATING_START);
+        detail::write_int(f, rating ? rating->last_day : 1);
+        detail::write_int(f, rating ? rating->last_death_count : 0);
+        detail::write_int(f, rating ? rating->last_injury_count : 0);
+    }
+
     return f.good();
 }
 
@@ -293,10 +321,10 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    // v1 files are a byte-identical prefix of v2: they load, with the
-    // v2-only state (economy, bookings, staff, ...) left as-is.
-    // Anything else is rejected.
-    if (version != SAVE_VERSION && version != 1) return false;
+    // v1 files are a byte-identical prefix of v2/v3: they load, with the
+    // newer-only state (economy, bookings, staff, rating, ...) left
+    // as-is. Anything else is rejected.
+    if (version != SAVE_VERSION && version != 2 && version != 1) return false;
 
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
@@ -385,7 +413,7 @@ inline bool load_game() {
     // ── v2 sections (absent in v1 files: leave v2-only state as-is) ──
     // Reads are unconditional into locals (only the assignment is
     // guarded) so a missing singleton can never desync the stream.
-    if (version == SAVE_VERSION) {
+    if (version >= 2) {
         // Economy
         {
             int cash = 0, price = 0, earned = 0, spent = 0;
@@ -560,6 +588,61 @@ inline bool load_game() {
                 ev.description = description;
                 ev.offline_type = static_cast<FacilityType>(offline_i);
             }
+        }
+    }
+
+    // ── v3 sections (absent in v1/v2 files: leave v3-only state as-is) ──
+    if (version >= 3) {
+        // Land expansions
+        {
+            int exp_x = 0, exp_z = 0;
+            detail::read_int(f, exp_x);
+            detail::read_int(f, exp_z);
+            if (grid) {
+                grid->expansions_x = exp_x;
+                grid->expansions_z = exp_z;
+            }
+        }
+        // Park rating state
+        {
+            float rating_v = PARK_RATING_START, target_v = PARK_RATING_START;
+            float harm = 0.f, need = 0.f, crowd = 0.f;
+            float yesterday = PARK_RATING_START, day_start = PARK_RATING_START;
+            int last_day = 1, last_deaths = 0, last_injuries = 0;
+            detail::read_float(f, rating_v);
+            detail::read_float(f, target_v);
+            detail::read_float(f, harm);
+            detail::read_float(f, need);
+            detail::read_float(f, crowd);
+            detail::read_float(f, yesterday);
+            detail::read_float(f, day_start);
+            detail::read_int(f, last_day);
+            detail::read_int(f, last_deaths);
+            detail::read_int(f, last_injuries);
+            if (auto* rating = afterhours::EntityHelper::get_singleton_cmp<
+                    ParkRatingState>()) {
+                rating->rating = rating_v;
+                rating->target = target_v;
+                rating->harm_pool = harm;
+                rating->need_pressure = need;
+                rating->crowding_pressure = crowd;
+                rating->yesterday_rating = yesterday;
+                rating->day_start_rating = day_start;
+                rating->last_day = last_day;
+                rating->last_death_count = last_deaths;
+                rating->last_injury_count = last_injuries;
+            }
+        }
+    }
+
+    // A v1/v2 file carries no rating bookkeeping: sync the harm
+    // detectors to the loaded counters so old deaths are not re-charged.
+    // (For v3 files the saved values already equal these counters.)
+    if (auto* rating =
+            afterhours::EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+        if (gs) {
+            rating->last_death_count = gs->death_count;
+            rating->last_injury_count = gs->injury_count;
         }
     }
 

@@ -26,6 +26,10 @@ std::pair<int, int> best_stage_spot(int from_x, int from_z);
 // Run one health-and-safety inspection now (tycoon_systems.cpp). Shared by
 // the daily inspection trigger and the E2E run_inspection command.
 void run_inspection_now();
+// Buy one land-expansion plot: axis 0 = East (+x), 1 = South (+z).
+// Charges Grid::next_expansion_cost() first; refused (no charge) at the
+// per-axis cap or when unaffordable. Shared by the land panel and E2E.
+bool buy_land_expansion(int axis);
 void register_tycoon_systems(SystemManager& sm);
 void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);

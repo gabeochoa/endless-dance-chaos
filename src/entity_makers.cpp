@@ -16,9 +16,10 @@ Entity& make_sophie() {
     sophie.addComponent<ProvidesCamera>();
     EntityHelper::registerSingleton<ProvidesCamera>(sophie);
 
-    // Center camera on the grid
-    sophie.get<ProvidesCamera>().cam.target = {MAP_SIZE / 2.0f, 0,
-                                               MAP_SIZE / 2.0f};
+    // Center camera on the initial bought park (fence at 0/51), not on
+    // the whole preallocated grid — most of it is Locked land.
+    sophie.get<ProvidesCamera>().cam.target = {(PLAY_MAX + 1) / 2.0f, 0,
+                                               (PLAY_MAX + 1) / 2.0f};
     sophie.get<ProvidesCamera>().cam.update_camera_position();
 
     sophie.addComponent<Grid>();
@@ -68,6 +69,9 @@ Entity& make_sophie() {
 
     sophie.addComponent<EventDirectorState>();
     EntityHelper::registerSingleton<EventDirectorState>(sophie);
+
+    sophie.addComponent<ParkRatingState>();
+    EntityHelper::registerSingleton<ParkRatingState>(sophie);
 
     // Initialize the grid
     auto& grid_ref = sophie.get<Grid>();
@@ -279,6 +283,20 @@ void reset_game_state() {
     // Reset the event director: default seed + fresh day bookkeeping,
     // so a restart never inherits the previous run's event sequence.
     reset_event_director();
+
+    // Reset the park rating: 500, no harm, no pressures, yesterday 500.
+    if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+        rating->rating = PARK_RATING_START;
+        rating->target = PARK_RATING_START;
+        rating->harm_pool = 0.f;
+        rating->need_pressure = 0.f;
+        rating->crowding_pressure = 0.f;
+        rating->yesterday_rating = PARK_RATING_START;
+        rating->day_start_rating = PARK_RATING_START;
+        rating->last_day = 1;
+        rating->last_death_count = 0;
+        rating->last_injury_count = 0;
+    }
 }
 
 bool should_escape_quit() {

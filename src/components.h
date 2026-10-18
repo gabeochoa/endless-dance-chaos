@@ -38,7 +38,11 @@ enum class TileType {
     MedTent,
     Bar,
     SecurityPost,
-    WaterStation
+    WaterStation,
+    // Locked: outside the bought park (land expansion). Blocks movement,
+    // renders darkened. Appended last so TILE_BLOCKS / palette arrays
+    // keep their existing indices.
+    Locked
 };
 
 // Single tile in the grid
@@ -66,9 +70,25 @@ struct Tile {
     }
 };
 
-// Grid singleton - holds the MAP_SIZE x MAP_SIZE tile map
+// Grid singleton - holds the MAP_SIZE x MAP_SIZE tile map. Only the
+// bought rectangle is playable; the rest is Locked tiles (see
+// EXPANSION_TILES in game.h). expansions_* count bought plots per axis.
 struct Grid : afterhours::BaseComponent {
     std::array<Tile, MAP_SIZE * MAP_SIZE> tiles{};
+    int expansions_x = 0;  // bought +x plots (East), each +EXPANSION_TILES
+    int expansions_z = 0;  // bought +z plots (South), each +EXPANSION_TILES
+
+    int play_max_x() const { return PLAY_MAX + expansions_x * EXPANSION_TILES; }
+    int play_max_z() const { return PLAY_MAX + expansions_z * EXPANSION_TILES; }
+    int fence_x() const { return play_max_x() + 1; }
+    int fence_z() const { return play_max_z() + 1; }
+    int total_expansions() const { return expansions_x + expansions_z; }
+
+    // Outside the fence ring: non-buildable, non-walkable (type Locked).
+    // Fence tiles themselves are not locked.
+    bool is_locked(int x, int z) const {
+        return x > fence_x() || z > fence_z() || x < 0 || z < 0;
+    }
 
     // Cached gate positions for fast access during exodus / count_gates
     std::vector<std::pair<int, int>> gate_positions;
@@ -123,9 +143,81 @@ struct Grid : afterhours::BaseComponent {
         return {x * TILESIZE, z * TILESIZE};
     }
 
-    // Check if position is in the playable area (inside fence)
+    // Check if position is in the playable area (inside fence).
+    // Grows with land expansions.
     bool in_playable(int x, int z) const {
-        return x >= PLAY_MIN && x <= PLAY_MAX && z >= PLAY_MIN && z <= PLAY_MAX;
+        return x >= PLAY_MIN && x <= play_max_x() && z >= PLAY_MIN &&
+               z <= play_max_z();
+    }
+
+    // Next plot price: doubling per plot bought, any axis.
+    static int next_expansion_cost(int total_expansions) {
+        return EXPANSION_BASE_COST * (1 << total_expansions);
+    }
+    int next_expansion_cost() const {
+        return next_expansion_cost(total_expansions());
+    }
+
+    // Unlock one plot East (+x) or South (+z). No economy here: the
+    // caller (buy_land_expansion) charges first. Returns false at the
+    // per-axis cap. Moves the fence out: the old fence column/row
+    // becomes grass (corners stay fence), the new strip becomes grass,
+    // and a new fence column/row closes the enlarged rectangle.
+    bool expand(int axis) {
+        if (axis == 0) {
+            if (expansions_x >= EXPANSION_MAX_PER_AXIS) return false;
+            int old_fence_x = fence_x();
+            int fz = fence_z();
+            expansions_x++;
+            int new_max_x = play_max_x();
+            int new_fence_x = fence_x();
+            for (int z = 0; z <= fz; z++) {
+                // A player-built gate on the moving fence stays a gate.
+                if (at(old_fence_x, z).type != TileType::Gate) {
+                    if (z == 0 || z == fz)
+                        at(old_fence_x, z).type = TileType::Fence;
+                    else
+                        at(old_fence_x, z).type = TileType::Grass;
+                }
+                at(new_fence_x, z).type = TileType::Fence;
+            }
+            for (int x = old_fence_x + 1; x <= new_max_x; x++)
+                for (int z = PLAY_MIN; z <= play_max_z(); z++)
+                    at(x, z).type = TileType::Grass;
+            for (int x = old_fence_x; x <= new_fence_x; x++) {
+                at(x, 0).type = TileType::Fence;
+                at(x, fz).type = TileType::Fence;
+            }
+            mark_tiles_dirty();
+            return true;
+        }
+        if (axis == 1) {
+            if (expansions_z >= EXPANSION_MAX_PER_AXIS) return false;
+            int old_fence_z = fence_z();
+            int fx = fence_x();
+            expansions_z++;
+            int new_max_z = play_max_z();
+            int new_fence_z = fence_z();
+            for (int x = 0; x <= fx; x++) {
+                if (at(x, old_fence_z).type != TileType::Gate) {
+                    if (x == 0 || x == fx)
+                        at(x, old_fence_z).type = TileType::Fence;
+                    else
+                        at(x, old_fence_z).type = TileType::Grass;
+                }
+                at(x, new_fence_z).type = TileType::Fence;
+            }
+            for (int z = old_fence_z + 1; z <= new_max_z; z++)
+                for (int x = PLAY_MIN; x <= play_max_x(); x++)
+                    at(x, z).type = TileType::Grass;
+            for (int z = old_fence_z; z <= new_fence_z; z++) {
+                at(0, z).type = TileType::Fence;
+                at(fx, z).type = TileType::Fence;
+            }
+            mark_tiles_dirty();
+            return true;
+        }
+        return false;
     }
 
     // Mark tile caches as needing rebuild (call after any tile type change)
@@ -246,14 +338,27 @@ struct Grid : afterhours::BaseComponent {
         }
     }
 
-    // Initialize perimeter fence, gate, and pre-placed facilities
+    // Initialize perimeter fence, gate, and pre-placed facilities.
+    // Everything outside the bought rectangle starts Locked; the
+    // initial bought rectangle is the original 52x52 (fence at 0/51).
     void init_perimeter() {
-        // Perimeter fence: outer ring
-        for (int i = 0; i < MAP_SIZE; i++) {
+        expansions_x = 0;
+        expansions_z = 0;
+        for (auto& tile : tiles) {
+            tile.type = TileType::Locked;
+            tile.agent_count = 0;
+            tile.pheromone = {0, 0, 0, 0, 0};
+        }
+        // Bought interior starts as grass.
+        for (int z = PLAY_MIN; z <= PLAY_MAX; z++)
+            for (int x = PLAY_MIN; x <= PLAY_MAX; x++)
+                at(x, z).type = TileType::Grass;
+        // Perimeter fence: ring around the bought rectangle.
+        for (int i = 0; i <= PLAY_MAX + 1; i++) {
             at(i, 0).type = TileType::Fence;             // top row
-            at(i, MAP_SIZE - 1).type = TileType::Fence;  // bottom row
+            at(i, PLAY_MAX + 1).type = TileType::Fence;  // bottom row
             at(0, i).type = TileType::Fence;             // left col
-            at(MAP_SIZE - 1, i).type = TileType::Fence;  // right col
+            at(PLAY_MAX + 1, i).type = TileType::Fence;  // right col
         }
 
         // Gate (2x1 opening in left fence)
@@ -576,7 +681,26 @@ struct Economy : afterhours::BaseComponent {
     // Spawn-rate factor: higher price => fewer arrivals. Multiplied into
     // the spawn interval by the schedule systems.
     float price_spawn_factor() const {
-        return ticket_price / static_cast<float>(DEFAULT_TICKET_PRICE);
+        return price_spawn_factor_for_rating(ticket_price, PARK_RATING_START);
+    }
+
+    // Rating-aware version: no spawn penalty at or below a
+    // rating-scaled willingness threshold (base $20, +$10 at rating
+    // >= 750, ramping 500->750). Above the threshold the penalty is
+    // price / threshold, so at rating 500 this is exactly the old
+    // price / $20 factor and existing price tests are unchanged.
+    static float price_spawn_factor_for_rating(int price, float rating) {
+        float threshold = price_threshold_for_rating(rating);
+        if (price <= threshold) return 1.0f;
+        return price / threshold;
+    }
+
+    static float price_threshold_for_rating(float rating) {
+        float t = std::clamp(
+            (rating - PARK_RATING_TOLERANCE_START) /
+                (PARK_RATING_TOLERANCE_FULL - PARK_RATING_TOLERANCE_START),
+            0.0f, 1.0f);
+        return DEFAULT_TICKET_PRICE + PARK_RATING_TOLERANCE_MAX * t;
     }
 
     void earn(int amount) {
@@ -657,6 +781,70 @@ struct InspectionState : afterhours::BaseComponent {
     bool shutdown_triggered = false;
     bool force_inspection = false;  // E2E run_inspection: inspect next frame
 };
+
+// ── Park rating ──────────────────────────────────────────────────────────
+// Continuous 0-999 rating, starts at 500. Target = base + facility
+// coverage + inspection memory - harm pool - need pressure - crowding
+// pressure (see ParkRatingSystem in tycoon_systems.cpp). Deaths/injuries
+// also drop the rating instantly by their penalty, so a fatality reads
+// the next frame; the harm pool then holds the target down and halves
+// at each day rollover, so the rating recovers over days.
+// `yesterday_rating` is the rating at the start of the previous day
+// (snapshotted at rollover), so the HUD trend arrow compares today
+// against yesterday: > +0.5 up, < -0.5 down, else flat.
+struct ParkRatingState : afterhours::BaseComponent {
+    float rating = PARK_RATING_START;
+    float target = PARK_RATING_START;
+    float harm_pool = 0.f;
+    float need_pressure = 0.f;
+    float crowding_pressure = 0.f;
+    float yesterday_rating = PARK_RATING_START;
+    float day_start_rating = PARK_RATING_START;
+    int last_day = 1;
+    int last_death_count = 0;
+    int last_injury_count = 0;
+
+    // Spawn multiplier: band-floored rating / 500, clamped [0.5, 1.5].
+    // See PARK_RATING_SPAWN_BAND in game.h for why bands, not the raw
+    // rating, drive the interval.
+    float spawn_multiplier() const {
+        float banded = std::floor(rating / PARK_RATING_SPAWN_BAND) *
+                       PARK_RATING_SPAWN_BAND;
+        return std::clamp(banded / PARK_RATING_SPAWN_DIVISOR,
+                          PARK_RATING_SPAWN_MIN, PARK_RATING_SPAWN_MAX);
+    }
+
+    // Trend vs yesterday: +1 up, -1 down, 0 flat.
+    int trend() const {
+        float d = rating - yesterday_rating;
+        if (d > 0.5f) return 1;
+        if (d < -0.5f) return -1;
+        return 0;
+    }
+
+    const char* trend_arrow() const {
+        return trend() > 0   ? "\xe2\x86\x91"   // ↑
+               : trend() < 0 ? "\xe2\x86\x93"   // ↓
+                             : "\xe2\x86\x92";  // →
+    }
+};
+
+// Inspection memory for the rating: last grade only. C / no inspection
+// yet contribute nothing.
+inline float park_rating_inspection_bonus(char grade) {
+    switch (grade) {
+        case 'A':
+            return PARK_RATING_INSPECTION_A;
+        case 'B':
+            return PARK_RATING_INSPECTION_B;
+        case 'D':
+            return PARK_RATING_INSPECTION_D;
+        case 'F':
+            return PARK_RATING_INSPECTION_F;
+        default:
+            return 0.f;
+    }
+}
 
 // ── Lineup booking + festival tiers ──────────────────────────────────────
 // Bookable acts: the data table for the sidebar booking panel. `draw_mult`

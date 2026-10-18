@@ -31,6 +31,16 @@ void register_staff_systems(SystemManager& sm);
 struct CameraInputSystem : System<ProvidesCamera> {
     void for_each_with(Entity&, ProvidesCamera& cam, float dt) override {
         cam.cam.handle_input(dt);
+        // Camera bounds follow the bought park: the target can pan over
+        // the fence rectangle (which grows with land expansions) but
+        // never into the Locked void beyond it.
+        if (auto* grid = EntityHelper::get_singleton_cmp<Grid>()) {
+            cam.cam.target.x = std::clamp(cam.cam.target.x, 0.0f,
+                                          static_cast<float>(grid->fence_x()));
+            cam.cam.target.z = std::clamp(cam.cam.target.z, 0.0f,
+                                          static_cast<float>(grid->fence_z()));
+            cam.cam.update_camera_position();
+        }
     }
 };
 

@@ -72,8 +72,8 @@ bool hire_staff(StaffRole role, int x, int z) {
                  bonus, econ->cash);
         return false;
     }
-    int hx = std::clamp(x, PLAY_MIN, PLAY_MAX);
-    int hz = std::clamp(z, PLAY_MIN, PLAY_MAX);
+    int hx = std::clamp(x, PLAY_MIN, grid->play_max_x());
+    int hz = std::clamp(z, PLAY_MIN, grid->play_max_z());
     Entity& e = EntityHelper::createEntity();
     e.addComponent<Transform>(grid->grid_to_world(hx, hz));
     e.addComponent<StaffMember>();
@@ -245,10 +245,10 @@ struct StaffMovementSystem : System<StaffMember, Transform> {
             // New patrol target within STAFF_PATROL_RADIUS of home.
             auto& rng = RandomEngine::get();
             int r = static_cast<int>(STAFF_PATROL_RADIUS);
-            int tx =
-                std::clamp(s.home_x + rng.get_int(-r, r), PLAY_MIN, PLAY_MAX);
-            int tz =
-                std::clamp(s.home_z + rng.get_int(-r, r), PLAY_MIN, PLAY_MAX);
+            int tx = std::clamp(s.home_x + rng.get_int(-r, r), PLAY_MIN,
+                                grid->play_max_x());
+            int tz = std::clamp(s.home_z + rng.get_int(-r, r), PLAY_MIN,
+                                grid->play_max_z());
             if (grid->in_bounds(tx, tz) &&
                 !tile_blocks_movement(grid->at(tx, tz).type)) {
                 s.target_x = tx;

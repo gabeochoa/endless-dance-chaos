@@ -213,8 +213,193 @@ struct MilestoneSystem : System<> {
     }
 };
 
+// ── Park rating + land expansion ─────────────────────────────────────────
+
+// Exponential approach helper: 1 - exp(-rate * dt) is the fraction of
+// the remaining gap closed this frame, so the rate is frame-rate
+// independent.
+static float approach_factor(float rate, float dt) {
+    return 1.0f - std::exp(-rate * dt);
+}
+
+// Facility count for one type, in whole facilities: Bathroom / Food
+// footprints are 2x2 (4 tiles), a Water Station is 1 tile.
+static float facility_count_for(const Grid& grid, TileType type,
+                                int tiles_per_facility) {
+    int tiles = 0;
+    for (const auto& tile : grid.tiles)
+        if (tile.type == type) tiles++;
+    return tiles / static_cast<float>(tiles_per_facility);
+}
+
+struct ParkRatingSystem : System<> {
+    void once(float dt) override {
+        if (skip_game_logic()) return;
+        auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+        if (!rating) return;
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        auto* insp = EntityHelper::get_singleton_cmp<InspectionState>();
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+
+        // Day rollover: yesterday = the rating at the start of the day
+        // that just ended; the harm pool halves (deaths/injuries decay
+        // over days, so the rating recovers).
+        if (diff && diff->day_number != rating->last_day) {
+            int old_day = rating->last_day;
+            int new_day = diff->day_number;
+            rating->last_day = new_day;
+            if (new_day > old_day) {
+                rating->yesterday_rating = rating->day_start_rating;
+                rating->day_start_rating = rating->rating;
+                rating->harm_pool *= PARK_RATING_HARM_DECAY_PER_DAY;
+            } else {
+                // Day went backwards (E2E set_day_number): resync flat.
+                rating->yesterday_rating = rating->rating;
+                rating->day_start_rating = rating->rating;
+            }
+        }
+
+        // Deaths / injuries: instant rating drop + harm-pool charge.
+        // Only positive deltas count (a reset lowers the counters).
+        if (gs) {
+            int new_deaths = gs->death_count - rating->last_death_count;
+            int new_injuries = gs->injury_count - rating->last_injury_count;
+            if (new_deaths > 0 || new_injuries > 0) {
+                float harm = new_deaths * PARK_RATING_DEATH_PENALTY +
+                             new_injuries * PARK_RATING_INJURY_PENALTY;
+                rating->harm_pool =
+                    std::min(PARK_RATING_HARM_CAP, rating->harm_pool + harm);
+                rating->rating = std::clamp(
+                    rating->rating - harm, static_cast<float>(PARK_RATING_MIN),
+                    static_cast<float>(PARK_RATING_MAX));
+            }
+            rating->last_death_count = gs->death_count;
+            rating->last_injury_count = gs->injury_count;
+        }
+
+        int live = static_cast<int>(
+            EntityQuery().whereHasComponent<Agent>().gen_count());
+
+        // Need satisfaction: fraction of live agents with any unmet need.
+        // No penalty at or below the 0.25 baseline; ramps to the max at
+        // every agent needy. EWMA so a one-frame blip does not swing it.
+        float need_frac = 0.f;
+        if (live > 0) {
+            int needy = 0;
+            auto agents =
+                EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+            for (Entity& a : agents) {
+                auto& needs = a.get<AgentNeeds>();
+                if (needs.needs_bathroom || needs.needs_food ||
+                    needs.needs_heat || needs.needs_bar)
+                    needy++;
+            }
+            need_frac = needy / static_cast<float>(live);
+        }
+        float instant_need = 0.f;
+        if (need_frac > PARK_RATING_NEED_BASELINE) {
+            instant_need = PARK_RATING_NEED_MAX_PENALTY *
+                           (need_frac - PARK_RATING_NEED_BASELINE) /
+                           (1.0f - PARK_RATING_NEED_BASELINE);
+        }
+        rating->need_pressure += (instant_need - rating->need_pressure) *
+                                 approach_factor(PARK_RATING_PRESSURE_RATE, dt);
+
+        // Critical-density time: fraction of live agents standing on
+        // critically dense tiles (>= 36 agents). EWMA like needs.
+        float crowd_frac = 0.f;
+        if (live > 0 && grid) {
+            int critical_threshold =
+                static_cast<int>(DENSITY_CRITICAL * MAX_AGENTS_PER_TILE);
+            int on_critical = 0;
+            for (const auto& tile : grid->tiles)
+                if (tile.agent_count >= critical_threshold)
+                    on_critical += tile.agent_count;
+            crowd_frac = std::min(1.0f, on_critical / static_cast<float>(live));
+        }
+        float instant_crowd = PARK_RATING_CROWDING_MAX_PENALTY * crowd_frac;
+        rating->crowding_pressure +=
+            (instant_crowd - rating->crowding_pressure) *
+            approach_factor(PARK_RATING_PRESSURE_RATE, dt);
+
+        // Facility coverage per 100 attendees: +40 per type (bathroom /
+        // food / water) at >= 1 facility per 100 attendees, scaling
+        // linearly below that. No attendees => no coverage bonus, so an
+        // empty park sits exactly at the 500 base.
+        float coverage = 0.f;
+        if (live > 0 && grid) {
+            float ideal = live * PARK_RATING_COVERAGE_IDEAL_PER_100 / 100.0f;
+            if (ideal > 0.f) {
+                float bathroom =
+                    facility_count_for(*grid, TileType::Bathroom, 4);
+                float food = facility_count_for(*grid, TileType::Food, 4);
+                float water =
+                    facility_count_for(*grid, TileType::WaterStation, 1);
+                for (float facilities : {bathroom, food, water})
+                    coverage += PARK_RATING_COVERAGE_PER_TYPE *
+                                std::min(1.0f, facilities / ideal);
+            }
+        }
+
+        float inspection =
+            insp ? park_rating_inspection_bonus(insp->last_grade) : 0.f;
+        rating->target = std::clamp(
+            PARK_RATING_BASE + coverage + inspection - rating->harm_pool -
+                rating->need_pressure - rating->crowding_pressure,
+            static_cast<float>(PARK_RATING_MIN),
+            static_cast<float>(PARK_RATING_MAX));
+
+        rating->rating += (rating->target - rating->rating) *
+                          approach_factor(PARK_RATING_APPROACH_RATE, dt);
+        rating->rating =
+            std::clamp(rating->rating, static_cast<float>(PARK_RATING_MIN),
+                       static_cast<float>(PARK_RATING_MAX));
+    }
+};
+
+// Buy one land-expansion plot East (axis 0) or South (axis 1). The
+// caller-facing economy lives here; Grid::expand only moves the fence.
+// Refused (no charge) at the per-axis cap or when unaffordable.
+bool buy_land_expansion(int axis) {
+    auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!grid || !econ) return false;
+    if (axis != 0 && axis != 1) return false;
+    if ((axis == 0 && grid->expansions_x >= EXPANSION_MAX_PER_AXIS) ||
+        (axis == 1 && grid->expansions_z >= EXPANSION_MAX_PER_AXIS)) {
+        spawn_toast(
+            fmt::format("No more land to buy {}: that side is maxed out.",
+                        axis == 0 ? "to the East" : "to the South"));
+        log_info("Land expansion refused: axis {} at cap", axis);
+        return false;
+    }
+    int cost = grid->next_expansion_cost();
+    if (!econ->try_spend(cost)) {
+        spawn_toast(
+            fmt::format("Not enough cash! Land expansion costs ${}", cost));
+        log_warn("Land expansion refused: costs ${}, cash is ${}", cost,
+                 econ->cash);
+        return false;
+    }
+    if (!grid->expand(axis)) {
+        // Unreachable: the cap was checked above. Refund exactly.
+        econ->cash += cost;
+        econ->total_spent -= cost;
+        log_warn("Land expansion failed after payment, refunded ${}", cost);
+        return false;
+    }
+    spawn_toast(fmt::format("Land expanded {}! +{} buildable tiles for ${}.",
+                            axis == 0 ? "East" : "South", EXPANSION_TILES,
+                            cost));
+    log_info("Land expanded axis {} for ${} (total expansions {})", axis, cost,
+             grid->total_expansions());
+    return true;
+}
+
 void register_tycoon_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<PriceAdjustSystem>());
     sm.register_update_system(std::make_unique<InspectionSystem>());
     sm.register_update_system(std::make_unique<MilestoneSystem>());
+    sm.register_update_system(std::make_unique<ParkRatingSystem>());
 }
