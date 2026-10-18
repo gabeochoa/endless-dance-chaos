@@ -1,0 +1,70 @@
+# Test: iso view mode (default) — diamond projection, rotation-aware
+# picking, thought bubbles, V / HUD-button toggle to top-down.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# Default view is iso (reset restores it).
+assert_view iso
+screenshot 17_iso_default
+
+# Mouse placement through the iso projection: click_grid converts the
+# tile to iso screen coords, the inverse projection must pick it back.
+select_tool path
+wait_frames 2
+click_grid 40 10
+wait_frames 3
+click_grid 44 14
+wait_frames 3
+assert_tile_type 40 10 path
+assert_tile_type 42 12 path
+assert_tile_type 44 14 path
+assert_tile_type 39 9 grass
+assert_tile_type 45 15 grass
+
+# Rotate 90 deg (E), then place again: picking must use the rotated
+# mapping, so the same click_grid round-trip still lands on the tile.
+key E
+wait_frames 2
+select_tool path
+wait_frames 2
+click_grid 18 32
+wait_frames 3
+click_grid 20 34
+wait_frames 3
+assert_tile_type 18 32 path
+assert_tile_type 19 33 path
+assert_tile_type 20 34 path
+assert_tile_type 17 31 grass
+assert_tile_type 21 35 grass
+key Q
+wait_frames 2
+
+# Thought bubble: an agent with an urgent (>85%) bathroom need shows a
+# white bubble with a WC glyph, registered in visible text.
+spawn_agents 30 30 1 bathroom
+wait_frames 2
+set_need_timer bathroom 0.95
+wait_frames 2
+expect_text "WC"
+screenshot 17_iso_bubble
+
+# V toggles to top-down and back.
+key V
+wait_frames 2
+assert_view top
+screenshot 17_top_view
+key V
+wait_frames 2
+assert_view iso
+
+# HUD button (centre 1100, 90) toggles the same state. These clicks come
+# last: the Path tool also sees the mouse press, which may start/finish
+# a path drag — no tile assertions follow.
+click 1100 90
+wait_frames 2
+assert_view top
+click 1100 90
+wait_frames 2
+assert_view iso
+screenshot 17_iso_final

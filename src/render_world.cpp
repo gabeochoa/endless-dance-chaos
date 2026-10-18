@@ -4,6 +4,7 @@
 
 #include "afterhours/src/core/entity_helper.h"
 #include "afterhours/src/core/entity_query.h"
+#include "afterhours/src/plugins/e2e_testing/visible_text.h"
 #include "components.h"
 #include "gfx3d.h"
 #include "render_helpers.h"
@@ -20,7 +21,9 @@ struct BeginRenderSystem : System<> {
         clear_background(bg);
 
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-        if (cam) begin_3d(cam->cam.camera);
+        // Iso mode draws pure 2D diamonds into the texture: no 3D
+        // camera, no begin_3d. The legacy 3D path keeps begin_3d.
+        if (cam && !cam->cam.iso_mode) begin_3d(cam->cam.camera);
 
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
         if (!cam || !vr) return;
@@ -38,7 +41,14 @@ struct BeginRenderSystem : System<> {
         constexpr int MARGIN = 2;
         float sw = static_cast<float>(DEFAULT_SCREEN_WIDTH);
         float sh = static_cast<float>(DEFAULT_SCREEN_HEIGHT);
+        // In iso mode, cull to the world viewport (top bar / build bar /
+        // sidebar excluded): the full-screen corners would needlessly
+        // cover the whole map's AABB.
         vec2 corners[] = {{0, 0}, {sw, 0}, {0, sh}, {sw, sh}};
+        if (iso.iso_mode) {
+            vec2 wc[] = {{0, 44}, {1130, 44}, {0, 644}, {1130, 644}};
+            for (int i = 0; i < 4; i++) corners[i] = wc[i];
+        }
 
         bool any_valid = false;
         int gx_min = 0, gx_max = MAP_SIZE - 1;
@@ -74,6 +84,524 @@ struct BeginRenderSystem : System<> {
     }
 };
 
+// Desire pip colors (indexed by FacilityType) — match the saturated
+// building palette so a pip reads as its destination at a glance.
+static constexpr Color DESIRE_COLORS[] = {
+    {0, 210, 200, 255},    // Bathroom
+    {255, 80, 160, 255},   // Food
+    {200, 30, 230, 255},   // Stage
+    {255, 255, 255, 255},  // Exit/Gate
+    {255, 45, 45, 255},    // MedTent
+    {255, 145, 0, 255},    // Bar
+    {0, 180, 255, 255},    // WaterStation
+};
+
+static float hash_scatter(int seed) {
+    uint32_t h = static_cast<uint32_t>(seed);
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return (static_cast<float>(h & 0xFFFF) / 32767.5f) - 1.0f;
+}
+
+// Bright saturated shirt colors, picked by a hash of the entity id mixed
+// with the spawn-time color index, so neighbors rarely match.
+static constexpr Color AGENT_SHIRT_PALETTE[] = {
+    {255, 60, 60, 255},  {255, 150, 0, 255},  {255, 225, 0, 255},
+    {70, 215, 90, 255},  {0, 200, 255, 255},  {90, 120, 255, 255},
+    {255, 90, 200, 255}, {180, 90, 255, 255},
+};
+
+static uint32_t hash_agent_color(int eid, uint8_t color_idx) {
+    uint32_t h = static_cast<uint32_t>(eid) * 2654435761u ^
+                 static_cast<uint32_t>(color_idx) * 40503u;
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return h;
+}
+
+static constexpr float BODY_W = 0.14f;
+static constexpr float BODY_H = 0.32f;
+static constexpr float PIP_W = 0.09f;
+static constexpr float PIP_H = 0.08f;
+static constexpr float SCATTER_RANGE = 0.35f;
+
+// Density heat-map color (yellow -> orange -> red -> dark red). Same
+// stops as RenderDensitySystem::get_density_color below; duplicated here
+// because the iso pass is defined above that system and must stay a
+// single sorted draw list.
+static Color iso_density_color(float density_ratio) {
+    if (density_ratio < 0.50f) {
+        float t = density_ratio / 0.50f;
+        return Color{255, 255, 0, static_cast<unsigned char>(t * 180)};
+    } else if (density_ratio < 0.75f) {
+        float t = (density_ratio - 0.50f) / 0.25f;
+        return Color{255, static_cast<unsigned char>(255 - t * 90), 0, 180};
+    } else if (density_ratio < 0.90f) {
+        float t = (density_ratio - 0.75f) / 0.15f;
+        return Color{255, static_cast<unsigned char>(165 - t * 165), 0, 200};
+    } else {
+        float t = std::min((density_ratio - 0.90f) / 0.10f, 1.0f);
+        return Color{static_cast<unsigned char>(255 - t * 255), 0, 0, 220};
+    }
+}
+
+// Forward: defined below with the legacy 3D grid system.
+static bool is_building_tile(TileType type);
+
+// ── 2D isometric renderer ────────────────────────────────────────────
+// One sorted draw list (painter's algorithm): every tile, building,
+// peep, overlay, particle and marker becomes an item keyed by depth
+// (x+z, continuous for agents) + a layer order, then items draw
+// back-to-front so nearer objects correctly overlap farther ones.
+// Tiles/buildings are filled quads: on raylib, RL_TRIANGLES does not
+// rasterize in this render-texture pass (verified with a lone
+// DrawTriangle: background untouched, while RL_QUADS draws), so quads
+// go through afterhours draw_quad there. On Metal, draw_quad is only a
+// bounding box, so quads are split into two triangles (sgl handles
+// them) — iso_draw_poly4 hides the split.
+
+// Fill a convex quad (a, b, c, d) in order.
+static void iso_draw_poly4(vec2 a, vec2 b, vec2 c, vec2 d, Color color) {
+#ifdef AFTER_HOURS_USE_RAYLIB
+    vec2 q[4] = {a, b, c, d};
+    draw_quad(q, color);
+#else
+    draw_triangle(a, b, c, color);
+    draw_triangle(a, c, d, color);
+#endif
+}
+
+static void iso_draw_diamond(float cx, float cy, float tw, float th,
+                             Color color) {
+    vec2 top{cx, cy - th * 0.5f};
+    vec2 right{cx + tw * 0.5f, cy};
+    vec2 bottom{cx, cy + th * 0.5f};
+    vec2 left{cx - tw * 0.5f, cy};
+    iso_draw_poly4(top, right, bottom, left, color);
+}
+
+// Ground tile with a dark seam: a full-size darkened diamond underneath
+// a slightly inset tile-color diamond reads as a 1px grid line without
+// a per-tile line call (cheaper, and batch-friendly).
+static void iso_draw_tile(float cx, float cy, float tw, float th, Color color) {
+    iso_draw_diamond(cx, cy, tw, th, darken_color(color, 0.35f));
+    iso_draw_diamond(cx, cy, std::max(tw - 2.0f, 1.0f),
+                     std::max(th - 1.0f, 1.0f), color);
+}
+
+// Extruded block: two side faces + a lightened roof diamond. Height is in
+// screen px (see RenderIsoSystem for the per-type heights).
+static void iso_draw_block(float cx, float cy, float tw, float th, float h,
+                           Color color) {
+    float ry = cy - h;  // roof-center height above the ground center
+    vec2 top{cx, ry - th * 0.5f};
+    vec2 right{cx + tw * 0.5f, ry};
+    vec2 bottom{cx, ry + th * 0.5f};
+    vec2 left{cx - tw * 0.5f, ry};
+    vec2 bottom2{cx, cy + th * 0.5f};
+    vec2 left2{cx - tw * 0.5f, cy};
+    vec2 right2{cx + tw * 0.5f, cy};
+    // Left face (darker) and right face, then the roof on top.
+    Color left_c = darken_color(color, 0.35f);
+    Color right_c = darken_color(color, 0.15f);
+    iso_draw_poly4(left, bottom, bottom2, left2, left_c);
+    iso_draw_poly4(right, bottom2, bottom, right2, right_c);
+    iso_draw_diamond(cx, ry, tw, th, lighten_color(color, 0.40f));
+}
+
+// Urgent-need glyph for a thought bubble: the highest need ratio wins;
+// heat breaks ties (it can kill). Returns nullptr below the 85% line.
+static const char* iso_urgent_glyph(const AgentNeeds* needs) {
+    if (!needs) return nullptr;
+    auto ratio = [](float timer, float threshold) {
+        return threshold > 0.f ? timer / threshold : 0.f;
+    };
+    float heat = ratio(needs->heat_timer, needs->heat_threshold);
+    float wc = ratio(needs->bathroom_timer, needs->bathroom_threshold);
+    float food = ratio(needs->food_timer, needs->food_threshold);
+    float bar = ratio(needs->bar_timer, needs->bar_threshold);
+    float best = std::max(std::max(heat, wc), std::max(food, bar));
+    if (best <= 0.85f) return nullptr;
+    if (heat >= best) return "HEAT";
+    if (wc >= best) return "WC";
+    if (food >= best) return "FOOD";
+    return "BAR";
+}
+
+struct IsoPeep {
+    float wx = 0, wz = 0, bob = 0;
+    Color body{255, 255, 255, 255};
+    Color pip{255, 255, 255, 255};
+    const char* glyph = nullptr;  // thought-bubble glyph, or nullptr
+    bool is_staff = false;
+};
+
+struct IsoPoint {
+    float wx = 0, wz = 0, lift = 0, size = 0;
+    Color color{255, 255, 255, 255};
+    int shape = 0;  // 0 = particle rect, 1 = death-marker X
+};
+
+// One entry in the painter's draw list.
+struct IsoDraw {
+    float depth = 0;  // x+z; continuous for agents
+    int order = 0;    // tile 0, overlay 1, building 2, peep 3, bubble 4, fx 5
+    int kind = 0;     // 0 tile, 1 overlay, 2 building, 3 peep, 4 bubble, 5 fx
+    int x = 0, z = 0;
+    Color color{255, 255, 255, 255};
+    float h = 0;   // building height px
+    int ref = -1;  // IsoPeep / IsoPoint snapshot index
+};
+
+struct RenderIsoSystem : System<> {
+    void once(float) const override {
+        auto* cam_cmp = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+        if (!cam_cmp || !cam_cmp->cam.iso_mode) return;
+        auto& cam = cam_cmp->cam;
+        float tw = cam.iso_tile_w();
+        float th = cam.iso_tile_h();
+
+        auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+        if (!grid) return;
+        auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
+        int x0 = vr ? vr->min_x : 0;
+        int x1 = vr ? vr->max_x : MAP_SIZE - 1;
+        int z0 = vr ? vr->min_z : 0;
+        int z1 = vr ? vr->max_z : MAP_SIZE - 1;
+        float night_t = get_day_night_t();
+        float t = get_time();
+
+        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+        bool show_overlay = gs && gs->show_data_layer;
+        int danger_threshold =
+            static_cast<int>(DENSITY_DANGEROUS * MAX_AGENTS_PER_TILE);
+
+        auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
+        bool stage_glow =
+            sched && (sched->stage_state == StageState::Announcing ||
+                      sched->stage_state == StageState::Performing);
+        float glow_alpha = 0;
+        Color glow_color{255, 180, 0, 0};
+        if (stage_glow) {
+            if (sched->stage_state == StageState::Announcing) {
+                float pulse = (std::sin(t * 3.0f) + 1.0f) * 0.5f;
+                glow_alpha = 40 + pulse * 40;
+                glow_color = {255, 200, 50,
+                              static_cast<unsigned char>(glow_alpha)};
+            } else {
+                float beat_phase = std::fmod(t * (128.0f / 60.0f), 1.0f);
+                float pulse =
+                    std::pow(std::max(0.0f, 1.0f - beat_phase * 4.0f), 2.0f);
+                glow_alpha = 60 + pulse * 100;
+                glow_color = {255, 180, 0,
+                              static_cast<unsigned char>(glow_alpha)};
+            }
+        }
+
+        std::vector<IsoDraw> items;
+        items.reserve((x1 - x0 + 1) * (z1 - z0 + 1) * 2 + 512);
+        std::vector<IsoPeep> peeps;
+        std::vector<IsoPoint> points;
+
+        // Tiles (+ building extrusions + ground overlays).
+        for (int z = z0; z <= z1; z++) {
+            for (int x = x0; x <= x1; x++) {
+                const Tile& tile = grid->at(x, z);
+                float depth = static_cast<float>(x + z);
+                items.push_back({depth, 0, 0, x, z,
+                                 ::tile_color(tile.type, night_t), 0, -1});
+                if (tile.type == TileType::Fence) {
+                    // Low extruded block so the fence ring reads as a wall.
+                    items.push_back({depth, 2, 2, x, z,
+                                     ::tile_color(tile.type, night_t),
+                                     th * 0.35f, -1});
+                } else if (is_building_tile(tile.type)) {
+                    float h =
+                        tile.type == TileType::Stage ? th * 0.95f : th * 0.55f;
+                    items.push_back({depth, 2, 2, x, z,
+                                     ::tile_color(tile.type, night_t), h, -1});
+                }
+                if (stage_glow && tile.type == TileType::Stage) {
+                    items.push_back({depth, 1, 1, x, z, glow_color, 0, -1});
+                }
+                if (tile.agent_count > 0) {
+                    if (show_overlay) {
+                        float density = tile.agent_count /
+                                        static_cast<float>(MAX_AGENTS_PER_TILE);
+                        items.push_back({depth, 1, 1, x, z,
+                                         iso_density_color(density), 0, -1});
+                    }
+                    if (tile.agent_count >= danger_threshold) {
+                        bool critical =
+                            tile.agent_count /
+                                static_cast<float>(MAX_AGENTS_PER_TILE) >=
+                            DENSITY_CRITICAL;
+                        float freq = critical ? 3.0f : 1.0f;
+                        float pulse =
+                            (std::sin(t * freq * 6.283f) + 1.0f) * 0.5f;
+                        unsigned char alpha;
+                        Color flash;
+                        if (critical) {
+                            alpha =
+                                static_cast<unsigned char>(40 + pulse * 100);
+                            flash = {255, 40, 40, alpha};
+                        } else {
+                            alpha = static_cast<unsigned char>(pulse * 80);
+                            flash = {255, 140, 0, alpha};
+                        }
+                        items.push_back({depth, 1, 1, x, z, flash, 0, -1});
+                    }
+                }
+            }
+        }
+
+        // Build preview + hover cursor (same colors as the 3D preview).
+        auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
+        if (pds && pds->hover_valid) {
+            constexpr Color PREVIEW_VALID = {100, 220, 130, 100};
+            constexpr Color PREVIEW_EXISTING = {180, 180, 180, 80};
+            constexpr Color HOVER_NORMAL = {255, 255, 255, 120};
+            constexpr Color HOVER_DEMOLISH = {255, 60, 60, 140};
+            if (pds->is_drawing) {
+                int min_x, min_z, max_x, max_z;
+                pds->get_rect(min_x, min_z, max_x, max_z);
+                for (int z = min_z; z <= max_z; z++)
+                    for (int x = min_x; x <= max_x; x++) {
+                        if (!grid->in_bounds(x, z)) continue;
+                        bool already_path =
+                            grid->at(x, z).type == TileType::Path;
+                        items.push_back(
+                            {static_cast<float>(x + z), 1, 1, x, z,
+                             already_path ? PREVIEW_EXISTING : PREVIEW_VALID, 0,
+                             -1});
+                    }
+            }
+            if (grid->in_bounds(pds->hover_x, pds->hover_z)) {
+                items.push_back(
+                    {static_cast<float>(pds->hover_x + pds->hover_z), 1, 1,
+                     pds->hover_x, pds->hover_z,
+                     pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL, 0,
+                     -1});
+            }
+        }
+
+        // Agents: billboarded peeps (body rect + head + desire pip),
+        // snapped into the same draw list so overlap with tiles and
+        // buildings sorts by (x+z) like everything else.
+        {
+            auto agents =
+                EntityQuery().whereHasComponent<Agent, Transform>().gen();
+            for (Entity& e : agents) {
+                if (!e.is_missing<BeingServiced>()) continue;
+                auto& agent = e.get<Agent>();
+                auto& tf = e.get<Transform>();
+                float wx = tf.position.x;
+                float wz = tf.position.y;
+                int eid = static_cast<int>(e.id);
+                wx += hash_scatter(eid * 7 + 3) * SCATTER_RANGE;
+                wz += hash_scatter(eid * 13 + 7) * SCATTER_RANGE;
+                if (vr) {
+                    auto [gx, gz] = grid->world_to_grid(wx, wz);
+                    if (gx < vr->min_x || gx > vr->max_x || gz < vr->min_z ||
+                        gz > vr->max_z)
+                        continue;
+                }
+                Color body =
+                    AGENT_SHIRT_PALETTE[hash_agent_color(eid, agent.color_idx) %
+                                        8];
+                float bob = 0.f;
+                if (!e.is_missing<WatchingStage>()) {
+                    auto& ws = e.get<WatchingStage>();
+                    bob = std::sin(ws.watch_timer * 6.0f) * 0.03f;
+                }
+                if (!e.is_missing<AgentHealth>()) {
+                    float hp = e.get<AgentHealth>().hp;
+                    if (hp < 0.5f) {
+                        float ht = hp / 0.5f;
+                        body.r = static_cast<unsigned char>(body.r * ht +
+                                                            255 * (1.f - ht));
+                        body.g = static_cast<unsigned char>(body.g * ht);
+                        body.b = static_cast<unsigned char>(body.b * ht);
+                    }
+                }
+                const char* glyph = nullptr;
+                if (!e.is_missing<AgentNeeds>())
+                    glyph = iso_urgent_glyph(&e.get<AgentNeeds>());
+                int desire_idx = static_cast<int>(agent.want);
+                int ref = static_cast<int>(peeps.size());
+                peeps.push_back({wx, wz, bob, body, DESIRE_COLORS[desire_idx],
+                                 glyph, false});
+                items.push_back({wx + wz, 3, 3, 0, 0, {}, 0, ref});
+                if (glyph) items.push_back({wx + wz, 4, 4, 0, 0, {}, 0, ref});
+            }
+        }
+
+        // Staff peeps (same billboard shape, role colors).
+        {
+            auto staff =
+                EntityQuery().whereHasComponent<StaffMember, Transform>().gen();
+            for (Entity& e : staff) {
+                auto& s = e.get<StaffMember>();
+                auto& tf = e.get<Transform>();
+                Color body =
+                    s.role == StaffRole::Guard   ? Color{50, 90, 255, 255}
+                    : s.role == StaffRole::Medic ? Color{255, 255, 255, 255}
+                                                 : Color{255, 200, 0, 255};
+                Color pip = s.role == StaffRole::Medic ? Color{255, 45, 45, 255}
+                                                       : Color{25, 25, 25, 255};
+                int ref = static_cast<int>(peeps.size());
+                peeps.push_back({tf.position.x, tf.position.y, 0, body, pip,
+                                 nullptr, true});
+                items.push_back(
+                    {tf.position.x + tf.position.y, 3, 3, 0, 0, {}, 0, ref});
+            }
+        }
+
+        // Death markers (X) and particles (rising rects).
+        {
+            auto markers = EntityQuery().whereHasComponent<DeathMarker>().gen();
+            for (Entity& e : markers) {
+                auto& dm = e.get<DeathMarker>();
+                float alpha_f = 1.0f;
+                if (dm.lifetime < 3.0f) alpha_f = dm.lifetime / 3.0f;
+                int ref = static_cast<int>(points.size());
+                points.push_back(
+                    {dm.position.x,
+                     dm.position.y,
+                     0.08f,
+                     0.15f,
+                     {255, 60, 60, static_cast<unsigned char>(alpha_f * 255.f)},
+                     1});
+                items.push_back(
+                    {dm.position.x + dm.position.y, 5, 5, 0, 0, {}, 0, ref});
+            }
+            auto particles =
+                EntityQuery().whereHasComponent<Particle, Transform>().gen();
+            for (Entity& e : particles) {
+                auto& p = e.get<Particle>();
+                auto& tf = e.get<Transform>();
+                float life_t = 1.0f - (p.lifetime / p.max_lifetime);
+                int ref = static_cast<int>(points.size());
+                points.push_back({tf.position.x, tf.position.y,
+                                  0.1f + life_t * 0.5f, p.size * 0.02f, p.color,
+                                  0});
+                items.push_back(
+                    {tf.position.x + tf.position.y, 5, 5, 0, 0, {}, 0, ref});
+            }
+        }
+
+        std::stable_sort(items.begin(), items.end(),
+                         [](const IsoDraw& a, const IsoDraw& b) {
+                             if (a.depth != b.depth) return a.depth < b.depth;
+                             return a.order < b.order;
+                         });
+
+        for (const auto& it : items) {
+            switch (it.kind) {
+                case 0: {
+                    vec2 s = cam.iso_project(static_cast<float>(it.x),
+                                             static_cast<float>(it.z));
+                    iso_draw_tile(s.x, s.y, tw, th, it.color);
+                    break;
+                }
+                case 1: {
+                    vec2 s = cam.iso_project(static_cast<float>(it.x),
+                                             static_cast<float>(it.z));
+                    iso_draw_diamond(s.x, s.y, tw, th, it.color);
+                    break;
+                }
+                case 2: {
+                    vec2 s = cam.iso_project(static_cast<float>(it.x),
+                                             static_cast<float>(it.z));
+                    iso_draw_block(s.x, s.y, tw, th, it.h, it.color);
+                    break;
+                }
+                case 3: {
+                    const IsoPeep& p = peeps[it.ref];
+                    vec2 s = cam.iso_project(p.wx, p.wz);
+                    draw_iso_peep(s.x, s.y - p.bob * th, tw, th, p);
+                    break;
+                }
+                case 4: {
+                    const IsoPeep& p = peeps[it.ref];
+                    if (!p.glyph) break;
+                    vec2 s = cam.iso_project(p.wx, p.wz);
+                    draw_iso_bubble(s.x, s.y - p.bob * th, tw, th, p.glyph);
+                    break;
+                }
+                case 5: {
+                    const IsoPoint& pt = points[it.ref];
+                    vec2 s = cam.iso_project(pt.wx, pt.wz);
+                    s.y -= pt.lift * th;
+                    if (pt.shape == 1) {
+                        float d = pt.size * th * 0.5f;
+                        draw_line(static_cast<int>(s.x - d),
+                                  static_cast<int>(s.y - d),
+                                  static_cast<int>(s.x + d),
+                                  static_cast<int>(s.y + d), pt.color);
+                        draw_line(static_cast<int>(s.x - d),
+                                  static_cast<int>(s.y + d),
+                                  static_cast<int>(s.x + d),
+                                  static_cast<int>(s.y - d), pt.color);
+                    } else {
+                        float sz = std::max(pt.size * th, 2.0f);
+                        draw_rect(s.x - sz * 0.5f, s.y - sz * 0.5f, sz, sz,
+                                  pt.color);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+    static void draw_iso_peep(float sx, float sy, float tw, float th,
+                              const IsoPeep& p) {
+        // Soft ground shadow, then billboarded body + head + desire pip.
+        float body_w = std::max(4.0f, tw * 0.20f);
+        float body_h = std::max(5.0f, th * 0.62f);
+        float head_r = std::max(2.0f, tw * 0.07f);
+        draw_ellipse(static_cast<int>(sx), static_cast<int>(sy), body_w * 0.6f,
+                     body_w * 0.25f, Color{0, 0, 0, 60});
+        draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, body_h, p.body);
+        float hx = sx;
+        float hy = sy - body_h - head_r + 1.0f;
+        draw_circle(static_cast<int>(hx), static_cast<int>(hy), head_r,
+                    Color{255, 210, 170, 255});
+        float pip_w = std::max(3.0f, tw * 0.08f);
+        draw_rect(sx - pip_w * 0.5f, hy - head_r - 3.0f, pip_w, 3.0f, p.pip);
+    }
+
+    static void draw_iso_bubble(float sx, float sy, float tw, float th,
+                                const char* glyph) {
+        if (tw < 24.0f) return;  // too small to read when zoomed out
+        float body_h = std::max(5.0f, th * 0.62f);
+        float head_r = std::max(2.0f, tw * 0.07f);
+        float font_size = 11.0f;
+        vec2 m = measure_text_ex(get_font(), glyph, font_size, FONT_SPACING);
+        float bw = m.x + 8.0f;
+        float bh = m.y + 6.0f;
+        float bx = sx - bw * 0.5f;
+        float by = sy - body_h - head_r * 2.0f - bh - 6.0f;
+        draw_ellipse(static_cast<int>(sx), static_cast<int>(by + bh * 0.5f),
+                     bw * 0.5f, bh * 0.5f, Color{255, 255, 255, 255});
+        vec2 tail_top{sx - 2.0f, by + bh - 2.0f};
+        vec2 tail_tip{sx, by + bh + 4.0f};
+        vec2 tail_right{sx + 4.0f, by + bh - 2.0f};
+        vec2 tail_mid{sx + 1.0f, by + bh - 1.0f};
+        iso_draw_poly4(tail_top, tail_tip, tail_right, tail_mid,
+                       Color{255, 255, 255, 255});
+        draw_text_ex(get_font(), glyph, {bx + 4.0f, by + 3.0f}, font_size,
+                     FONT_SPACING, Color{0, 0, 0, 255});
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        vtr.register_text_if_visible(
+            glyph, bx, by, bw, bh, DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
+    }
+};
+
 // Buildings get an extruded two-tone block; flat tiles (grass, path,
 // fence, gate, stage floor) stay flat planes.
 static bool is_building_tile(TileType type) {
@@ -91,8 +619,16 @@ static bool is_building_tile(TileType type) {
     }
 }
 
+// True while the 2D iso pass owns world rendering; the legacy 3D
+// systems below early-out on it so the two passes never double-draw.
+static bool iso_view_active() {
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    return cam && cam->cam.iso_mode;
+}
+
 struct RenderGridSystem : System<> {
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -129,6 +665,7 @@ struct RenderGridSystem : System<> {
 
 struct RenderStageGlowSystem : System<> {
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* sched = EntityHelper::get_singleton_cmp<ArtistSchedule>();
         if (!sched) return;
 
@@ -193,54 +730,15 @@ struct RenderStageGlowSystem : System<> {
     }
 };
 
-// Desire pip colors (indexed by FacilityType) — match the saturated
-// building palette so a pip reads as its destination at a glance.
-static constexpr Color DESIRE_COLORS[] = {
-    {0, 210, 200, 255},    // Bathroom
-    {255, 80, 160, 255},   // Food
-    {200, 30, 230, 255},   // Stage
-    {255, 255, 255, 255},  // Exit/Gate
-    {255, 45, 45, 255},    // MedTent
-    {255, 145, 0, 255},    // Bar
-    {0, 180, 255, 255},    // WaterStation
-};
-
-static float hash_scatter(int seed) {
-    uint32_t h = static_cast<uint32_t>(seed);
-    h ^= h >> 16;
-    h *= 0x45d9f3b;
-    h ^= h >> 16;
-    return (static_cast<float>(h & 0xFFFF) / 32767.5f) - 1.0f;
-}
-
-// Close LOD: individual agent cubes, viewport-culled
-// Bright saturated shirt colors, picked by a hash of the entity id mixed
-// with the spawn-time color index, so neighbors rarely match.
-static constexpr Color AGENT_SHIRT_PALETTE[] = {
-    {255, 60, 60, 255},  {255, 150, 0, 255},  {255, 225, 0, 255},
-    {70, 215, 90, 255},  {0, 200, 255, 255},  {90, 120, 255, 255},
-    {255, 90, 200, 255}, {180, 90, 255, 255},
-};
-
-static uint32_t hash_agent_color(int eid, uint8_t color_idx) {
-    uint32_t h = static_cast<uint32_t>(eid) * 2654435761u ^
-                 static_cast<uint32_t>(color_idx) * 40503u;
-    h ^= h >> 16;
-    h *= 0x45d9f3b;
-    h ^= h >> 16;
-    return h;
-}
-
-static constexpr float BODY_W = 0.14f;
-static constexpr float BODY_H = 0.32f;
-static constexpr float PIP_W = 0.09f;
-static constexpr float PIP_H = 0.08f;
-static constexpr float SCATTER_RANGE = 0.35f;
+// (DESIRE_COLORS / hash_scatter / AGENT_SHIRT_PALETTE / hash_agent_color /
+// SCATTER_RANGE live above the iso renderer: the 2D iso pass and the
+// legacy 3D pass share them.)
 
 // Staff: distinct cubes per role so roaming staff read at a glance
 // (guard = blue, medic = white with red pip, janitor = yellow).
 struct RenderStaffSystem : System<> {
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
         if (vr && vr->lod != LODLevel::Close) return;
         auto staff =
@@ -264,6 +762,7 @@ struct RenderStaffSystem : System<> {
 
 struct RenderAgentsSystem : System<> {
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
         if (vr && vr->lod != LODLevel::Close) return;
 
@@ -339,6 +838,7 @@ struct RenderMediumLODSystem : System<> {
     static constexpr float JITTER_AMOUNT = 0.05f;
 
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
         if (!vr || vr->lod != LODLevel::Medium) return;
 
@@ -478,6 +978,7 @@ struct RenderFarLODSystem : System<> {
     }
 
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* vr = EntityHelper::get_singleton_cmp<VisibleRegion>();
         if (!vr || vr->lod == LODLevel::Close) return;
 
@@ -579,6 +1080,7 @@ struct RenderBuildPreviewSystem : System<> {
     static constexpr Color HOVER_DEMOLISH = {255, 60, 60, 140};
 
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!pds || !grid || !pds->hover_valid) return;
@@ -630,6 +1132,7 @@ struct RenderDensitySystem : System<> {
     }
 
     void once(float) const override {
+        if (iso_view_active()) return;
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
 
@@ -687,6 +1190,7 @@ struct RenderDensitySystem : System<> {
 
 struct RenderDeathMarkersSystem : System<DeathMarker> {
     void for_each_with(Entity&, DeathMarker& dm, float) override {
+        if (iso_view_active()) return;
         float alpha_f = 1.0f;
         float fade_start = 3.0f;
         if (dm.lifetime < fade_start) alpha_f = dm.lifetime / fade_start;
@@ -705,6 +1209,7 @@ struct RenderDeathMarkersSystem : System<DeathMarker> {
 
 struct RenderParticlesSystem : System<Particle, Transform> {
     void for_each_with(Entity&, Particle& p, Transform& tf, float) override {
+        if (iso_view_active()) return;
         float wx = tf.position.x;
         float wz = tf.position.y;
         float s = p.size * 0.02f;
@@ -719,12 +1224,15 @@ struct RenderParticlesSystem : System<Particle, Transform> {
 struct EndMode3DSystem : System<> {
     void once(float) const override {
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
-        if (cam) end_3d();
+        // No matching begin_3d ran in iso mode: end_3d() would unbalance
+        // the 3D stack, so skip it there.
+        if (cam && !cam->cam.iso_mode) end_3d();
     }
 };
 
 void register_render_world_systems(SystemManager& sm) {
     sm.register_render_system(std::make_unique<BeginRenderSystem>());
+    sm.register_render_system(std::make_unique<RenderIsoSystem>());
     sm.register_render_system(std::make_unique<RenderGridSystem>());
     sm.register_render_system(std::make_unique<RenderStageGlowSystem>());
     sm.register_render_system(std::make_unique<RenderAgentsSystem>());

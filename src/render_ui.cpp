@@ -86,8 +86,10 @@ struct RenderFacilityLabelsSystem : System<> {
         grid->ensure_caches();
 
         for (const auto& lbl : grid->facility_labels) {
-            vec2 screen = get_world_to_screen(
-                vec3{lbl.world_x, 0.6f, lbl.world_z}, cam->cam.camera);
+            // world_to_screen branches on the view mode: iso projection
+            // in iso mode, legacy 3D projection in top-down mode.
+            vec2 screen =
+                cam->cam.world_to_screen(vec3{lbl.world_x, 0.6f, lbl.world_z});
 
             if (screen.x < -50 || screen.x > DEFAULT_SCREEN_WIDTH + 50 ||
                 screen.y < -50 || screen.y > DEFAULT_SCREEN_HEIGHT + 50)
@@ -830,12 +832,37 @@ struct RenderCompassSystem : System<> {
         float cx = DEFAULT_SCREEN_WIDTH - 150 - 30;
         float cy = 55;
         draw_circle(cx, cy, 16, Color{0, 0, 0, 120});
-        float cam_dx = cam->cam.camera.position.x - cam->cam.camera.target.x;
-        float cam_dz = cam->cam.camera.position.z - cam->cam.camera.target.z;
-        float angle = std::atan2(cam_dz, cam_dx);
+        // North = -z in world space. Projecting the target and one step
+        // north through the active view's projection gives the compass
+        // direction in both iso and top-down modes.
+        vec2 t = cam->cam.world_to_screen(
+            vec3{cam->cam.target.x, 0, cam->cam.target.z});
+        vec2 n = cam->cam.world_to_screen(
+            vec3{cam->cam.target.x, 0, cam->cam.target.z - 1});
+        float angle = std::atan2(n.y - t.y, n.x - t.x);
         float nx = cx + std::cos(angle) * 12;
         float ny = cy + std::sin(angle) * 12;
         ui_draw_text("N", nx - 6, ny - 8, 14, Color{255, 100, 100, 255});
+
+        // View-mode toggle button (same action as the V key): ISO <-> TOP.
+        // Geometry is fixed so E2E `click` can target it: centre (1100, 90).
+        auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
+        const char* label = cam->cam.iso_mode ? "ISO" : "TOP";
+        float bx = cx - 27, by = 78, bw = 54, bh = 24;
+        auto mouse = input::get_mouse_position();
+        bool mouse_click = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);
+        if (mouse_click && mouse.x >= bx && mouse.x <= bx + bw &&
+            mouse.y >= by && mouse.y <= by + bh) {
+            cam->cam.iso_mode = !cam->cam.iso_mode;
+            label = cam->cam.iso_mode ? "ISO" : "TOP";
+        }
+        draw_bevel_panel(bx, by, bw, bh,
+                         cam->cam.iso_mode ? Color{255, 210, 40, 255}
+                                           : Color{200, 200, 200, 255});
+        auto lm = ui_measure_text(label, 14);
+        ui_draw_text(label, bx + (bw - lm.x) / 2.f, by + 5, 14,
+                     Color{0, 0, 0, 255});
+        vtr.register_text(label);
     }
 };
 

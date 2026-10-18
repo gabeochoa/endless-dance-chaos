@@ -7,10 +7,23 @@
 #include "log.h"
 #include "rl.h"
 
-// RCT-style isometric camera with 90-degree rotation support
-// Uses orthographic projection for classic isometric look
+// RCT-style isometric camera with 90-degree rotation support.
+// Two view modes share one target / distance / rotation:
+//  - iso_mode=true (default): pure 2D 2:1 diamond projection, computed in
+//    iso_project()/iso_screen_to_world() — no 3D camera is consulted.
+//  - iso_mode=false: the legacy 3D orthographic camera ("top-down").
+// Rotation is the same rotation_index in both modes, so Q/E and the HUD
+// button mean the same thing whichever view is active.
 struct IsometricCamera {
     afterhours::Camera3D camera;
+
+    // True = 2D iso diamonds; false = legacy 3D orthographic view.
+    bool iso_mode = true;
+
+    // Center of the world viewport (top bar above, build bar + ticker
+    // below, sidebar to the right): x in [0, 1130], y in [44, 644].
+    static constexpr float ISO_CENTER_X = (DEFAULT_SCREEN_WIDTH - 150) / 2.0f;
+    static constexpr float ISO_CENTER_Y = (44.0f + 644.0f) / 2.0f;
 
     // Camera distance and angle settings
     float distance = 30.0f;
@@ -87,8 +100,87 @@ struct IsometricCamera {
         set_distance(distance / std::max(0.1f, 1.f + delta));
     }
 
+    // ── 2D iso projection ──────────────────────────────────────────
+    // Tile size in px, driven by the shared zoom (distance): 48px at the
+    // default distance of 30, 2:1 diamonds (TILE_H = TILE_W / 2).
+    float iso_tile_w() const { return 1440.0f / distance; }
+    float iso_tile_h() const { return iso_tile_w() * 0.5f; }
+
+    // Rotate grid coords into display coords. rotation_index 0/90/180/270
+    // (Q/E steps). The inverse is unrotate_grid; the two must stay exact
+    // inverses or picking drifts after a rotation.
+    std::pair<float, float> rotate_grid(float x, float z) const {
+        switch (rotation_index & 3) {
+            case 1:
+                return {z, -x};
+            case 2:
+                return {-x, -z};
+            case 3:
+                return {-z, x};
+            default:
+                return {x, z};
+        }
+    }
+    std::pair<float, float> unrotate_grid(float dx, float dz) const {
+        switch (rotation_index & 3) {
+            case 1:
+                return {-dz, dx};
+            case 2:
+                return {-dx, -dz};
+            case 3:
+                return {dz, -dx};
+            default:
+                return {dx, dz};
+        }
+    }
+
+    // World (continuous grid coords) -> screen: sx=(dx-dz)*TILE_W/2,
+    // sy=(dx+dz)*TILE_H/2 about the camera target, in display coords.
+    vec2 iso_project(float wx, float wz) const {
+        auto [dx, dz] = rotate_grid(wx, wz);
+        auto [tx, tz] = rotate_grid(target.x, target.z);
+        float tw = iso_tile_w();
+        float th = iso_tile_h();
+        return {ISO_CENTER_X + (dx - tx) * tw * 0.5f,
+                ISO_CENTER_Y + (dx + dz - tx - tz) * th * 0.5f};
+    }
+
+    // Screen -> continuous world coords: exact inverse of iso_project.
+    vec2 iso_screen_to_world(float sx, float sy) const {
+        float tw = iso_tile_w();
+        float th = iso_tile_h();
+        auto [tx, tz] = rotate_grid(target.x, target.z);
+        float a = 2.0f * (sx - ISO_CENTER_X) / tw;  // dx - tx
+        float b = 2.0f * (sy - ISO_CENTER_Y) / th;  // (dx+dz) - (tx+tz)
+        float dx = tx + a;
+        float dz = tz + b - a;
+        auto [wx, wz] = unrotate_grid(dx, dz);
+        return {wx, wz};
+    }
+
+    // World (3D, y = height) -> screen. In iso mode the height lifts the
+    // point up by y * TILE_H; in 3D mode this is the legacy projection.
+    vec2 world_to_screen(vec3 w) const {
+        if (!iso_mode) return get_world_to_screen(w, camera);
+        vec2 s = iso_project(w.x, w.z);
+        s.y -= w.y * iso_tile_h();
+        return s;
+    }
+
     // Pan the camera target
     void pan(float dx, float dz) {
+        if (iso_mode) {
+            // dx = screen-right, dz = screen-down (WASD move_x/move_z).
+            // Screen-right is (1,-1) and screen-down is (1,1) in display
+            // coords; unrotate back to grid coords to move the target.
+            float ddx = dx + dz;
+            float ddz = -dx + dz;
+            auto [wx, wz] = unrotate_grid(ddx, ddz);
+            target.x += wx;
+            target.z += wz;
+            update_camera_position();
+            return;
+        }
         // Adjust pan direction based on current rotation
         float cos_yaw = cosf(yaw);
         float sin_yaw = sinf(yaw);
@@ -100,7 +192,15 @@ struct IsometricCamera {
 
     // Handle input for camera controls
     void handle_input(float dt) {
-        // Rotation: Q and E keys
+        // View toggle: V switches iso <-> top-down (3D).
+        if (action_pressed(InputAction::ToggleIsoView)) {
+            iso_mode = !iso_mode;
+            log_info("View mode: {}", iso_mode ? "ISO" : "TOP");
+        }
+
+        // Rotation: Q and E keys. Snaps to 0/90/180/270 in both modes:
+        // rotation_index is the single source of truth, and the iso
+        // projection reads it directly.
         if (action_pressed(InputAction::CameraRotateLeft)) {
             rotate_counter_clockwise();
         }
@@ -148,6 +248,30 @@ struct IsometricCamera {
     // issues with orthographic cameras and Retina scaling.
     std::optional<std::pair<int, int>> screen_to_grid(float screen_x,
                                                       float screen_y) const {
+        if (iso_mode) {
+            // Invert the iso transform, then pick the tile whose diamond
+            // contains the point: the nearest tile center under the L1
+            // (|dx|+|dz|) metric. Rounding each axis separately would pick
+            // square cells and mis-pick near diamond corners, so test the
+            // four surrounding integer tiles instead.
+            vec2 w = iso_screen_to_world(screen_x, screen_y);
+            int fx = static_cast<int>(std::floor(w.x));
+            int fz = static_cast<int>(std::floor(w.y));
+            int best_x = fx, best_z = fz;
+            float best_d = 1e9f;
+            for (int dz = 0; dz <= 1; dz++) {
+                for (int dx = 0; dx <= 1; dx++) {
+                    int cx = fx + dx, cz = fz + dz;
+                    float d = std::abs(w.x - cx) + std::abs(w.y - cz);
+                    if (d < best_d) {
+                        best_d = d;
+                        best_x = cx;
+                        best_z = cz;
+                    }
+                }
+            }
+            return std::make_pair(best_x, best_z);
+        }
         // Project 3 grid reference points to screen space
         vec2 s00 = get_world_to_screen(vec3{0, 0, 0}, camera);
         vec2 s10 = get_world_to_screen(vec3{TILESIZE, 0, 0}, camera);

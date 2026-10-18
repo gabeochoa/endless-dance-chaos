@@ -11,6 +11,7 @@ enum class InputAction {
     CameraRight,
     CameraRotateLeft,
     CameraRotateRight,
+    ToggleIsoView,
     // Build tools
     ToolPath,
     ToolBathroom,
@@ -117,6 +118,9 @@ inline auto get_mapping() {
     };
     mapping[to_int(InputAction::CameraRotateRight)] = {
         KEY_E,
+    };
+    mapping[to_int(InputAction::ToggleIsoView)] = {
+        KEY_V,
     };
 
     // Build tools - number keys (1-8 for each tool in order)

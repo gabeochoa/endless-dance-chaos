@@ -115,6 +115,7 @@ constexpr auto KEY_S = ah_keys::S;
 constexpr auto KEY_D = ah_keys::D;
 constexpr auto KEY_E = ah_keys::E;
 constexpr auto KEY_Q = ah_keys::Q;
+constexpr auto KEY_V = ah_keys::V;
 constexpr auto KEY_X = ah_keys::X;
 constexpr auto KEY_UP = ah_keys::UP;
 constexpr auto KEY_DOWN = ah_keys::DOWN;

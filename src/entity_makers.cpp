@@ -280,6 +280,12 @@ void reset_game_state() {
         lineup->active.clear();
     }
 
+    // Reset the view mode to the default (iso ON). Rotation and pan
+    // target are intentionally left alone (existing behavior).
+    if (auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>()) {
+        cam->cam.iso_mode = true;
+    }
+
     // Reset the event director: default seed + fresh day bookkeeping,
     // so a restart never inherits the previous run's event sequence.
     reset_event_director();

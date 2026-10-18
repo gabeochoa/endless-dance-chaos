@@ -86,8 +86,12 @@ inline FacilityType parse_facility_type(const std::string& s) {
 inline std::optional<vec2> grid_to_screen(int gx, int gz) {
     auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
     if (!cam) return std::nullopt;
+    // world_to_screen branches on the view mode, so click_grid /
+    // move_to_grid land on the same tile the player sees in iso and in
+    // top-down mode. This is the inverse of screen_to_grid: a round-trip
+    // through these two functions must return the starting tile.
     vec3 world_pos = {gx * TILESIZE, 0.0f, gz * TILESIZE};
-    return afterhours::get_world_to_screen(world_pos, cam->cam.camera);
+    return cam->cam.world_to_screen(world_pos);
 }
 
 // ── Performance sampling (needs to be above dispatch system) ─────────────
@@ -2813,6 +2817,92 @@ static void cmd_assert_camera_target(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// set_view iso|top — switch the view mode directly (same state as the
+// V key / HUD ISO-TOP button). assert_view checks it.
+static void cmd_set_view(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_view requires iso|top");
+        return;
+    }
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("set_view: no camera");
+        return;
+    }
+    std::string mode = cmd.arg(0);
+    std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+    if (mode == "iso")
+        cam->cam.iso_mode = true;
+    else if (mode == "top")
+        cam->cam.iso_mode = false;
+    else {
+        cmd.fail(fmt::format("set_view: unknown mode '{}'", cmd.arg(0)));
+        return;
+    }
+    cmd.consume();
+}
+
+static void cmd_assert_view(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_view requires iso|top");
+        return;
+    }
+    auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+    if (!cam) {
+        cmd.fail("assert_view: no camera");
+        return;
+    }
+    std::string mode = cmd.arg(0);
+    std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+    bool want_iso = (mode == "iso");
+    if (mode != "iso" && mode != "top") {
+        cmd.fail(fmt::format("assert_view: unknown mode '{}'", cmd.arg(0)));
+        return;
+    }
+    if (cam->cam.iso_mode != want_iso)
+        cmd.fail(fmt::format("assert_view failed: expected {}, got {}", mode,
+                             cam->cam.iso_mode ? "iso" : "top"));
+    else
+        cmd.consume();
+}
+
+// set_need_timer TYPE RATIO — set every agent's timer for one need to
+// RATIO * threshold (e.g. bathroom 0.95 = urgent, thought-bubble range).
+// Thresholds are per-agent randoms; a zero threshold is seeded to 100s
+// so the ratio is still well-defined.
+static void cmd_set_need_timer(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("set_need_timer requires TYPE RATIO");
+        return;
+    }
+    std::string type = cmd.arg(0);
+    std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+    float ratio = cmd.arg_as<float>(1);
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents) {
+        auto& needs = a.get<AgentNeeds>();
+        if (type == "bathroom") {
+            if (needs.bathroom_threshold <= 0.f)
+                needs.bathroom_threshold = 100.f;
+            needs.bathroom_timer = ratio * needs.bathroom_threshold;
+        } else if (type == "food") {
+            if (needs.food_threshold <= 0.f) needs.food_threshold = 100.f;
+            needs.food_timer = ratio * needs.food_threshold;
+        } else if (type == "heat") {
+            if (needs.heat_threshold <= 0.f) needs.heat_threshold = 100.f;
+            needs.heat_timer = ratio * needs.heat_threshold;
+        } else if (type == "bar") {
+            if (needs.bar_threshold <= 0.f) needs.bar_threshold = 100.f;
+            needs.bar_timer = ratio * needs.bar_threshold;
+        } else {
+            cmd.fail(
+                fmt::format("set_need_timer: unknown type '{}'", cmd.arg(0)));
+            return;
+        }
+    }
+    cmd.consume();
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -2956,6 +3046,9 @@ static void init_e2e_registry() {
     r.add("assert_expansion_cost", cmd_assert_expansion_cost);
     r.add("set_camera_target", cmd_set_camera_target);
     r.add("assert_camera_target", cmd_assert_camera_target);
+    r.add("set_view", cmd_set_view);
+    r.add("assert_view", cmd_assert_view);
+    r.add("set_need_timer", cmd_set_need_timer);
 }
 
 void register_e2e_systems(SystemManager& sm) {
