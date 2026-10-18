@@ -292,6 +292,10 @@ void register_update_systems(SystemManager& sm) {
     // payroll sees the new day number, same frame as the inspection).
     register_staff_systems(sm);
 
+    // Finance: loans/history/crisis guard, after payroll so the closing
+    // day's books include the payroll (see tycoon_systems.cpp).
+    register_finance_systems(sm);
+
     // Polish: hints, bottleneck detection, death markers
     register_polish_systems(sm);
 

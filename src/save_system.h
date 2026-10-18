@@ -18,9 +18,10 @@ static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
 // v2 appends economy, lineup, staff, GameState extras, inspection,
 // director, and active events AFTER the v1 agent block, so the v1
 // prefix is byte-identical. v3 appends land-expansion counts and the
-// park-rating state after the v2 active-events block. Increment on
-// schema changes.
-static constexpr uint32_t SAVE_VERSION = 3;
+// park-rating state after the v2 active-events block. v4 appends the
+// finance state (loan debt + history bookkeeping) after the v3 rating
+// block. Increment on schema changes.
+static constexpr uint32_t SAVE_VERSION = 4;
 
 namespace detail {
 inline void write_int(std::ofstream& f, int v) {
@@ -307,6 +308,26 @@ inline bool save_game() {
         detail::write_int(f, rating ? rating->last_injury_count : 0);
     }
 
+    // ── v4 sections (appended after the v3 rating block) ─────────────────
+    // Finance: loan debt + the history bookkeeping (day-start snapshots,
+    // rollover day, and the closed-day rows).
+    {
+        auto* econ = afterhours::EntityHelper::get_singleton_cmp<Economy>();
+        detail::write_int(f, econ ? econ->debt : 0);
+        detail::write_int(f, econ ? econ->day_start_earned : 0);
+        detail::write_int(f, econ ? econ->day_start_spent : 0);
+        detail::write_int(f, econ ? econ->last_finance_day : 1);
+        int n = econ ? static_cast<int>(econ->finance_history.size()) : 0;
+        detail::write_int(f, n);
+        if (econ) {
+            for (const auto& row : econ->finance_history) {
+                detail::write_int(f, row.day);
+                detail::write_int(f, row.income);
+                detail::write_int(f, row.expenses);
+            }
+        }
+    }
+
     return f.good();
 }
 
@@ -321,10 +342,11 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    // v1 files are a byte-identical prefix of v2/v3: they load, with the
-    // newer-only state (economy, bookings, staff, rating, ...) left
+    // v1 files are a byte-identical prefix of v2/v3/v4: they load, with
+    // the newer-only state (economy, bookings, staff, rating, ...) left
     // as-is. Anything else is rejected.
-    if (version != SAVE_VERSION && version != 2 && version != 1) return false;
+    if (version != SAVE_VERSION && version != 3 && version != 2 && version != 1)
+        return false;
 
     // Grid tiles
     auto* grid = afterhours::EntityHelper::get_singleton_cmp<Grid>();
@@ -632,6 +654,47 @@ inline bool load_game() {
                 rating->last_death_count = last_deaths;
                 rating->last_injury_count = last_injuries;
             }
+        }
+    }
+
+    // ── v4 sections (absent in v1/v2/v3 files) ──
+    if (version >= 4) {
+        // Finance: loan debt + history bookkeeping.
+        int debt = 0, start_earned = 0, start_spent = 0, finance_day = 1;
+        int rows = 0;
+        detail::read_int(f, debt);
+        detail::read_int(f, start_earned);
+        detail::read_int(f, start_spent);
+        detail::read_int(f, finance_day);
+        detail::read_int(f, rows);
+        std::vector<FinanceDay> history;
+        for (int i = 0; i < rows; i++) {
+            FinanceDay row;
+            detail::read_int(f, row.day);
+            detail::read_int(f, row.income);
+            detail::read_int(f, row.expenses);
+            history.push_back(row);
+        }
+        if (auto* econ =
+                afterhours::EntityHelper::get_singleton_cmp<Economy>()) {
+            econ->debt = debt;
+            econ->day_start_earned = start_earned;
+            econ->day_start_spent = start_spent;
+            econ->last_finance_day = finance_day;
+            econ->finance_history = history;
+        }
+    } else if (version >= 2) {
+        // A v2/v3 file carries no finance state: no debt, no history,
+        // and the day-start snapshots anchor at the loaded totals, so
+        // the flows already banked in the current (open) day are not
+        // double-counted when it closes.
+        if (auto* econ =
+                afterhours::EntityHelper::get_singleton_cmp<Economy>()) {
+            econ->debt = 0;
+            econ->finance_history.clear();
+            econ->day_start_earned = econ->total_earned;
+            econ->day_start_spent = econ->total_spent;
+            econ->last_finance_day = diff ? diff->day_number : 1;
         }
     }
 

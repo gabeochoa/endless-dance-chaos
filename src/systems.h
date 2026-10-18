@@ -31,6 +31,17 @@ void run_inspection_now();
 // per-axis cap or when unaffordable. Shared by the land panel and E2E.
 bool buy_land_expansion(int axis);
 void register_tycoon_systems(SystemManager& sm);
+// Loans / finance history / cash-crisis guard (tycoon_systems.cpp).
+// register_finance_systems runs AFTER StaffPayrollSystem: history and
+// the crisis check see cash after payroll. Borrow / repay share the
+// Finances-tab buttons and the E2E commands.
+void register_finance_systems(SystemManager& sm);
+bool borrow_loan(int amount);
+bool repay_loan(int amount);
+bool repay_loan_all();
+// E2E-only: deduct the day's wages without the payroll quit-out, so a
+// test can drive cash negative via wages and exercise the crisis guard.
+void charge_wages_unchecked();
 void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);
 // Lineup booking (lineup_systems.cpp): book for the NEXT day, fee paid now.

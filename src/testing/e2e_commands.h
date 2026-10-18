@@ -1432,6 +1432,101 @@ static void cmd_assert_total_spent(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Loans + finance history ──────────────────────────────────────────────
+
+// borrow_loan AMOUNT — same path as the Finances tab button. Consumed
+// even when refused (bad amount / debt cap), so the test can assert
+// the refusal toast and unchanged cash/debt.
+static void cmd_borrow_loan(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("borrow_loan requires AMOUNT");
+        return;
+    }
+    borrow_loan(cmd.arg_as<int>(0));
+    cmd.consume();
+}
+
+// repay_loan AMOUNT|all — same path as the Finances tab buttons.
+// Consumed even when refused (no debt / unaffordable).
+static void cmd_repay_loan(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("repay_loan requires AMOUNT|all");
+        return;
+    }
+    std::string arg = cmd.arg(0);
+    std::transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+    if (arg == "all")
+        repay_loan_all();
+    else
+        repay_loan(cmd.arg_as<int>(0));
+    cmd.consume();
+}
+
+static void cmd_assert_debt(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_debt requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? econ->debt : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_debt failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_history_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_history_count requires OP VALUE");
+        return;
+    }
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int actual = econ ? static_cast<int>(econ->finance_history.size()) : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_history_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_history_day DAY INCOME EXPENSES — the closed day's row must
+// exist with exactly these sums (profit is income - expenses).
+static void cmd_assert_history_day(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(3)) {
+        cmd.fail("assert_history_day requires DAY INCOME EXPENSES");
+        return;
+    }
+    int day = cmd.arg_as<int>(0);
+    int want_income = cmd.arg_as<int>(1);
+    int want_expenses = cmd.arg_as<int>(2);
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (econ) {
+        for (const auto& row : econ->finance_history) {
+            if (row.day != day) continue;
+            if (row.income == want_income && row.expenses == want_expenses) {
+                cmd.consume();
+                return;
+            }
+            cmd.fail(fmt::format(
+                "assert_history_day failed: Day {} is income ${} expenses "
+                "${}, wanted ${} / ${}",
+                day, row.income, row.expenses, want_income, want_expenses));
+            return;
+        }
+    }
+    cmd.fail(fmt::format("assert_history_day failed: no Day {} row", day));
+}
+
+// charge_wages — deduct the day's wages without the payroll quit-out, so
+// the cash-crisis guard (floor at 0 + rating hit + ticker) can be
+// exercised with cash driven negative via wages.
+static void cmd_charge_wages(testing::PendingE2ECommand& cmd) {
+    charge_wages_unchecked();
+    cmd.consume();
+}
+
 static void cmd_demolish_at(testing::PendingE2ECommand& cmd) {
     if (cmd.args.size() < 2) {
         cmd.consume();
@@ -3676,6 +3771,12 @@ static void init_e2e_registry() {
     r.add("assert_cash", cmd_assert_cash);
     r.add("assert_total_earned", cmd_assert_total_earned);
     r.add("assert_total_spent", cmd_assert_total_spent);
+    r.add("borrow_loan", cmd_borrow_loan);
+    r.add("repay_loan", cmd_repay_loan);
+    r.add("assert_debt", cmd_assert_debt);
+    r.add("assert_history_count", cmd_assert_history_count);
+    r.add("assert_history_day", cmd_assert_history_day);
+    r.add("charge_wages", cmd_charge_wages);
     r.add("demolish_at", cmd_demolish_at);
     r.add("set_all_agent_hp", cmd_set_all_agent_hp);
     r.add("perf_start", cmd_perf_start);

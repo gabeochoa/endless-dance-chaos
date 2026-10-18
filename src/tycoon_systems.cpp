@@ -445,3 +445,186 @@ void register_tycoon_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<MilestoneSystem>());
     sm.register_update_system(std::make_unique<ParkRatingSystem>());
 }
+
+// ── Loans + finance history + bankruptcy guard ────────────────────────────
+// Day-rollover sequence (continued): this system registers AFTER
+// StaffPayrollSystem (see update_systems.cpp), so by the time it records
+// the closing day the inspection grant and the payroll have already
+// landed in total_earned / total_spent, and the crisis check sees cash
+// after every rollover charge.
+
+// Announce on both channels (toast + NEWS ticker queue), like events.
+static void announce_finance(const std::string& text) {
+    spawn_toast(text);
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+    if (director) {
+        if (director->announcement_queue.size() > 16)
+            director->announcement_queue.erase(
+                director->announcement_queue.begin());
+        director->announcement_queue.push_back(text);
+    }
+}
+
+// Borrow one of LOAN_AMOUNTS. Cash now, debt tracked. Refused (no
+// change) for a non-loan amount or when debt + amount would pass the
+// tier-scaled cap. Loan principal is not income: totals are untouched.
+bool borrow_loan(int amount) {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) return false;
+    if (!Economy::is_loan_amount(amount)) {
+        spawn_toast(fmt::format(
+            "No such loan: ${}. Loans are $5000 / $10000 / $25000.", amount));
+        log_warn("Loan refused: ${} is not a loan amount", amount);
+        return false;
+    }
+    int tier = 0;
+    if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>())
+        tier = lineup->tier;
+    int cap = Economy::debt_cap_for_tier(tier);
+    if (econ->debt + amount > cap) {
+        spawn_toast(fmt::format(
+            "Loan refused: debt would exceed the ${} cap (Tier {}).", cap,
+            tier));
+        log_warn("Loan refused: ${} would push debt ${} past cap ${}", amount,
+                 econ->debt, cap);
+        return false;
+    }
+    econ->cash += amount;
+    econ->debt += amount;
+    spawn_toast(fmt::format("Borrowed ${}. Debt now ${}.", amount, econ->debt));
+    log_info("Borrowed ${}: cash ${}, debt ${}", amount, econ->cash,
+             econ->debt);
+    return true;
+}
+
+// Repay up to `amount` of the debt (capped at the debt). Refused (no
+// change) with no debt, a non-positive amount, or unaffordable.
+// Repayments count as expenses: they leave cash for good.
+bool repay_loan(int amount) {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) return false;
+    if (econ->debt <= 0) {
+        spawn_toast("No debt to repay.");
+        return false;
+    }
+    if (amount <= 0) {
+        spawn_toast("Repay amount must be positive.");
+        return false;
+    }
+    int pay = std::min(amount, econ->debt);
+    if (econ->cash < pay) {
+        spawn_toast(fmt::format("Not enough cash to repay ${} (cash ${}).", pay,
+                                econ->cash));
+        log_warn("Repay refused: ${} needed, cash ${}", pay, econ->cash);
+        return false;
+    }
+    econ->cash -= pay;
+    econ->debt -= pay;
+    econ->total_spent += pay;
+    spawn_toast(fmt::format("Repaid ${}. Debt now ${}.", pay, econ->debt));
+    log_info("Repaid ${}: cash ${}, debt ${}", pay, econ->cash, econ->debt);
+    return true;
+}
+
+// Repay everything the park can afford: min(debt, cash). If cash covers
+// the whole debt this clears it; if not, it pays all available cash.
+bool repay_loan_all() {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) return false;
+    if (econ->debt <= 0) {
+        spawn_toast("No debt to repay.");
+        return false;
+    }
+    int pay = std::min(econ->debt, econ->cash);
+    if (pay <= 0) {
+        spawn_toast("No cash to repay the debt with.");
+        return false;
+    }
+    econ->cash -= pay;
+    econ->debt -= pay;
+    econ->total_spent += pay;
+    spawn_toast(fmt::format("Repaid ${}. Debt now ${}.", pay, econ->debt));
+    log_info("Repaid all ${}: cash ${}, debt ${}", pay, econ->cash, econ->debt);
+    return true;
+}
+
+// Deduct the day's wages unconditionally, without the payroll system's
+// quit-out (staff quit when wages are unaffordable). E2E-only hook for
+// the cash-crisis path: wages are the charge that drives cash negative,
+// and the FinanceSystem guard then floors it at 0 with the rating hit.
+void charge_wages_unchecked() {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    if (!econ) return;
+    int wages = staff_total_wages();
+    if (wages <= 0) return;
+    econ->cash -= wages;
+    econ->total_spent += wages;
+    log_info("Wages charged (unchecked): ${}, cash now ${}", wages, econ->cash);
+}
+
+struct FinanceSystem : System<> {
+    void once(float) override {
+        if (skip_game_logic()) return;
+        auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+        if (!econ) return;
+
+        // Bankruptcy guard: cash floors at 0, rating takes the hit.
+        // Every frame (not only rollover), so the floor lands the same
+        // frame any charge pushes cash negative; after the floor,
+        // cash == 0, so this cannot re-fire until cash goes negative
+        // again. No game-over: the park keeps running, poorer.
+        if (econ->cash < 0) {
+            econ->cash = 0;
+            if (auto* rating =
+                    EntityHelper::get_singleton_cmp<ParkRatingState>()) {
+                rating->rating =
+                    std::clamp(rating->rating - CASH_CRISIS_RATING_PENALTY,
+                               static_cast<float>(PARK_RATING_MIN),
+                               static_cast<float>(PARK_RATING_MAX));
+                rating->harm_pool =
+                    std::min(PARK_RATING_HARM_CAP,
+                             rating->harm_pool + CASH_CRISIS_RATING_PENALTY);
+            }
+            announce_finance(
+                "CASH CRISIS! Cash fell below $0 — floored at $0, "
+                "rating takes a hit.");
+            log_warn("Cash crisis: cash floored at $0, rating hit");
+        }
+
+        // Day rollover: close the books on the day that just ended,
+        // then compound interest onto the debt.
+        auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>();
+        if (!diff || diff->day_number == econ->last_finance_day) return;
+        int closed_day = econ->last_finance_day;
+        int new_day = diff->day_number;
+        econ->last_finance_day = new_day;
+        if (new_day > closed_day) {
+            FinanceDay row{closed_day,
+                           econ->total_earned - econ->day_start_earned,
+                           econ->total_spent - econ->day_start_spent};
+            econ->finance_history.push_back(row);
+            while (static_cast<int>(econ->finance_history.size()) >
+                   FINANCE_HISTORY_MAX_DAYS)
+                econ->finance_history.erase(econ->finance_history.begin());
+            econ->day_start_earned = econ->total_earned;
+            econ->day_start_spent = econ->total_spent;
+            log_info("Finance history: Day {} income ${} expenses ${}", row.day,
+                     row.income, row.expenses);
+            if (econ->debt > 0) {
+                int interest = Economy::loan_interest_for(econ->debt);
+                econ->debt += interest;
+                log_info("Loan interest: +${} on debt, now ${}", interest,
+                         econ->debt);
+            }
+        } else {
+            // Day went backwards (E2E set_day_number): resync the
+            // snapshots so the next rollover does not double-count.
+            econ->day_start_earned = econ->total_earned;
+            econ->day_start_spent = econ->total_spent;
+        }
+    }
+};
+
+void register_finance_systems(SystemManager& sm) {
+    sm.register_update_system(std::make_unique<FinanceSystem>());
+}

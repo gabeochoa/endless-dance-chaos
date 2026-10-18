@@ -1,0 +1,200 @@
+# FINANCE DEPTH: loans, interest, debt cap, cash-crisis guard, history.
+# Borrow $5k/$10k/$25k from the Finances tab (cash now, debt tracked);
+# interest compounds onto the debt at 0.5%/day; repay partial/full;
+# debt shows in Finances + the bottom readout (red when >0); borrowing
+# past the tier-scaled cap is refused. Cash floors at 0 with a rating
+# hit + CASH CRISIS ticker when charges drive it negative (no game-over).
+# The Finances tab keeps the last 7 closed days of income/expenses/profit;
+# debt + history persist across save/load (save v4).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+
+# --- Borrow from the Finances tab (click) + repay partial/full ---
+assert_cash eq 10000
+assert_debt eq 0
+expect_text "Debt: $0"
+set_window_tab finances
+wait_frames 2
+expect_text "Borrow:"
+expect_text "Repay $1k"
+expect_text "Repay All"
+click 1176 322
+wait_frames 2
+assert_cash eq 20000
+assert_debt eq 10000
+assert_total_earned eq 0
+expect_text "Debt: $10000 / $25000 cap"
+expect_text "Debt: $10000"
+# Repay $4000 partial, then the rest in full (repayments are expenses).
+repay_loan 4000
+wait_frames 2
+assert_cash eq 16000
+assert_debt eq 6000
+expect_text "Debt: $6000"
+repay_loan all
+wait_frames 2
+assert_cash eq 10000
+assert_debt eq 0
+assert_total_spent eq 10000
+# Repay with no debt is refused, no change.
+repay_loan 1000
+wait_frames 2
+assert_cash eq 10000
+assert_debt eq 0
+assert_toast_contains "No debt"
+# Borrow a non-loan amount is refused, no change.
+borrow_loan 7000
+wait_frames 2
+assert_cash eq 10000
+assert_debt eq 0
+assert_toast_contains "No such loan"
+
+# --- Interest after 2 days, computed exactly ---
+# Debt $10000 -> +$50 (0.5%) = $10050 -> +$50 (lround(50.25)) = $10100.
+# Interest compounds onto debt, never cash: cash moves only via the two
+# clean-A inspection grants (+$500 each rollover).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+borrow_loan 10000
+wait_frames 2
+assert_cash eq 20000
+assert_debt eq 10000
+set_day_number 2
+wait_frames 5
+assert_day_number eq 2
+assert_debt eq 10050
+set_day_number 3
+wait_frames 5
+assert_debt eq 10100
+assert_cash eq 21000
+
+# --- Debt cap refusal at Tier 0 ($25000) ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+borrow_loan 25000
+wait_frames 2
+assert_cash eq 35000
+assert_debt eq 25000
+expect_text "Debt: $25000 / $25000 cap"
+borrow_loan 5000
+wait_frames 2
+assert_cash eq 35000
+assert_debt eq 25000
+assert_toast_contains "Loan refused"
+repay_loan all
+wait_frames 2
+assert_cash eq 10000
+assert_debt eq 0
+
+# --- Cap scales with tier: Tier 1 (500 arrivals) caps at $40000 ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+add_arrivals 500
+wait_frames 5
+assert_festival_tier eq 1
+borrow_loan 25000
+wait_frames 2
+borrow_loan 10000
+wait_frames 2
+assert_debt eq 35000
+borrow_loan 10000
+wait_frames 2
+assert_debt eq 35000
+assert_toast_contains "Loan refused"
+expect_text "Debt: $35000 / $40000 cap"
+repay_loan all
+wait_frames 2
+assert_cash eq 10000
+assert_debt eq 0
+
+# --- Cash crisis: wages drive cash negative -> floor 0 + rating hit + ticker ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_park_rating eq 500
+hire_staff janitor 10 10
+wait_frames 2
+assert_cash eq 9800
+set_cash 10
+wait_frames 2
+charge_wages
+wait_frames 2
+assert_cash eq 0
+assert_park_rating lt 480
+assert_game_status running
+expect_text "CASH CRISIS"
+
+# --- History rows after 3 days, with correct sums ---
+# Day 1: signing bonuses $900 + payroll $155 = $1055 spent, $0 earned
+# (injuries seed a D inspection, so no grant). Day 2: clean A inspection
+# grants +$500, payroll $155. Day 3: payroll $155 + a $1000 repayment =
+# $1155 spent (the $5000 borrowed that day is principal, not income).
+# Grades run D, A, D on purpose: three straight D/F grades would shut
+# the festival down via the inspection rule. Bars: 1 block per $100,
+# capped at 10.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+hire_staff guard 25 23
+wait_frames 2
+hire_staff medic 40 40
+wait_frames 2
+hire_staff janitor 10 10
+wait_frames 2
+add_injury_count 20
+set_day_number 2
+wait_frames 5
+assert_history_count eq 1
+assert_history_day 1 0 1055
+expect_text "Day 1: +$0 -$1055 =-$1055 ----------"
+set_day_number 3
+wait_frames 5
+assert_history_count eq 2
+assert_history_day 2 500 155
+expect_text "Day 2: +$500 -$155 =+$345 +++"
+borrow_loan 5000
+wait_frames 2
+repay_loan 1000
+wait_frames 2
+add_injury_count 20
+set_day_number 4
+wait_frames 5
+assert_history_count eq 3
+assert_history_day 3 0 1155
+expect_text "Day 3: +$0 -$1155 =-$1155 ----------"
+expect_text "History (last 7 days):"
+assert_debt eq 4020
+
+# --- Save/load persists debt + history (save v4) ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+delete_save
+borrow_loan 10000
+wait_frames 2
+add_injury_count 20
+set_day_number 2
+wait_frames 5
+assert_cash eq 20000
+assert_debt eq 10050
+assert_history_count eq 1
+assert_history_day 1 0 0
+save_game
+assert_save_exists
+repay_loan all
+wait_frames 2
+assert_debt eq 0
+set_cash 0
+wait_frames 2
+load_game
+wait_frames 5
+assert_cash eq 20000
+assert_debt eq 10050
+assert_history_count eq 1
+assert_history_day 1 0 0
+expect_text "Day 1: +$0 -$0 =+$0"
+delete_save

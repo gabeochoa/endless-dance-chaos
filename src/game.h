@@ -141,6 +141,23 @@ constexpr float BENCH_NEED_MULT = 0.25f;
 constexpr int STARTING_CASH = 10000;
 constexpr int DEFAULT_TICKET_PRICE = 20;
 
+// Loans (Finances tab): borrow one of LOAN_AMOUNTS in cash now; the
+// principal is tracked as Economy::debt. Interest compounds onto the
+// debt once per day rollover at LOAN_INTEREST_RATE_PER_DAY, rounded to
+// the nearest dollar (at least $1 while any debt remains). The debt cap
+// scales with the festival tier, so a bigger festival can borrow more.
+inline constexpr int LOAN_AMOUNTS[] = {5000, 10000, 25000};
+constexpr float LOAN_INTEREST_RATE_PER_DAY = 0.005f;  // 0.5%/day on balance
+constexpr int LOAN_BASE_DEBT_CAP = 25000;
+constexpr int LOAN_DEBT_CAP_PER_TIER = 15000;
+constexpr int LOAN_REPAY_STEP = 1000;  // Finances "Repay $1k" button
+// Bankruptcy guard: cash floored at 0 (never negative) and the rating
+// takes this instant hit (plus the same amount in the harm pool, like a
+// death) when cash goes negative after rollover charges. No game-over.
+constexpr float CASH_CRISIS_RATING_PENALTY = 50.0f;
+// Finance history: the last N closed days of (income, expenses, profit).
+constexpr int FINANCE_HISTORY_MAX_DAYS = 7;
+
 // Density & crush damage
 constexpr int MAX_AGENTS_PER_TILE = 40;
 constexpr float DENSITY_WARNING = 0.50f;    // 20 agents — yellow

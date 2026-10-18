@@ -1093,6 +1093,17 @@ static std::string park_window_death_text() {
     return "Deaths: 0/10";
 }
 
+// Debt line shared by the Finances page and the registered texts:
+// "Debt: $<owed> / $<tier cap> cap", red in the UI when debt > 0.
+static std::string park_window_debt_text() {
+    auto* econ = EntityHelper::get_singleton_cmp<Economy>();
+    int tier = 0;
+    if (auto* lineup = EntityHelper::get_singleton_cmp<LineupState>())
+        tier = lineup->tier;
+    return fmt::format("Debt: ${} / ${} cap", econ ? econ->debt : 0,
+                       Economy::debt_cap_for_tier(tier));
+}
+
 // Staff counts: guards / medics / janitors on payroll.
 static std::string park_window_staff_text() {
     return fmt::format("Staff: G{} M{} J{}", staff_count(StaffRole::Guard),
@@ -1150,6 +1161,15 @@ static void register_park_window_texts() {
         vtr.register_text(fmt::format("Ticket: ${}", econ->ticket_price));
         vtr.register_text(fmt::format("Earned: ${}", econ->total_earned));
         vtr.register_text(fmt::format("Spent: ${}", econ->total_spent));
+        vtr.register_text(park_window_debt_text());
+        vtr.register_text("Borrow:");
+        for (int a : LOAN_AMOUNTS)
+            vtr.register_text(fmt::format("${}k", a / 1000));
+        vtr.register_text("Repay $1k");
+        vtr.register_text("Repay All");
+        vtr.register_text("History (last 7 days):");
+        for (const auto& row : econ->finance_history)
+            vtr.register_text(Economy::finance_history_row(row));
     }
     GuestSummary gs = park_window_guest_summary();
     vtr.register_text(fmt::format("Attendees: {}", gs.attendees));
@@ -1207,8 +1227,12 @@ static void draw_park_window_park_page() {
     ui_draw_text(park_window_death_text(), x, 226, 14, death_col);
 }
 
-// Finances page: cash / ticket + price buttons / earned / spent.
+// Finances page: cash / ticket + price buttons / earned / spent /
+// debt + loan buttons / repay buttons / 7-day history.
 // Price buttons: [-] centre (1162,204), [+] centre (1190,204).
+// Loan buttons: "$5k" centre (1118,322), "$10k" (1176,322), "$25k"
+// (1234,322). Repay buttons: "Repay $1k" centre (1076,350),
+// "Repay All" centre (1176,350).
 static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
     auto* econ = EntityHelper::get_singleton_cmp<Economy>();
     if (!econ) return;
@@ -1242,6 +1266,56 @@ static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
                  Color{0, 0, 0, 255});
     ui_draw_text(fmt::format("Spent: ${}", econ->total_spent), x, 260, 14,
                  Color{0, 0, 0, 255});
+    Color debt_col =
+        econ->debt > 0 ? Color{200, 0, 0, 255} : Color{0, 0, 0, 255};
+    ui_draw_text(park_window_debt_text(), x, 288, 14, debt_col);
+
+    // Borrow: one button per loan amount; interest compounds daily.
+    ui_draw_text("Borrow:", x, 316, 14, Color{0, 0, 0, 255});
+    float loan_y = 312.f;
+    for (int i = 0; i < 3; i++) {
+        float loan_x = PARK_WINDOW_X + 72 + i * 58;  // 1092, 1150, 1208
+        if (mouse_click && !game_is_over() && mouse.y >= loan_y &&
+            mouse.y <= loan_y + btn_h && mouse.x >= loan_x &&
+            mouse.x <= loan_x + 52)
+            borrow_loan(LOAN_AMOUNTS[i]);
+        draw_bevel_panel(loan_x, loan_y, 52, btn_h, Color{200, 200, 200, 255});
+        std::string label = fmt::format("${}k", LOAN_AMOUNTS[i] / 1000);
+        auto lm = ui_measure_text(label, 14);
+        ui_draw_text(label, loan_x + (52 - lm.x) / 2.f, loan_y + 3, 14,
+                     Color{0, 120, 0, 255});
+    }
+
+    // Repay: $1k partial, or everything affordable (full when covered).
+    float repay_y = 340.f;
+    const char* repay_labels[] = {"Repay $1k", "Repay All"};
+    float repay_xs[] = {x, x + 100};
+    for (int i = 0; i < 2; i++) {
+        if (mouse_click && !game_is_over() && mouse.y >= repay_y &&
+            mouse.y <= repay_y + btn_h && mouse.x >= repay_xs[i] &&
+            mouse.x <= repay_xs[i] + 92) {
+            if (i == 0)
+                repay_loan(LOAN_REPAY_STEP);
+            else
+                repay_loan_all();
+        }
+        draw_bevel_panel(repay_xs[i], repay_y, 92, btn_h,
+                         Color{200, 200, 200, 255});
+        auto rm = ui_measure_text(repay_labels[i], 14);
+        ui_draw_text(repay_labels[i], repay_xs[i] + (92 - rm.x) / 2.f,
+                     repay_y + 3, 14, Color{160, 0, 0, 255});
+    }
+
+    // History: last 7 closed days, oldest first, each row + a +/- bar.
+    ui_draw_text("History (last 7 days):", x, 372, 12, Color{0, 0, 0, 255});
+    float hy = 388.f;
+    for (const auto& row : econ->finance_history) {
+        int profit = row.income - row.expenses;
+        Color row_col =
+            profit < 0 ? Color{160, 0, 0, 255} : Color{0, 120, 0, 255};
+        ui_draw_text(Economy::finance_history_row(row), x, hy, 11, row_col);
+        hy += 14.f;
+    }
 }
 
 // Guests page: counts / needs summary + stage queue + guest thoughts.
@@ -1657,19 +1731,27 @@ struct RenderBottomBarReadoutSystem : System<> {
             std::string cash_text = fmt::format("Cash: ${}", econ->cash);
             Color cash_col =
                 econ->cash < 0 ? Color{200, 0, 0, 255} : Color{0, 140, 0, 255};
-            ui_draw_text(cash_text, px + 8, py, 12, cash_col);
+            ui_draw_text(cash_text, px + 8, py, 11, cash_col);
             vtr.register_text(cash_text);
+            // Debt always shows; red while any is owed. Short form
+            // here (the Finances tab carries the cap) so the 150px
+            // panel never clips it.
+            std::string debt_text = fmt::format("Debt: ${}", econ->debt);
+            Color debt_col =
+                econ->debt > 0 ? Color{200, 0, 0, 255} : Color{0, 0, 0, 255};
+            ui_draw_text(debt_text, px + 8, py + 13, 11, debt_col);
+            vtr.register_text(debt_text);
         }
         if (auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>()) {
             std::string rating_text = fmt::format(
                 "Rating: {} {}", static_cast<int>(std::round(rating->rating)),
                 rating->trend_arrow());
-            ui_draw_text(rating_text, px + 8, py + 16, 12, Color{0, 0, 0, 255});
+            ui_draw_text(rating_text, px + 8, py + 26, 11, Color{0, 0, 0, 255});
             vtr.register_text(rating_text);
         }
         if (auto* diff = EntityHelper::get_singleton_cmp<DifficultyState>()) {
             std::string day_text = fmt::format("Day {}", diff->day_number);
-            ui_draw_text(day_text, px + 8, py + 32, 12,
+            ui_draw_text(day_text, px + 8, py + 39, 11,
                          Color{30, 60, 160, 255});
             vtr.register_text(day_text);
         }

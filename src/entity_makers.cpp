@@ -231,6 +231,11 @@ void reset_game_state() {
         econ->ticket_price = DEFAULT_TICKET_PRICE;
         econ->total_earned = 0;
         econ->total_spent = 0;
+        econ->debt = 0;
+        econ->finance_history.clear();
+        econ->day_start_earned = 0;
+        econ->day_start_spent = 0;
+        econ->last_finance_day = 1;
     }
 
     // Reset game clock

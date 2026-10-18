@@ -782,6 +782,14 @@ enum class BuildTool {
     Bench
 };
 
+// One closed day of finance history: income/expenses are the deltas of
+// total_earned/total_spent over that day, recorded at its rollover.
+struct FinanceDay {
+    int day = 0;
+    int income = 0;
+    int expenses = 0;
+};
+
 // Economy singleton: tycoon money flows (cash in from tickets, cash out
 // for building). One instance lives on the Sophie entity.
 struct Economy : afterhours::BaseComponent {
@@ -789,6 +797,52 @@ struct Economy : afterhours::BaseComponent {
     int ticket_price = DEFAULT_TICKET_PRICE;
     int total_earned = 0;
     int total_spent = 0;
+    // Loans: borrowed principal still owed. Borrow adds cash (not income:
+    // it is a liability); repayments leave cash and count as expenses.
+    // Interest compounds onto the debt at each day rollover, never
+    // touching cash, so it never triggers the cash-crisis guard by itself.
+    int debt = 0;
+    // Finance history: the last FINANCE_HISTORY_MAX_DAYS closed days,
+    // oldest first. day_start_* snapshot the totals when the current day
+    // opened, so the next rollover records exactly that day's flows.
+    // last_finance_day is the day_number the rollover last ran on.
+    std::vector<FinanceDay> finance_history;
+    int day_start_earned = 0;
+    int day_start_spent = 0;
+    int last_finance_day = 1;
+
+    static int loan_interest_for(int balance) {
+        if (balance <= 0) return 0;
+        return std::max(
+            1, static_cast<int>(std::lround(balance *  // 0.5%/day
+                                            LOAN_INTEREST_RATE_PER_DAY)));
+    }
+
+    static int debt_cap_for_tier(int tier) {
+        return LOAN_BASE_DEBT_CAP + LOAN_DEBT_CAP_PER_TIER * std::max(0, tier);
+    }
+
+    static bool is_loan_amount(int amount) {
+        for (int a : LOAN_AMOUNTS)
+            if (a == amount) return true;
+        return false;
+    }
+
+    // "Day D: +$income -$expenses =+/-$profit" + a +/- bar: one block
+    // per $100 of |profit| (at least one when profit != 0), capped at 10.
+    // The single source for the Finances tab rows and the E2E assertions.
+    static std::string finance_history_row(const FinanceDay& d) {
+        int profit = d.income - d.expenses;
+        int blocks = std::clamp(std::abs(profit) / 100, 0, 10);
+        if (profit != 0 && blocks == 0) blocks = 1;
+        std::string row =
+            fmt::format("Day {}: +${} -${} ={}${}", d.day, d.income, d.expenses,
+                        profit >= 0 ? "+" : "-", std::abs(profit));
+        if (blocks > 0)
+            row += fmt::format(" {}", std::string(static_cast<size_t>(blocks),
+                                                  profit >= 0 ? '+' : '-'));
+        return row;
+    }
 
     static constexpr int MIN_TICKET_PRICE = 5;
     static constexpr int MAX_TICKET_PRICE = 100;
