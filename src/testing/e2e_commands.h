@@ -900,6 +900,114 @@ static void cmd_assert_time_between(testing::PendingE2ECommand& cmd) {
     }
 }
 
+// ── Atmosphere (day/night + weather presentation) ─────────────────────
+// All values come from render_helpers.h so E2E asserts the same palette
+// math the renderers draw: brightness, tint, streak count, night glow.
+
+// get_brightness — log the current scene brightness in [0, 1].
+static void cmd_get_brightness(testing::PendingE2ECommand& cmd) {
+    log_info("[E2E] Brightness: {:.3f}", get_brightness());
+    cmd.consume();
+}
+
+// assert_brightness OP VALUE — compare scene brightness (float).
+static void cmd_assert_brightness(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_brightness requires OP VALUE");
+        return;
+    }
+    float actual = get_brightness();
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(fmt::format("assert_brightness failed: {:.3f} {} {:.3f}",
+                             actual, cmd.arg(0), cmd.arg_as<float>(1)));
+    else {
+        log_info("assert_brightness PASSED: {:.3f} {} {:.3f}", actual,
+                 cmd.arg(0), cmd.arg_as<float>(1));
+        cmd.consume();
+    }
+}
+
+// assert_rain_active / assert_rain_inactive — Rain ActiveEvent present.
+static void cmd_assert_rain_active(testing::PendingE2ECommand& cmd) {
+    if (!atmosphere_weather().rain) {
+        cmd.fail("assert_rain_active FAILED: no active Rain event");
+        return;
+    }
+    log_info("assert_rain_active PASSED");
+    cmd.consume();
+}
+
+static void cmd_assert_rain_inactive(testing::PendingE2ECommand& cmd) {
+    if (atmosphere_weather().rain) {
+        cmd.fail("assert_rain_inactive FAILED: Rain event is still active");
+        return;
+    }
+    log_info("assert_rain_inactive PASSED");
+    cmd.consume();
+}
+
+// get_rain_streak_count — log the drawn rain streak count (120 or 0).
+static void cmd_get_rain_streak_count(testing::PendingE2ECommand& cmd) {
+    log_info("[E2E] Rain streak count: {}", rain_streak_count());
+    cmd.consume();
+}
+
+// assert_rain_streak_count OP VALUE
+static void cmd_assert_rain_streak_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_rain_streak_count requires OP VALUE");
+        return;
+    }
+    int actual = rain_streak_count();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_rain_streak_count failed: {} {} {}",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1)));
+    else {
+        log_info("assert_rain_streak_count PASSED: {}", actual);
+        cmd.consume();
+    }
+}
+
+// assert_weather_tint warm|cool|neutral — current palette tint.
+static void cmd_assert_weather_tint(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_weather_tint requires TINT");
+        return;
+    }
+    std::string expected = cmd.arg(0);
+    std::transform(expected.begin(), expected.end(), expected.begin(),
+                   ::tolower);
+    std::string actual = weather_tint_name();
+    if (actual != expected)
+        cmd.fail(
+            fmt::format("assert_weather_tint FAILED: expected '{}', got '{}'",
+                        expected, actual));
+    else {
+        log_info("assert_weather_tint PASSED: {}", actual);
+        cmd.consume();
+    }
+}
+
+// assert_night_glow on|off — stage cones + lamp pools are drawing.
+static void cmd_assert_night_glow(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_night_glow requires on|off");
+        return;
+    }
+    std::string expected = cmd.arg(0);
+    std::transform(expected.begin(), expected.end(), expected.begin(),
+                   ::tolower);
+    bool active = night_glow_active();
+    bool match = (expected == "on" && active) || (expected == "off" && !active);
+    if (!match)
+        cmd.fail(fmt::format("assert_night_glow FAILED: expected '{}', glow {}",
+                             expected, active ? "on" : "off"));
+    else {
+        log_info("assert_night_glow PASSED: {}", expected);
+        cmd.consume();
+    }
+}
+
 static void cmd_assert_stage_state(testing::PendingE2ECommand& cmd) {
     if (cmd.args.empty()) {
         cmd.consume();
@@ -3543,6 +3651,14 @@ static void init_e2e_registry() {
     r.add("set_speed", cmd_set_speed);
     r.add("assert_phase", cmd_assert_phase);
     r.add("assert_time_between", cmd_assert_time_between);
+    r.add("get_brightness", cmd_get_brightness);
+    r.add("assert_brightness", cmd_assert_brightness);
+    r.add("assert_rain_active", cmd_assert_rain_active);
+    r.add("assert_rain_inactive", cmd_assert_rain_inactive);
+    r.add("get_rain_streak_count", cmd_get_rain_streak_count);
+    r.add("assert_rain_streak_count", cmd_assert_rain_streak_count);
+    r.add("assert_weather_tint", cmd_assert_weather_tint);
+    r.add("assert_night_glow", cmd_assert_night_glow);
     r.add("assert_stage_state", cmd_assert_stage_state);
     r.add("force_artist", cmd_force_artist);
     r.add("assert_agents_exited", cmd_assert_agents_exited);

@@ -3,9 +3,11 @@ reset_game
 set_spawn_enabled 0
 wait_frames 5
 
-# Trigger two events at once
-trigger_event rain 10
-trigger_event heatwave 10
+# Trigger two events at once (2s: expiry is the transition that
+# matters, and the 1s wait margin is in the same dt units the event
+# timer advances in)
+trigger_event rain 2
+trigger_event heatwave 2
 wait_frames 5
 
 # Both should be active
@@ -13,7 +15,7 @@ assert_event_active rain
 assert_event_active heatwave
 
 # Wait for events to expire
-wait 12
+wait 3
 
 # Both should be gone
 assert_event_inactive rain

@@ -6,8 +6,10 @@ wait_frames 5
 # No events active initially
 assert_event_inactive rain
 
-# Trigger a short rain event (5 seconds)
-trigger_event rain 5
+# Trigger a short rain event (2 seconds; expiry is the transition
+# that matters, and the 1s wait margin is in the same dt units the
+# event timer advances in)
+trigger_event rain 2
 
 # Rain should be active
 assert_event_active rain
@@ -16,7 +18,7 @@ assert_event_active rain
 assert_toast_contains rain
 
 # Wait for event to expire
-wait 6
+wait 3
 
 # Rain should be gone
 assert_event_inactive rain

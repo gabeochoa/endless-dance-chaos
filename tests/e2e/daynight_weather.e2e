@@ -1,0 +1,76 @@
+# Day/night + weather atmosphere (presentation only, no gameplay changes).
+# Brightness is the grass-tile luminance under the current day/night +
+# weather palette, relative to noon: noon 1.0, dusk ~0.70, night ~0.40,
+# noon rain ~0.70. Screenshots at each phase are for eyeballing.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+
+# --- Daylight cycle: brightness falls monotonically noon -> dusk -> night
+set_time 12 0
+wait_frames 2
+assert_phase day
+assert_brightness gte 0.99
+assert_weather_tint neutral
+assert_night_glow off
+screenshot daynight_noon
+
+set_time 17 30
+wait_frames 2
+assert_phase day
+assert_brightness gt 0.6
+assert_brightness lt 0.8
+screenshot daynight_dusk
+
+set_time 20 0
+wait_frames 2
+assert_phase night
+assert_brightness gt 0.3
+assert_brightness lt 0.5
+assert_night_glow on
+screenshot daynight_night
+
+# --- Dawn: brightness climbs back toward noon
+set_time 9 30
+wait_frames 2
+assert_brightness gt 0.6
+assert_brightness lt 0.8
+set_time 10 30
+wait_frames 2
+assert_phase day
+assert_brightness gte 0.99
+assert_night_glow off
+
+# --- Rain: darker palette + streaks while active, clears on expiry
+set_time 12 0
+wait_frames 2
+assert_event_inactive rain
+assert_rain_inactive
+assert_rain_streak_count eq 0
+get_brightness
+# Short 2s duration: expiry is the transition that matters, and the
+# 1s wait margin is in the same dt units the event timer advances in.
+trigger_event rain 2
+assert_event_active rain
+assert_rain_active
+assert_weather_tint cool
+assert_rain_streak_count gt 0
+get_rain_streak_count
+assert_brightness gt 0.6
+assert_brightness lt 0.85
+wait 3
+assert_event_inactive rain
+assert_rain_inactive
+assert_rain_streak_count eq 0
+assert_weather_tint neutral
+assert_brightness gte 0.99
+
+# --- Heat wave: warm tint shift only, no rain streaks, clears on expiry
+trigger_event heatwave 2
+assert_event_active heatwave
+assert_weather_tint warm
+assert_rain_inactive
+assert_rain_streak_count eq 0
+wait 3
+assert_event_inactive heatwave
+assert_weather_tint neutral

@@ -17,8 +17,7 @@ struct BeginRenderSystem : System<> {
     void once(float) const override {
         begin_texture_mode(g_render_texture);
         float nt = get_day_night_t();
-        Color bg = lerp_color({40, 44, 52, 255}, {10, 10, 20, 255}, nt);
-        clear_background(bg);
+        clear_background(sky_color(nt));
 
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
         // Iso mode draws pure 2D diamonds into the texture: no 3D
@@ -273,6 +272,9 @@ struct RenderIsoSystem : System<> {
         int z1 = vr ? vr->max_z : MAP_SIZE - 1;
         float night_t = get_day_night_t();
         float t = get_time();
+        auto weather = atmosphere_weather();
+        float shimmer =
+            weather.heat ? HEAT_SHIMMER_AMPLITUDE * std::sin(t * 3.0f) : 0.f;
 
         auto* gs = EntityHelper::get_singleton_cmp<GameState>();
         bool show_overlay = gs && gs->show_data_layer;
@@ -311,23 +313,21 @@ struct RenderIsoSystem : System<> {
             for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
                 float depth = static_cast<float>(x + z);
-                items.push_back({depth, 0, 0, x, z,
-                                 ::tile_color(tile.type, night_t), 0, -1});
+                Color weather_color =
+                    ::tile_color_weather(tile.type, night_t, weather, shimmer);
+                items.push_back({depth, 0, 0, x, z, weather_color, 0, -1});
                 if (tile.type == TileType::Fence) {
                     // Low extruded block so the fence ring reads as a wall.
-                    items.push_back({depth, 2, 2, x, z,
-                                     ::tile_color(tile.type, night_t),
-                                     th * 0.35f, -1});
+                    items.push_back(
+                        {depth, 2, 2, x, z, weather_color, th * 0.35f, -1});
                 } else if (tile.type == TileType::Tree) {
                     // Green blob-tree: canopy ellipse + trunk (kind 6).
-                    items.push_back({depth, 2, 6, x, z,
-                                     ::tile_color(tile.type, night_t), 0, -1});
+                    items.push_back({depth, 2, 6, x, z, weather_color, 0, -1});
                 } else if (is_building_tile(tile.type)) {
                     float h = tile.type == TileType::Stage   ? th * 0.95f
                               : tile.type == TileType::Bench ? th * 0.25f
                                                              : th * 0.55f;
-                    items.push_back({depth, 2, 2, x, z,
-                                     ::tile_color(tile.type, night_t), h, -1});
+                    items.push_back({depth, 2, 2, x, z, weather_color, h, -1});
                 }
                 if (stage_glow && tile.type == TileType::Stage) {
                     items.push_back({depth, 1, 1, x, z, glow_color, 0, -1});
@@ -590,6 +590,56 @@ struct RenderIsoSystem : System<> {
                     break;
             }
         }
+
+        // Night atmosphere (post-pass, over tiles/peeps: a light wash).
+        // Stage light cones: wide warm diamonds over the stage + a
+        // fainter wash over the stage floor. Lamp glow pools: warm
+        // diamonds around every facility / gate tile. Low alpha over
+        // the dark night palette reads as additive-ish light.
+        if (night_t > 0.01f) {
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
+                    const Tile& tile = grid->at(x, z);
+                    vec2 s = cam.iso_project(static_cast<float>(x),
+                                             static_cast<float>(z));
+                    if (tile.type == TileType::Stage) {
+                        iso_draw_diamond(
+                            s.x, s.y, tw * 1.6f, th * 1.6f,
+                            {255, 220, 130,
+                             static_cast<unsigned char>(
+                                 night_t * NIGHT_GLOW_STAGE_ALPHA)});
+                        iso_draw_diamond(
+                            s.x, s.y, tw, th,
+                            {255, 240, 180,
+                             static_cast<unsigned char>(
+                                 night_t * NIGHT_GLOW_STAGE_INNER_ALPHA)});
+                    } else if (tile.type == TileType::StageFloor) {
+                        iso_draw_diamond(
+                            s.x, s.y, tw, th,
+                            {255, 210, 120,
+                             static_cast<unsigned char>(
+                                 night_t * NIGHT_GLOW_STAGE_FLOOR_ALPHA)});
+                    } else if (is_lamp_tile(tile.type)) {
+                        iso_draw_diamond(
+                            s.x, s.y, tw * 1.4f, th * 1.4f,
+                            {255, 190, 90,
+                             static_cast<unsigned char>(
+                                 night_t * NIGHT_GLOW_LAMP_ALPHA)});
+                    }
+                }
+            }
+        }
+
+        // Rain streaks: short diagonal lines falling across the world
+        // viewport (same bounds BeginRenderSystem culls to).
+        if (weather.rain) {
+            for (int i = 0; i < RAIN_STREAK_COUNT; i++) {
+                vec2 p = rain_streak_screen_pos(i, t, 0.f, 1130.f, 44.f, 644.f);
+                draw_line(static_cast<int>(p.x), static_cast<int>(p.y),
+                          static_cast<int>(p.x - 4), static_cast<int>(p.y + 14),
+                          Color{170, 200, 255, 110});
+            }
+        }
     }
 
     static void draw_iso_peep(float sx, float sy, float tw, float th,
@@ -712,11 +762,16 @@ struct RenderGridSystem : System<> {
 
         float tile_size = TILESIZE * 0.98f;
         float night_t = get_day_night_t();
+        auto weather = atmosphere_weather();
+        float shimmer =
+            weather.heat ? HEAT_SHIMMER_AMPLITUDE * std::sin(get_time() * 3.0f)
+                         : 0.f;
 
         for (int z = z0; z <= z1; z++) {
             for (int x = x0; x <= x1; x++) {
                 const Tile& tile = grid->at(x, z);
-                Color color = ::tile_color(tile.type, night_t);
+                Color color =
+                    ::tile_color_weather(tile.type, night_t, weather, shimmer);
                 draw_plane({x * TILESIZE, 0.01f, z * TILESIZE},
                            {tile_size, tile_size}, color);
                 if (tile.type == TileType::Tree) {
@@ -740,6 +795,52 @@ struct RenderGridSystem : System<> {
                 }
             }
         }
+
+        // Night atmosphere (3D pass): warm glow planes over the stage,
+        // stage floor and lamp tiles.
+        if (night_t > 0.01f) {
+            float ts = TILESIZE * 0.98f;
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
+                    TileType type = grid->at(x, z).type;
+                    if (type == TileType::Stage) {
+                        draw_plane({x * TILESIZE, 0.06f, z * TILESIZE},
+                                   {ts, ts},
+                                   {255, 220, 130,
+                                    static_cast<unsigned char>(
+                                        night_t * NIGHT_GLOW_STAGE_ALPHA)});
+                    } else if (type == TileType::StageFloor) {
+                        draw_plane(
+                            {x * TILESIZE, 0.06f, z * TILESIZE}, {ts, ts},
+                            {255, 210, 120,
+                             static_cast<unsigned char>(
+                                 night_t * NIGHT_GLOW_STAGE_FLOOR_ALPHA)});
+                    } else if (is_lamp_tile(type)) {
+                        draw_plane({x * TILESIZE, 0.06f, z * TILESIZE},
+                                   {ts, ts},
+                                   {255, 190, 90,
+                                    static_cast<unsigned char>(
+                                        night_t * NIGHT_GLOW_LAMP_ALPHA)});
+                    }
+                }
+            }
+        }
+
+        // Rain streaks (3D pass): thin falling cylinders across the
+        // visible region.
+        if (weather.rain) {
+            float t = get_time();
+            for (int i = 0; i < RAIN_STREAK_COUNT; i++) {
+                float wx = (x0 + atmosphere_hash(i * 2 + 1) * (x1 - x0 + 1)) *
+                           TILESIZE;
+                float wz = (z0 + atmosphere_hash(i * 2 + 2) * (z1 - z0 + 1)) *
+                           TILESIZE;
+                float wy = std::fmod(
+                    atmosphere_hash(i * 3 + 5) * 2.5f + t * 1.5f, 2.5f);
+                draw_cylinder({wx, wy, wz}, 0.012f, 0.012f, 0.35f, 4,
+                              Color{170, 200, 255, 110});
+            }
+        }
     }
 };
 
@@ -751,6 +852,16 @@ struct RenderStageGlowSystem : System<> {
 
         float stage_cx = (STAGE_X + STAGE_SIZE / 2.0f) * TILESIZE;
         float stage_cz = (STAGE_Z + STAGE_SIZE / 2.0f) * TILESIZE;
+
+        // Night light cone over the stage (3D pass): a translucent
+        // warm cone, on top of the glow planes RenderGridSystem drew.
+        float night_t = get_day_night_t();
+        if (night_t > 0.01f) {
+            auto cone_alpha =
+                static_cast<unsigned char>(night_t * NIGHT_GLOW_STAGE_ALPHA);
+            draw_cylinder({stage_cx, 0.0f, stage_cz}, 0.15f, 0.9f, 2.0f, 8,
+                          Color{255, 220, 130, cone_alpha});
+        }
 
         if (sched->stage_state == StageState::Announcing) {
             float t = get_time();

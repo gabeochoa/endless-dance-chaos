@@ -6,10 +6,12 @@ wait_frames 5
 # No events active initially
 assert_event_inactive heatwave
 
-# Trigger a short heat wave (5 seconds)
-trigger_event heatwave 5
+# Trigger a short heat wave (2 seconds; expiry is the transition
+# that matters, and the 1s wait margin is in the same dt units the
+# event timer advances in)
+trigger_event heatwave 2
 assert_event_active heatwave
 
 # Wait for event to expire
-wait 6
+wait 3
 assert_event_inactive heatwave

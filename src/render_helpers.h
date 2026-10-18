@@ -6,10 +6,12 @@
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
+#include <cmath>
 #include <deque>
 #include <string>
 
 #include "afterhours/src/core/entity_helper.h"
+#include "afterhours/src/core/entity_query.h"
 #include "afterhours/src/drawing_helpers.h"
 #include "afterhours/src/drawing_helpers_3d.h"
 #include "afterhours/src/font_helper.h"
@@ -180,6 +182,143 @@ inline Color tile_day_color(TileType type) {
 inline Color tile_color(TileType type, float night_t) {
     int idx = static_cast<int>(type);
     return lerp_color(TILE_DAY_COLORS[idx], TILE_NIGHT_COLORS[idx], night_t);
+}
+
+// ── Atmosphere: day/night + weather presentation ──
+// Data-driven: sky endpoints, weather strengths, glow alphas and the
+// rain-streak count live here; renderers only read them. No gameplay
+// system reads these values — they change pixels, not rules.
+inline constexpr Color SKY_DAY_COLOR = {40, 44, 52, 255};
+inline constexpr Color SKY_NIGHT_COLOR = {10, 10, 20, 255};
+// Rain multiplies every palette color by (1 - RAIN_DARKEN).
+inline constexpr float RAIN_DARKEN = 0.30f;
+// Heat wave: warm palette shift only (boost red, cut blue). The render
+// pass adds a small +/- shimmer to the red gain for a heat-haze feel;
+// the E2E brightness path uses shimmer 0 so it stays deterministic.
+inline constexpr float HEAT_RED_GAIN = 1.12f;
+inline constexpr float HEAT_BLUE_CUT = 0.88f;
+inline constexpr float HEAT_SHIMMER_AMPLITUDE = 0.04f;
+inline constexpr int RAIN_STREAK_COUNT = 120;
+// Night-glow overlay alphas (0-255 scale, multiplied by night_t).
+inline constexpr float NIGHT_GLOW_STAGE_ALPHA = 70.f;
+inline constexpr float NIGHT_GLOW_STAGE_INNER_ALPHA = 50.f;
+inline constexpr float NIGHT_GLOW_STAGE_FLOOR_ALPHA = 30.f;
+inline constexpr float NIGHT_GLOW_LAMP_ALPHA = 45.f;
+
+// Which ActiveEvent types currently tint the picture. Scanned live from
+// ActiveEvent entities, like RenderUI does, so render and E2E agree.
+struct AtmosphereWeather {
+    bool rain = false;
+    bool heat = false;
+};
+
+inline AtmosphereWeather atmosphere_weather() {
+    AtmosphereWeather w;
+    auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+    for (Entity& e : events) {
+        if (e.get<ActiveEvent>().type == EventType::Rain)
+            w.rain = true;
+        else if (e.get<ActiveEvent>().type == EventType::HeatWave)
+            w.heat = true;
+    }
+    return w;
+}
+
+inline Color apply_weather_tint(Color c, AtmosphereWeather w,
+                                float shimmer = 0.f) {
+    if (w.rain) {
+        float f = 1.0f - RAIN_DARKEN;
+        c.r = static_cast<uint8_t>(c.r * f);
+        c.g = static_cast<uint8_t>(c.g * f);
+        c.b = static_cast<uint8_t>(c.b * f);
+    }
+    if (w.heat) {
+        float red_gain = HEAT_RED_GAIN + shimmer;
+        c.r = static_cast<uint8_t>(std::min(255.0f, c.r * red_gain));
+        c.b = static_cast<uint8_t>(c.b * HEAT_BLUE_CUT);
+    }
+    return c;
+}
+
+inline Color tile_color_weather(TileType type, float night_t,
+                                AtmosphereWeather w = atmosphere_weather(),
+                                float shimmer = 0.f) {
+    return apply_weather_tint(tile_color(type, night_t), w, shimmer);
+}
+
+inline Color sky_color(float night_t,
+                       AtmosphereWeather w = atmosphere_weather(),
+                       float shimmer = 0.f) {
+    return apply_weather_tint(
+        lerp_color(SKY_DAY_COLOR, SKY_NIGHT_COLOR, night_t), w, shimmer);
+}
+
+inline float color_luminance(Color c) {
+    return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+}
+
+// Scene brightness in [0, 1]: luminance of the grass tile under the
+// current day/night + weather atmosphere, relative to noon grass.
+// Noon = 1.0, full night ≈ 0.40, noon rain ≈ 0.70. Monotonic in
+// night_t while weather is held fixed.
+inline float get_brightness() {
+    Color day_grass = TILE_DAY_COLORS[static_cast<int>(TileType::Grass)];
+    float day = color_luminance(day_grass);
+    if (day <= 0.f) return 0.f;
+    Color cur = tile_color_weather(TileType::Grass, get_day_night_t());
+    return std::clamp(color_luminance(cur) / day, 0.f, 1.f);
+}
+
+inline int rain_streak_count() {
+    return atmosphere_weather().rain ? RAIN_STREAK_COUNT : 0;
+}
+
+// Palette tint name for E2E: rain darkens toward cool, heat shifts warm.
+inline const char* weather_tint_name() {
+    auto w = atmosphere_weather();
+    if (w.rain) return "cool";
+    if (w.heat) return "warm";
+    return "neutral";
+}
+
+// Stage light cones + lamp glow pools draw while night_t > 0.5.
+inline bool night_glow_active() { return get_day_night_t() > 0.5f; }
+
+// Tiles that get a warm lamp-glow pool around them at night.
+inline bool is_lamp_tile(TileType type) {
+    switch (type) {
+        case TileType::Bathroom:
+        case TileType::Food:
+        case TileType::MedTent:
+        case TileType::Bar:
+        case TileType::SecurityPost:
+        case TileType::WaterStation:
+        case TileType::Gate:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Deterministic per-streak hash in [0, 1): same streak index always
+// yields the same lateral offset, so streaks are stable frame to frame.
+inline float atmosphere_hash(int seed) {
+    uint32_t h = static_cast<uint32_t>(seed * 2654435761u + 97u);
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return static_cast<float>(h & 0xFFFF) / 65535.0f;
+}
+
+// Screen-space rain streak position inside [x0, x1] x [y0, y1].
+// Falls at ~220 px/s, wrapping; lateral position is hash-stable.
+inline vec2 rain_streak_screen_pos(int i, float t, float x0, float x1, float y0,
+                                   float y1) {
+    float x = x0 + atmosphere_hash(i * 2 + 1) * (x1 - x0);
+    float fall = atmosphere_hash(i * 2 + 2);
+    float span = y1 - y0;
+    float y = y0 + std::fmod(fall * span + t * 220.0f, span);
+    return {x, y};
 }
 
 // ── Bottom news ticker ──

@@ -52,8 +52,10 @@ eventually_assert_agents_on_tiletype food gte 1 30
 eventually_assert 30 assert_vip_served_count gte 1
 eventually_assert_agent_watching gte 1 20
 # Longest eventually_ timeout above is 30s: wait it out so all four
-# resolve before the plain asserts and the next reset run.
-wait 35
+# resolve before the plain asserts and the next reset run. The 2s
+# margin covers dispatch cadence (a few frames); the deadlines run
+# from the eventually_ commands' first evaluation, just before this wait.
+wait 32
 # $10000 + $20 gate ticket on arrival + $250 VIP service bonus.
 assert_cash eq 10270
 assert_vip_count gte 1
@@ -72,7 +74,7 @@ set_cash 10000
 # reach it before its 5s patience expires.
 eventually_assert 15 assert_vip_penalized_count gte 1
 eventually_assert 15 assert_vip_count eq 0
-wait 20
+wait 17
 assert_cash eq 10000
 
 # --- Ignored VIP: collapse while unserved penalises at collapse ---
@@ -88,5 +90,5 @@ set_cash 10000
 # Heat need with threshold-2s timer, far from the MedTent: collapses
 # in ~2s, long before rescue or patience could intervene.
 eventually_assert 10 assert_vip_penalized_count gte 1
-wait 12
+wait 11
 assert_cash eq 10000
