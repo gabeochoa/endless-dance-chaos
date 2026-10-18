@@ -343,57 +343,24 @@ struct ParkRatingSystem : System<> {
             }
         }
 
-        // Scenery coverage: fraction of playable tiles within
-        // PARK_RATING_SCENERY_RADIUS of a Tree, scaled to
-        // PARK_RATING_SCENERY_MAX. Lamps count at LAMP_SCENERY_WEIGHT
-        // (half a tree); a tile covered by both caps at 1. Applies
-        // with or without attendees: a beautiful empty park still
-        // reads as beautiful.
+        // Scenery coverage: shared helper (see components.h) — a
+        // beautiful empty park still reads as beautiful.
         float scenery = 0.f;
-        if (grid) {
-            grid->ensure_caches();
-            const auto& trees = grid->tree_positions;
-            const auto& lamps = grid->lamp_positions;
-            if (!trees.empty() || !lamps.empty()) {
-                std::array<float, MAP_SIZE * MAP_SIZE> covered{};
-                covered.fill(0.f);
-                int r = static_cast<int>(std::ceil(PARK_RATING_SCENERY_RADIUS));
-                auto mark_covered = [&](const auto& positions, float weight) {
-                    for (auto [tx, tz] : positions) {
-                        for (int dz = -r; dz <= r; dz++) {
-                            for (int dx = -r; dx <= r; dx++) {
-                                if (dx * dx + dz * dz >
-                                    PARK_RATING_SCENERY_RADIUS *
-                                        PARK_RATING_SCENERY_RADIUS)
-                                    continue;
-                                int x = tx + dx, z = tz + dz;
-                                if (!grid->in_bounds(x, z) ||
-                                    !grid->in_playable(x, z))
-                                    continue;
-                                int idx = z * MAP_SIZE + x;
-                                covered[idx] =
-                                    std::min(1.f, covered[idx] + weight);
-                            }
-                        }
-                    }
-                };
-                mark_covered(trees, 1.f);
-                mark_covered(lamps, LAMP_SCENERY_WEIGHT);
-                float covered_count = 0.f;
-                for (float c : covered) covered_count += c;
-                int playable = (grid->play_max_x() - PLAY_MIN + 1) *
-                               (grid->play_max_z() - PLAY_MIN + 1);
-                if (playable > 0)
-                    scenery = PARK_RATING_SCENERY_MAX * covered_count /
-                              static_cast<float>(playable);
-            }
-        }
+        if (grid)
+            scenery =
+                PARK_RATING_SCENERY_MAX * scenery_coverage_fraction(*grid);
 
         float inspection =
             insp ? park_rating_inspection_bonus(insp->last_grade) : 0.f;
+        // Held park awards: positive bonus / negative penalty while
+        // held (AwardsSystem sets the held ids at each day rollover).
+        float awards = 0.f;
+        if (auto* award_state =
+                EntityHelper::get_singleton_cmp<ParkAwardState>())
+            awards = award_state->award_bonus();
         rating->target =
             std::clamp(PARK_RATING_BASE + coverage + scenery + inspection +
-                           rating->vip_bonus_pool - rating->harm_pool -
+                           rating->vip_bonus_pool + awards - rating->harm_pool -
                            rating->need_pressure - rating->crowding_pressure,
                        static_cast<float>(PARK_RATING_MIN),
                        static_cast<float>(PARK_RATING_MAX));

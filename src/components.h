@@ -1060,10 +1060,51 @@ struct InspectionState : afterhours::BaseComponent {
     bool force_inspection = false;  // E2E run_inspection: inspect next frame
 };
 
+// Scenery coverage fraction (0-1): fraction of playable tiles within
+// PARK_RATING_SCENERY_RADIUS of a Tree (weight 1) or Lamp (weight
+// LAMP_SCENERY_WEIGHT), capped at 1 per tile. Shared by the rating's
+// scenery term and the Most Beautiful / Untidy award checks, so the two
+// readings of "beautiful" cannot drift apart. Callers ensure the grid
+// caches are built (ensure_caches) before calling.
+inline float scenery_coverage_fraction(Grid& grid) {
+    grid.ensure_caches();
+    const auto& trees = grid.tree_positions;
+    const auto& lamps = grid.lamp_positions;
+    if (trees.empty() && lamps.empty()) return 0.f;
+    std::array<float, MAP_SIZE * MAP_SIZE> covered{};
+    covered.fill(0.f);
+    int r = static_cast<int>(std::ceil(PARK_RATING_SCENERY_RADIUS));
+    auto mark_covered = [&](const auto& positions, float weight) {
+        for (auto [tx, tz] : positions) {
+            for (int dz = -r; dz <= r; dz++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    if (dx * dx + dz * dz >
+                        PARK_RATING_SCENERY_RADIUS * PARK_RATING_SCENERY_RADIUS)
+                        continue;
+                    int x = tx + dx, z = tz + dz;
+                    if (!grid.in_bounds(x, z) || !grid.in_playable(x, z))
+                        continue;
+                    int idx = z * MAP_SIZE + x;
+                    covered[idx] = std::min(1.f, covered[idx] + weight);
+                }
+            }
+        }
+    };
+    mark_covered(trees, 1.f);
+    mark_covered(lamps, LAMP_SCENERY_WEIGHT);
+    float covered_count = 0.f;
+    for (float c : covered) covered_count += c;
+    int playable =
+        (grid.play_max_x() - PLAY_MIN + 1) * (grid.play_max_z() - PLAY_MIN + 1);
+    if (playable <= 0) return 0.f;
+    return covered_count / static_cast<float>(playable);
+}
+
 // ── Park rating ──────────────────────────────────────────────────────────
 // Continuous 0-999 rating, starts at 500. Target = base + facility
-// coverage + inspection memory - harm pool - need pressure - crowding
-// pressure (see ParkRatingSystem in tycoon_systems.cpp). Deaths/injuries
+// coverage + inspection memory + held-award bonus - harm pool - need
+// pressure - crowding pressure (see ParkRatingSystem in
+// tycoon_systems.cpp). Deaths/injuries
 // also drop the rating instantly by their penalty, so a fatality reads
 // the next frame; the harm pool then holds the target down and halves
 // at each day rollover, so the rating recovers over days.
@@ -1129,6 +1170,159 @@ inline float park_rating_inspection_bonus(char grade) {
             return 0.f;
     }
 }
+
+// ── Park awards + park history ──────────────────────────────────────────
+// RCT2-style awards, evaluated once per day rollover from the day that
+// just ended (see AwardsSystem in awards_systems.cpp). One positive and
+// one negative award are held at a time; a newly qualifying award in a
+// slot replaces the held one ("latest wins"), a day with no qualifier
+// leaves the held award in place. Each held award contributes its
+// rating_delta to the ParkRating target while held (positive bonus,
+// negative penalty), so the bonus is a term in the rating calc, not a
+// one-off bump.
+//
+// Park history is the Finances-style record for rating + attendees:
+// one row per closed day (rating at rollover, that day's live-attendee
+// peak), oldest first, capped at PARK_HISTORY_MAX_DAYS.
+struct ParkAwardDef {
+    int id;            // 0 = none; positive ids 1-4, negative ids 5-6
+    const char* key;   // single-token E2E / lookup key
+    const char* name;  // Park-tab label
+    const char* icon;  // Park-tab glyph
+    bool positive;
+    float rating_delta;  // added to the ParkRating target while held
+    const char* blurb;   // ticker / toast line
+};
+
+inline constexpr ParkAwardDef PARK_AWARD_DEFS[] = {
+    // Icons are ASCII: the UI font has no glyphs for ★ / ☠ / block
+    // characters (it warns and draws nothing for them, like the
+    // existing ↑ trend arrow), so a Unicode icon would be invisible.
+    {1, "safest", "Safest Park", "*", true, 25.f,
+     "Not a single death. The med tent is bored."},
+    {2, "most_beautiful", "Most Beautiful", "@", true, 20.f,
+     "A quarter of the park is within a tree's embrace."},
+    {3, "best_value", "Best Value", "$", true, 20.f,
+     "Top rating, honest price."},
+    {4, "crowd_magnet", "Crowd Magnet", "#", true, 15.f,
+     "The crowds keep coming."},
+    {5, "untidy", "Untidy", "x", false, -20.f,
+     "Litter, needs, and barely a tree. The bins are judging you."},
+    {6, "danger_zone", "Danger Zone", "!", false, -35.f,
+     "A guest died. The lawyers are circling."},
+};
+inline constexpr int NUM_PARK_AWARDS =
+    static_cast<int>(sizeof(PARK_AWARD_DEFS) / sizeof(PARK_AWARD_DEFS[0]));
+
+inline const ParkAwardDef* park_award_def_for_id(int id) {
+    if (id <= 0) return nullptr;
+    for (const auto& def : PARK_AWARD_DEFS)
+        if (def.id == id) return &def;
+    return nullptr;
+}
+
+inline const ParkAwardDef* park_award_def_for_key(const std::string& key_in) {
+    std::string want;
+    for (char c : key_in) {
+        if (c == '_' || c == '-' || c == ' ') continue;
+        want += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (want.empty() || want == "none") return nullptr;
+    for (const auto& def : PARK_AWARD_DEFS) {
+        std::string k;
+        for (char c : std::string(def.key)) {
+            if (c == '_' || c == '-') continue;
+            k += c;
+        }
+        if (k == want) return &def;
+    }
+    return nullptr;
+}
+
+// One closed day of park history: rating at rollover + that day's
+// live-attendee peak (peak, not the closing count, so a day whose
+// crowds all left before rollover still reads as a busy day).
+struct ParkHistoryDay {
+    int day = 0;
+    int rating = 0;
+    int attendees = 0;
+};
+
+struct ParkAwardState : afterhours::BaseComponent {
+    int positive_id = 0;  // held positive award, 0 = none
+    int negative_id = 0;  // held negative award, 0 = none
+    int last_award_day = 1;
+    int last_history_day = 1;
+    int deaths_at_last = 0;               // death_count at last evaluation
+    int injuries_at_last = 0;             // injury_count at last evaluation
+    int peak_attendees_today = 0;         // live-attendee peak, current day
+    std::vector<ParkHistoryDay> history;  // last PARK_HISTORY_MAX_DAYS
+
+    const ParkAwardDef* positive_def() const {
+        return park_award_def_for_id(positive_id);
+    }
+    const ParkAwardDef* negative_def() const {
+        return park_award_def_for_id(negative_id);
+    }
+
+    // Sum of the held awards' deltas: the term ParkRating adds to its
+    // target. +25 with Safest alone, -10 with Safest + Danger Zone.
+    float award_bonus() const {
+        float bonus = 0.f;
+        if (const auto* p = positive_def()) bonus += p->rating_delta;
+        if (const auto* n = negative_def()) bonus += n->rating_delta;
+        return bonus;
+    }
+
+    static std::string award_line(const ParkAwardDef* def, char sign) {
+        if (!def) return fmt::format("{} None", sign);
+        return fmt::format("{} {} {} ({:+.0f} rating)", sign, def->icon,
+                           def->name, def->rating_delta);
+    }
+    std::string positive_line() const {
+        return award_line(positive_def(), '+');
+    }
+    std::string negative_line() const {
+        return award_line(negative_def(), '-');
+    }
+
+    // Sparkline step for a 0-1 value: absolute scale (rating / 999,
+    // attendees / 100), so equal values draw equal steps and a test
+    // day at ~500 rating always draws the same middle step. ASCII
+    // steps, not Unicode blocks: the UI font has no block glyphs
+    // (they draw nothing), while the rect bars under the text rows
+    // carry the bar-graph shape.
+    static const char* spark_block(float t) {
+        static constexpr const char* BLOCKS[] = {"_", ".", ":", "-",
+                                                 "=", "+", "*", "#"};
+        int idx = std::clamp(static_cast<int>(t * 8.f), 0, 7);
+        return BLOCKS[idx];
+    }
+
+    // "Rating: === (500 501 502)" — sparkline + the recorded values, so
+    // the row is both the graph and its own legend. "-" when no days
+    // have closed yet.
+    std::string history_rating_row() const {
+        if (history.empty()) return "Rating: -";
+        std::string spark, values;
+        for (const auto& d : history) {
+            spark += spark_block(d.rating / 999.f);
+            if (!values.empty()) values += " ";
+            values += std::to_string(d.rating);
+        }
+        return fmt::format("Rating: {} ({})", spark, values);
+    }
+    std::string history_guests_row() const {
+        if (history.empty()) return "Guests: -";
+        std::string spark, values;
+        for (const auto& d : history) {
+            spark += spark_block(d.attendees / 100.f);
+            if (!values.empty()) values += " ";
+            values += std::to_string(d.attendees);
+        }
+        return fmt::format("Guests: {} ({})", spark, values);
+    }
+};
 
 // ── Scenarios (RCT campaign goals) ───────────────────────────────────────
 // Data table: the single source for scenario metadata. Targets of 0 mean

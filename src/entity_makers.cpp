@@ -75,6 +75,9 @@ Entity& make_sophie() {
     sophie.addComponent<ParkRatingState>();
     EntityHelper::registerSingleton<ParkRatingState>(sophie);
 
+    sophie.addComponent<ParkAwardState>();
+    EntityHelper::registerSingleton<ParkAwardState>(sophie);
+
     sophie.addComponent<ScenarioState>();
     EntityHelper::registerSingleton<ScenarioState>(sophie);
 
@@ -355,6 +358,18 @@ void reset_game_state() {
         rating->last_day = 1;
         rating->last_death_count = 0;
         rating->last_injury_count = 0;
+    }
+
+    // Reset park awards + history: no held awards, no closed days.
+    if (auto* awards = EntityHelper::get_singleton_cmp<ParkAwardState>()) {
+        awards->positive_id = 0;
+        awards->negative_id = 0;
+        awards->last_award_day = 1;
+        awards->last_history_day = 1;
+        awards->deaths_at_last = 0;
+        awards->injuries_at_last = 0;
+        awards->peak_attendees_today = 0;
+        awards->history.clear();
     }
 }
 

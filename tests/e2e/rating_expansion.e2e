@@ -89,7 +89,9 @@ assert_death_count eq 0
 
 # --- Harm decays over days: death + 10 injuries (rating 350), then a
 # rollover halves the harm pool (150 -> 75). Inspection that day is C
-# (score 62), so no inspection bonus masks the recovery: target 425. ---
+# (score 62), so no inspection bonus masks the recovery — but the
+# death also earns the Danger Zone award (-35 rating while held),
+# so the target is 390 = 500 base + 0 (C) - 35 (Danger Zone) - 75 harm. ---
 reset_game
 set_spawn_enabled 0
 wait_frames 2
@@ -100,9 +102,10 @@ assert_park_rating eq 350
 set_day_number 2
 wait_frames 5
 assert_day_number eq 2
+assert_award negative danger_zone
 wait 10
-assert_park_rating gt 400
-assert_park_rating lt 450
+assert_park_rating gt 370
+assert_park_rating lt 410
 assert_park_rating_trend down
 
 # --- Trend up: high rating, roll over -> yesterday was 500 ---

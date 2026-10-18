@@ -45,6 +45,10 @@ bool repay_loan_all();
 // E2E-only: deduct the day's wages without the payroll quit-out, so a
 // test can drive cash negative via wages and exercise the crisis guard.
 void charge_wages_unchecked();
+// Park awards + park history (awards_systems.cpp): evaluated at each
+// day rollover, after the tycoon rating / finance systems so the
+// closed day's rating, inspection, and needs are already updated.
+void register_awards_systems(SystemManager& sm);
 void register_lineup_systems(SystemManager& sm);
 void register_staff_systems(SystemManager& sm);
 // Lineup booking (lineup_systems.cpp): book for the NEXT day, fee paid now.

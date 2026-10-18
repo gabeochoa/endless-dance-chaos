@@ -191,6 +191,22 @@ constexpr float CASH_CRISIS_RATING_PENALTY = 50.0f;
 // Finance history: the last N closed days of (income, expenses, profit).
 constexpr int FINANCE_HISTORY_MAX_DAYS = 7;
 
+// Park awards (RCT2-style, evaluated at each day rollover from the day
+// that just ended) + park history (last N closed days of rating /
+// attendees). Award thresholds are per-day: deaths/injuries are the
+// deltas since the last rollover, attendees are the day's live peak,
+// scenery is the fraction of playable tiles within
+// PARK_RATING_SCENERY_RADIUS of a Tree/Lamp (see
+// scenery_coverage_fraction in components.h).
+constexpr int PARK_HISTORY_MAX_DAYS = 14;
+constexpr int PARK_AWARD_SAFEST_MAX_INJURIES = 2;
+constexpr float PARK_AWARD_BEAUTIFUL_MIN_SCENERY = 0.25f;
+constexpr float PARK_AWARD_BEST_VALUE_MIN_RATING = 600.f;
+constexpr int PARK_AWARD_BEST_VALUE_MAX_PRICE = 20;
+constexpr int PARK_AWARD_CROWD_MIN_PEAK = 50;
+constexpr float PARK_AWARD_UNTIDY_MAX_SCENERY = 0.05f;
+constexpr float PARK_AWARD_UNTIDY_MIN_NEED_PRESSURE = 50.f;
+
 // Density & crush damage
 constexpr int MAX_AGENTS_PER_TILE = 40;
 constexpr float DENSITY_WARNING = 0.50f;    // 20 agents — yellow

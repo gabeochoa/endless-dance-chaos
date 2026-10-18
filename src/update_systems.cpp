@@ -303,6 +303,11 @@ void register_update_systems(SystemManager& sm) {
     // day's books include the payroll (see tycoon_systems.cpp).
     register_finance_systems(sm);
 
+    // Awards + park history: after finance, so the closed day's
+    // rating / needs are final when the award is evaluated and the
+    // history row is recorded.
+    register_awards_systems(sm);
+
     // Polish: hints, bottleneck detection, death markers
     register_polish_systems(sm);
 

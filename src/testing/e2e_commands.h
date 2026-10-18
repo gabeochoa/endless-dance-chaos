@@ -3066,6 +3066,126 @@ static void cmd_assert_park_rating_trend(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Park awards + park history ────────────────────────────────────────
+
+// assert_award positive|negative KEY — the held award in a slot must
+// be KEY (safest, most_beautiful, best_value, crowd_magnet, untidy,
+// danger_zone) or "none".
+static void cmd_assert_award(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_award requires positive|negative KEY");
+        return;
+    }
+    auto* awards = EntityHelper::get_singleton_cmp<ParkAwardState>();
+    int actual_id = 0;
+    if (awards) {
+        if (cmd.arg(0) == "positive")
+            actual_id = awards->positive_id;
+        else if (cmd.arg(0) == "negative")
+            actual_id = awards->negative_id;
+        else {
+            cmd.fail("assert_award requires positive|negative KEY");
+            return;
+        }
+    }
+    const ParkAwardDef* want = park_award_def_for_key(cmd.arg(1));
+    int want_id = want ? want->id : 0;
+    if (cmd.arg(1) != "none" && !want) {
+        cmd.fail(fmt::format("assert_award: unknown award '{}'", cmd.arg(1)));
+        return;
+    }
+    if (actual_id != want_id) {
+        const ParkAwardDef* actual = park_award_def_for_id(actual_id);
+        cmd.fail(fmt::format("assert_award failed: {} slot holds {}, wanted {}",
+                             cmd.arg(0), actual ? actual->key : "none",
+                             cmd.arg(1)));
+    } else {
+        cmd.consume();
+    }
+}
+
+// assert_award_bonus OP VALUE — the held awards' combined rating
+// term (sum of rating_delta), e.g. +25 with Safest alone.
+static void cmd_assert_award_bonus(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_award_bonus requires OP VALUE");
+        return;
+    }
+    auto* awards = EntityHelper::get_singleton_cmp<ParkAwardState>();
+    float actual = awards ? awards->award_bonus() : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(
+            fmt::format("assert_award_bonus failed: {:.2f} {} {:.2f} "
+                        "(actual: {:.2f})",
+                        actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_park_rating_target OP VALUE — the rating target, which
+// includes the held-award bonus as a term.
+static void cmd_assert_park_rating_target(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_park_rating_target requires OP VALUE");
+        return;
+    }
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    float actual = rating ? rating->target : 0.f;
+    if (!compare_op_f(actual, cmd.arg(0), cmd.arg_as<float>(1)))
+        cmd.fail(
+            fmt::format("assert_park_rating_target failed: {:.2f} {} "
+                        "{:.2f} (actual: {:.2f})",
+                        actual, cmd.arg(0), cmd.arg_as<float>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_park_history_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_park_history_count requires OP VALUE");
+        return;
+    }
+    auto* awards = EntityHelper::get_singleton_cmp<ParkAwardState>();
+    int actual = awards ? static_cast<int>(awards->history.size()) : 0;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format(
+            "assert_park_history_count failed: {} {} {} (actual: {})", actual,
+            cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// assert_park_history_day DAY RATING ATTENDEES — the closed day's row
+// must exist with exactly these attendees and a rating within ±20 of
+// RATING (the rating drifts toward its target during the day, so the
+// rollover snapshot is not an exact constant).
+static void cmd_assert_park_history_day(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(3)) {
+        cmd.fail("assert_park_history_day requires DAY RATING ATTENDEES");
+        return;
+    }
+    int day = cmd.arg_as<int>(0);
+    int want_rating = cmd.arg_as<int>(1);
+    int want_attendees = cmd.arg_as<int>(2);
+    auto* awards = EntityHelper::get_singleton_cmp<ParkAwardState>();
+    if (awards) {
+        for (const auto& row : awards->history) {
+            if (row.day != day) continue;
+            if (row.attendees == want_attendees &&
+                std::abs(row.rating - want_rating) <= 20) {
+                cmd.consume();
+                return;
+            }
+            cmd.fail(fmt::format(
+                "assert_park_history_day failed: Day {} is rating {} "
+                "attendees {}, wanted rating {}±20 / attendees {}",
+                day, row.rating, row.attendees, want_rating, want_attendees));
+            return;
+        }
+    }
+    cmd.fail(fmt::format("assert_park_history_day failed: no Day {} row", day));
+}
+
 static void cmd_assert_spawn_multiplier(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(2)) {
         cmd.fail("assert_spawn_multiplier requires OP VALUE");
@@ -4070,6 +4190,11 @@ static void init_e2e_registry() {
     r.add("set_park_rating", cmd_set_park_rating);
     r.add("assert_park_rating", cmd_assert_park_rating);
     r.add("assert_park_rating_trend", cmd_assert_park_rating_trend);
+    r.add("assert_award", cmd_assert_award);
+    r.add("assert_award_bonus", cmd_assert_award_bonus);
+    r.add("assert_park_rating_target", cmd_assert_park_rating_target);
+    r.add("assert_park_history_count", cmd_assert_park_history_count);
+    r.add("assert_park_history_day", cmd_assert_park_history_day);
     r.add("assert_spawn_multiplier", cmd_assert_spawn_multiplier);
     r.add("select_scenario", cmd_select_scenario);
     r.add("assert_scenario_id", cmd_assert_scenario_id);

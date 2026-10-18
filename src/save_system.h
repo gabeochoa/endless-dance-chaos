@@ -24,8 +24,11 @@ static constexpr uint32_t SAVE_MAGIC = 0xEDC10001;
 // block (the tile block itself stays byte-identical so v1-v4 files
 // still load, with heights defaulting to flat). v6 appends the
 // scenario state (active id, status, start baselines, peaks, B+
-// latch) after the v5 heights block. Increment on schema changes.
-static constexpr uint32_t SAVE_VERSION = 6;
+// latch) after the v5 heights block. v7 appends the park-award
+// state (held positive/negative ids, rollover bookkeeping, and the
+// park-history rows) after the v6 scenario block. Increment on
+// schema changes.
+static constexpr uint32_t SAVE_VERSION = 7;
 
 namespace detail {
 inline void write_int(std::ofstream& f, int v) {
@@ -357,6 +360,30 @@ inline bool save_game() {
         detail::write_u8(f, sc && sc->had_good_inspection ? 1 : 0);
     }
 
+    // ── v7 sections (appended after the v6 scenario block) ────────────────
+    // Park awards + park history: held ids, rollover bookkeeping,
+    // and the closed-day rows (rating + attendee peak per day).
+    {
+        auto* aw =
+            afterhours::EntityHelper::get_singleton_cmp<ParkAwardState>();
+        detail::write_int(f, aw ? aw->positive_id : 0);
+        detail::write_int(f, aw ? aw->negative_id : 0);
+        detail::write_int(f, aw ? aw->last_award_day : 1);
+        detail::write_int(f, aw ? aw->last_history_day : 1);
+        detail::write_int(f, aw ? aw->deaths_at_last : 0);
+        detail::write_int(f, aw ? aw->injuries_at_last : 0);
+        detail::write_int(f, aw ? aw->peak_attendees_today : 0);
+        int n = aw ? static_cast<int>(aw->history.size()) : 0;
+        detail::write_int(f, n);
+        if (aw) {
+            for (const auto& row : aw->history) {
+                detail::write_int(f, row.day);
+                detail::write_int(f, row.rating);
+                detail::write_int(f, row.attendees);
+            }
+        }
+    }
+
     return f.good();
 }
 
@@ -371,9 +398,10 @@ inline bool load_game() {
 
     uint32_t version = 0;
     f.read(reinterpret_cast<char*>(&version), sizeof(version));
-    // v1 files are a byte-identical prefix of v2/v3/v4/v5/v6: they load,
+    // v1 files are a byte-identical prefix of v2/v3/v4/v5/v6/v7: they load,
     // with the newer-only state (economy, bookings, staff, rating,
-    // heights, scenario, ...) left as-is. Anything else is rejected.
+    // heights, scenario, awards, ...) left as-is. Anything else is
+    // rejected.
     if (version < 1 || version > SAVE_VERSION) return false;
 
     // Grid tiles
@@ -784,6 +812,53 @@ inline bool load_game() {
             sc->peak_attendees = 0;
             sc->peak_rating = 0.f;
             sc->had_good_inspection = false;
+        }
+    }
+
+    // ── v7 sections (absent in v1-v6 files: pre-award saves carry no
+    // awards/history, so a load clears any awards from the current run
+    // instead of inheriting them) ──
+    if (version >= 7) {
+        int pos = 0, neg = 0, award_day = 1, hist_day = 1, deaths = 0,
+            injuries = 0, peak = 0, rows = 0;
+        detail::read_int(f, pos);
+        detail::read_int(f, neg);
+        detail::read_int(f, award_day);
+        detail::read_int(f, hist_day);
+        detail::read_int(f, deaths);
+        detail::read_int(f, injuries);
+        detail::read_int(f, peak);
+        detail::read_int(f, rows);
+        std::vector<ParkHistoryDay> history;
+        for (int i = 0; i < rows; i++) {
+            ParkHistoryDay row;
+            detail::read_int(f, row.day);
+            detail::read_int(f, row.rating);
+            detail::read_int(f, row.attendees);
+            history.push_back(row);
+        }
+        if (auto* aw =
+                afterhours::EntityHelper::get_singleton_cmp<ParkAwardState>()) {
+            aw->positive_id = pos;
+            aw->negative_id = neg;
+            aw->last_award_day = award_day;
+            aw->last_history_day = hist_day;
+            aw->deaths_at_last = deaths;
+            aw->injuries_at_last = injuries;
+            aw->peak_attendees_today = peak;
+            aw->history = history;
+        }
+    } else {
+        if (auto* aw =
+                afterhours::EntityHelper::get_singleton_cmp<ParkAwardState>()) {
+            aw->positive_id = 0;
+            aw->negative_id = 0;
+            aw->last_award_day = diff ? diff->day_number : 1;
+            aw->last_history_day = diff ? diff->day_number : 1;
+            aw->deaths_at_last = gs ? gs->death_count : 0;
+            aw->injuries_at_last = gs ? gs->injury_count : 0;
+            aw->peak_attendees_today = 0;
+            aw->history.clear();
         }
     }
 

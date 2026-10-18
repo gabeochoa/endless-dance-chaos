@@ -1,0 +1,124 @@
+# AWARDS + PARK HISTORY (RCT2-style): one positive + one negative
+# award held at a time, evaluated at each day rollover from the day
+# that just ended; held awards add their rating_delta to the
+# ParkRating target while held. Park history records one row per
+# closed day (rating at rollover + that day's live-attendee peak),
+# kept for the last 14 days, drawn in the Park tab as two sparkline
+# rows (Rating / Guests, ASCII steps + rect bars). Awards + history
+# persist across save/load (save v7).
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_award positive none
+assert_award negative none
+assert_award_bonus eq 0
+assert_park_history_count eq 0
+set_window_tab park
+wait_frames 2
+expect_text "Awards:"
+expect_text "Park History (last 14 days):"
+expect_text "Rating: -"
+expect_text "Guests: -"
+
+# --- Safest Park: a clean day (0 deaths, 0 injuries) ---
+# No attendees, so coverage/scenery are 0 and the target is exactly
+# 500 base + 60 (grade-A inspection) + 25 (Safest) = 585.
+set_day_number 2
+wait_frames 5
+assert_day_number eq 2
+assert_award positive safest
+assert_award negative none
+assert_award_bonus eq 25
+assert_park_rating_target eq 585
+expect_text "Safest Park"
+expect_text "+ * Safest Park (+25 rating)"
+assert_toast_contains "Safest Park"
+
+# --- Danger Zone: a death the next day ---
+# Positive slot keeps Safest (no new positive qualifies); negative
+# slot takes Danger Zone. Target: 500 + 60 (grade A, score 92) +
+# (25 - 35) award - 35 harm (70 halved at rollover) = 515.
+add_death_count 1
+wait_frames 2
+set_day_number 3
+wait_frames 5
+assert_day_number eq 3
+assert_award positive safest
+assert_award negative danger_zone
+assert_award_bonus eq -10
+assert_park_rating_target eq 515
+expect_text "Danger Zone"
+expect_text "- ! Danger Zone (-35 rating)"
+assert_toast_contains "Danger Zone"
+
+# --- Award replacement: Best Value replaces Safest the next day ---
+# Rating 650 at price $20 qualifies for Best Value, which is later
+# in the positive table than Safest, so it wins the slot. Negative
+# slot keeps Danger Zone (no new negative qualifies). Target:
+# 500 + 60 (grade A, no new deaths) + (20 - 35) award - 17.5 harm
+# (35 halved again) = 527.5.
+set_park_rating 650
+wait_frames 2
+set_day_number 4
+wait_frames 5
+assert_day_number eq 4
+assert_award positive best_value
+assert_award negative danger_zone
+assert_award_bonus eq -15
+assert_park_rating_target eq 527.5
+expect_text "Best Value"
+assert_toast_contains "Best Value"
+
+# --- Park history after 3 days: values recorded correctly ---
+# Day 1: rating ~500, 0 attendees. Day 2: rating ~435 (one death,
+# -70 instant hit, plus drift toward the target), 0 attendees.
+# Day 3: rating ~650 (set before rollover), 0 attendees. Rating
+# asserts allow ±20 drift toward the target during the day.
+assert_park_history_count eq 3
+assert_park_history_day 1 500 0
+assert_park_history_day 2 435 0
+assert_park_history_day 3 650 0
+expect_text "Park History (last 14 days):"
+expect_text "Rating:"
+expect_text "Guests:"
+
+# --- History attendees: the day's live-attendee peak, not the
+# closing count (spawned stage-watchers stay, peak = 3) ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+spawn_agents 25 25 3 stage
+wait_frames 2
+set_day_number 2
+wait_frames 5
+assert_park_history_count eq 1
+assert_park_history_day 1 500 3
+expect_text "Guests: _ (3)"
+
+# --- Save/load persists awards + history (save v7) ---
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+delete_save
+set_day_number 2
+wait_frames 5
+assert_award positive safest
+assert_award_bonus eq 25
+assert_park_history_count eq 1
+assert_park_history_day 1 500 0
+save_game
+assert_save_exists
+reset_game
+wait_frames 2
+assert_award positive none
+assert_award negative none
+assert_award_bonus eq 0
+assert_park_history_count eq 0
+load_game
+wait_frames 5
+assert_award positive safest
+assert_award_bonus eq 25
+assert_park_history_count eq 1
+assert_park_history_day 1 500 0
+expect_text "Safest Park"
+delete_save

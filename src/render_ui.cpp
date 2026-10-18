@@ -1209,6 +1209,15 @@ static void register_park_window_texts() {
     for (int i = 0; i < 3; i++)
         vtr.register_text(
             fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i])));
+    // Park page: held awards + park-history sparkline rows.
+    vtr.register_text("Awards:");
+    if (auto* aw = EntityHelper::get_singleton_cmp<ParkAwardState>()) {
+        vtr.register_text(aw->positive_line());
+        vtr.register_text(aw->negative_line());
+        vtr.register_text("Park History (last 14 days):");
+        vtr.register_text(aw->history_rating_row());
+        vtr.register_text(aw->history_guests_row());
+    }
     // Park page: scenario rows + live objective checklist.
     vtr.register_text("SCENARIOS");
     vtr.register_text("SELECT");
@@ -1287,6 +1296,44 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
     if (!scenario_deadline_text().empty())
         ui_draw_text(scenario_deadline_text(), x, 402, 12, Color{0, 0, 0, 255});
     ui_draw_text(scenario_status_text(), x, 416, 12, Color{0, 0, 0, 255});
+
+    // Awards + park history: held awards (icon + name + rating delta)
+    // then the 14-day history as two sparkline rows — a text row
+    // (blocks + recorded values) above a rect-bar row per metric.
+    if (auto* aw = EntityHelper::get_singleton_cmp<ParkAwardState>()) {
+        ui_draw_text("Awards:", x, 430, 14, Color{0, 0, 0, 255});
+        Color pos_col =
+            aw->positive_id != 0 ? Color{0, 140, 0, 255} : Color{0, 0, 0, 255};
+        // Rect icon (green = positive held, grey = none) + text line:
+        // the text icon glyph is ASCII, the rect is the visible icon.
+        draw_rect(x, 446, 10, 10, pos_col);
+        ui_draw_text(aw->positive_line(), x + 14, 444, 12, pos_col);
+        Color neg_col =
+            aw->negative_id != 0 ? Color{200, 0, 0, 255} : Color{0, 0, 0, 255};
+        draw_rect(x, 460, 10, 10, neg_col);
+        ui_draw_text(aw->negative_line(), x + 14, 458, 12, neg_col);
+        ui_draw_text("Park History (last 14 days):", x, 472, 12,
+                     Color{0, 0, 0, 255});
+        ui_draw_text(aw->history_rating_row(), x, 486, 11, Color{0, 0, 0, 255});
+        float rating_bar_bottom = 514.f;
+        for (size_t i = 0; i < aw->history.size(); i++) {
+            float bar_x = x + static_cast<float>(i) * 16.f;
+            float bar_h = 2.f + 12.f * std::clamp(aw->history[i].rating / 999.f,
+                                                  0.f, 1.f);
+            draw_rect(bar_x, rating_bar_bottom - bar_h, 12.f, bar_h,
+                      Color{0, 140, 0, 255});
+        }
+        ui_draw_text(aw->history_guests_row(), x, 518, 11, Color{0, 0, 0, 255});
+        float guests_bar_bottom = 546.f;
+        for (size_t i = 0; i < aw->history.size(); i++) {
+            float bar_x = x + static_cast<float>(i) * 16.f;
+            float bar_h =
+                2.f +
+                12.f * std::clamp(aw->history[i].attendees / 100.f, 0.f, 1.f);
+            draw_rect(bar_x, guests_bar_bottom - bar_h, 12.f, bar_h,
+                      Color{0, 100, 200, 255});
+        }
+    }
 }
 
 // Finances page: cash / ticket + price buttons / earned / spent /
