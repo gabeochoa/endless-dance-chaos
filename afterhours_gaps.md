@@ -113,3 +113,9 @@ includes both headers, and `make metal` links.
   pre-existing across multiple chunks (also flakes on stashed baseline builds).
   Suite-level result should be read as "94 pass modulo these two known flakes"
   until someone hardens them (e.g. wait-for-condition instead of fixed waits).
+- Runner gap (worked around app-side): custom `assert_*` commands fail on first
+  evaluation — only `expect_text` retries. Dance added opt-in `eventually_`
+  wrappers in its own e2e_commands.h. Upstream afterhours could offer a
+  retrying-assert helper so every app stops re-deriving this.
+- Fonts: neither game font contains U+2605 (star) — text glyphs must be checked
+  against font cmaps (see also mailboy em-dash -> '?').
