@@ -106,3 +106,10 @@ includes both headers, and `make metal` links.
   `std::optional`, `Margin` field order, `RoundedCorners` bit names,
   deleted `colors::to_hsl` / `to_rgb` / `get_highlighted`: the app uses
   none of these, so none of them break the build.
+
+## 2026-10-17 — e2e flake baseline note
+- `03_path_preference` and `33_exodus_watching` flake intermittently in full-suite
+  runs (timing-marginal asserts), pass standalone and in most runs. Verified
+  pre-existing across multiple chunks (also flakes on stashed baseline builds).
+  Suite-level result should be read as "94 pass modulo these two known flakes"
+  until someone hardens them (e.g. wait-for-condition instead of fixed waits).
