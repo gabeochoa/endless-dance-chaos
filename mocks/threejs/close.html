@@ -26,7 +26,7 @@ import * as THREE from 'three';
 const view='close';
 const r=new THREE.WebGLRenderer({antialias:false}); r.setSize(1280,720); document.body.appendChild(r.domElement);
 const scene=new THREE.Scene(); scene.background=new THREE.Color(0x79a85b);
-const d=17, cam=new THREE.OrthographicCamera(-d*16/9,d*16/9,d,-d,.1,200);
+const d=8, cam=new THREE.OrthographicCamera(-d*16/9,d*16/9,d,-d,.1,200);
 if(view==='close'){cam.position.set(14,13,14)} else {cam.position.set(26,24,26)}
 cam.lookAt(0,0,0); scene.add(new THREE.AmbientLight(0xffffff,.95));
 const dl=new THREE.DirectionalLight(0xfff2d8,.7); dl.position.set(10,20,6); scene.add(dl);

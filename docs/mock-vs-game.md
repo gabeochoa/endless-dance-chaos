@@ -22,3 +22,9 @@ Real-game capture: tests/e2e/screenshots/tycoon_02_built_festival.png.
    ticket/bar income (already have floating-text patterns in ticker/toasts).
 
 Next chunks: (1) iso projection pass, (2) peep bubbles, (3) window-framed panels.
+
+## Update 2026-10-17 (real mock renders)
+Mock PNGs rendered on devvm48270 (swiftshader-webgl; single-file bundles
+for capture, repo mocks stay modular). The iso grid, tabbed windows,
+ticker, thought bubbles and money floaters all read clearly at 1280x720 —
+gap ranking stands; iso projection remains #1.
