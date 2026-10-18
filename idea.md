@@ -240,7 +240,11 @@ It does not belong in the core game.
 
 A tycoon game: make as much money as possible running a music festival, but if you aren't careful people die and you get shut down; grow as big as possible. Inspired by RollerCoaster Tycoon, RimWorld and Prison Architect. Build the festival layout → crowds simulate → money flows → safety risk/shutdown. Favor afterhours systems.
 
-## Visual Reference: Car Park Capital (Gabe, 2026-10-17)
+## Visual Reference: RollerCoaster Tycoon 2 (Gabe, 2026-10-17 — primary; supersedes Car Park Capital)
+
+RCT2 look: classic 2:1 isometric (dimetric) tiles, fixed 4-way rotation, pixel-art sprites, limited slightly muted palette, terrain with height steps, tiny peeps with thought bubbles, footpaths/queue lines/scenery, floating title-bar windows with tabs (park info, finances, guests, staff, rides), bottom toolbar with cash/date/rating readout, money floaters. Style only — no RCT2 assets.
+
+Secondary vibe (superseded): Car Park Capital (Gabe, 2026-10-17)
 
 Not a repo — a Steam game (Hilko Janssen / MicroProse, Early Access Oct 9 2026): satirical parking-garage tycoon in a '90s Theme Park / RollerCoaster Tycoon / SimCity 2000 look. Use as the VISUAL north star for this game:
 - chunky late-'90s isometric/top-down pixel sim look
