@@ -1,0 +1,92 @@
+# Guest of Honor / VIP event tie-in, exercised through the new
+# eventually_ asserts (a plain assert_* would fail on first evaluation
+# for every timed condition below).
+#
+# VIP rules under test: a VIPVisit below tier 2 spawns no guest; at
+# tier 2+ one VIP arrives ~1s after the event fires; serving their
+# need pays +$250 bonus cash; an unserved VIP who runs out of
+# patience leaves unhappy (penalised, then gone); a VIP who collapses
+# unserved is penalised at collapse, not at death.
+# Cash baselines are normalised with set_cash AFTER any gate spawn
+# (a VIP spawning on a Gate tile pays the $20 ticket like any guest).
+#
+# Sequencing note: the runner dispatches commands on a fixed cadence
+# and does NOT wait for a pending eventually_ command before
+# dispatching the next one — a reset_game two lines later would wipe
+# the state the pending command is polling (this run proved it: an
+# early version of scenario B lost its VIP to scenario C's reset
+# before the 1s arrival delay elapsed). So each scenario ends with a
+# `wait` covering its longest eventually_ timeout; only then do the
+# plain asserts (and the next reset) run. The waits bound the
+# scenario, not the individual conditions — those are what the
+# eventually_ asserts prove.
+
+# --- Below tier 2: the event fires, but no VIP arrives ---
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+trigger_event vipvisit 30
+assert_event_active vipvisit
+wait 3
+assert_vip_count eq 0
+
+# --- At tier 2: arrival + service ---
+# (arrival delay 1s + ~8s pathed walk gate->food at 5x speed + 1s
+# service + walk back to watch the stage: every bound here is a
+# timed condition an instant assert would miss.)
+reset_game
+set_spawn_enabled 0
+set_agent_speed 5
+wait_frames 5
+add_arrivals 2000
+wait_frames 5
+assert_festival_tier eq 2
+set_cash 10000
+draw_path_rect 0 24 22 32
+trigger_event vipvisit 60
+# Concrete variants (timeout-last) + the generic form (timeout-first),
+# all on one VIP: arrival, reaching the Food tile, being served, then
+# walking back to watch the stage.
+eventually_assert_count gte 1 10
+eventually_assert_agents_on_tiletype food gte 1 30
+eventually_assert 30 assert_vip_served_count gte 1
+eventually_assert_agent_watching gte 1 20
+# Longest eventually_ timeout above is 30s: wait it out so all four
+# resolve before the plain asserts and the next reset run.
+wait 35
+# $10000 + $20 gate ticket on arrival + $250 VIP service bonus.
+assert_cash eq 10270
+assert_vip_count gte 1
+
+# --- Ignored VIP: patience runs out, leaves unhappy, no bonus ---
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+add_arrivals 2000
+wait_frames 5
+assert_festival_tier eq 2
+set_vip_patience 5
+spawn_vip 0 26 food
+set_cash 10000
+# No path: the VIP walks to Food on grass at 0.25 tiles/s and cannot
+# reach it before its 5s patience expires.
+eventually_assert 15 assert_vip_penalized_count gte 1
+eventually_assert 15 assert_vip_count eq 0
+wait 20
+assert_cash eq 10000
+
+# --- Ignored VIP: collapse while unserved penalises at collapse ---
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+add_arrivals 2000
+wait_frames 5
+assert_festival_tier eq 2
+set_vip_patience 60
+spawn_vip 0 26 heat
+set_cash 10000
+# Heat need with threshold-2s timer, far from the MedTent: collapses
+# in ~2s, long before rescue or patience could intervene.
+eventually_assert 10 assert_vip_penalized_count gte 1
+wait 12
+assert_cash eq 10000

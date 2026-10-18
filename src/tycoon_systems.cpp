@@ -253,6 +253,7 @@ struct ParkRatingSystem : System<> {
                 rating->yesterday_rating = rating->day_start_rating;
                 rating->day_start_rating = rating->rating;
                 rating->harm_pool *= PARK_RATING_HARM_DECAY_PER_DAY;
+                rating->vip_bonus_pool *= PARK_RATING_HARM_DECAY_PER_DAY;
             } else {
                 // Day went backwards (E2E set_day_number): resync flat.
                 rating->yesterday_rating = rating->rating;
@@ -385,9 +386,9 @@ struct ParkRatingSystem : System<> {
         float inspection =
             insp ? park_rating_inspection_bonus(insp->last_grade) : 0.f;
         rating->target =
-            std::clamp(PARK_RATING_BASE + coverage + scenery + inspection -
-                           rating->harm_pool - rating->need_pressure -
-                           rating->crowding_pressure,
+            std::clamp(PARK_RATING_BASE + coverage + scenery + inspection +
+                           rating->vip_bonus_pool - rating->harm_pool -
+                           rating->need_pressure - rating->crowding_pressure,
                        static_cast<float>(PARK_RATING_MIN),
                        static_cast<float>(PARK_RATING_MAX));
 

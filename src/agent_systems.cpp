@@ -9,6 +9,57 @@
 #include "systems.h"
 #include "update_helpers.h"
 
+// ── Guest of Honor / VIP hooks ──────────────────────────────────────────
+// Neglect penalty (collapse, or patience expiry): once-only, via the
+// `penalized` latch. Charged like death/injury harm — instant rating
+// drop plus the same amount in the harm pool (which holds the target
+// down and halves at each day rollover).
+static void apply_vip_neglect_penalty(VIPGuest& vip, const char* reason) {
+    if (vip.penalized) return;
+    vip.penalized = true;
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    if (rating) {
+        rating->harm_pool =
+            std::min(PARK_RATING_HARM_CAP,
+                     rating->harm_pool + VIP_NEGLECT_RATING_PENALTY);
+        rating->rating = std::clamp(rating->rating - VIP_NEGLECT_RATING_PENALTY,
+                                    static_cast<float>(PARK_RATING_MIN),
+                                    static_cast<float>(PARK_RATING_MAX));
+    }
+    spawn_toast(fmt::format("VIP guest {}! Park rating suffers.", reason));
+    log_info("[VIP] guest penalised: {}", reason);
+}
+
+// Service bonus: first completed service of a VIP's need pays flat
+// cash + rating. A penalised VIP (collapsed / walked out) never earns
+// it, even if later rescued and serviced.
+static void pay_vip_service_bonus(Entity& e, VIPGuest& vip,
+                                  FacilityType facility) {
+    if (vip.served || vip.penalized) return;
+    vip.served = true;
+    if (auto* econ = EntityHelper::get_singleton_cmp<Economy>())
+        econ->earn(VIP_SERVICE_BONUS_CASH);
+    auto* rating = EntityHelper::get_singleton_cmp<ParkRatingState>();
+    if (rating) {
+        rating->vip_bonus_pool =
+            std::min(VIP_BONUS_POOL_CAP,
+                     rating->vip_bonus_pool + VIP_SERVICE_BONUS_RATING);
+        rating->rating = std::clamp(rating->rating + VIP_SERVICE_BONUS_RATING,
+                                    static_cast<float>(PARK_RATING_MIN),
+                                    static_cast<float>(PARK_RATING_MAX));
+    }
+    if (!e.is_missing<Transform>()) {
+        auto& tf = e.get<Transform>();
+        spawn_money_floater(tf.position.x, tf.position.y,
+                            VIP_SERVICE_BONUS_CASH);
+    }
+    spawn_toast(
+        fmt::format("VIP delighted! +${} bonus.", VIP_SERVICE_BONUS_CASH));
+    log_info("[VIP] guest served at facility {}: +${} +{:.0f} rating",
+             static_cast<int>(facility), VIP_SERVICE_BONUS_CASH,
+             VIP_SERVICE_BONUS_RATING);
+}
+
 // Greedy neighbor pathfinding with pheromone weighting.
 // Pheromone reduces effective distance score, creating emergent trails.
 // When stuck behind an obstacle, takes a random lateral step to route around.
@@ -524,6 +575,13 @@ struct NeedTickSystem : System<Agent, AgentNeeds, Transform> {
             needs.heat_timer = needs.heat_threshold;  // clamp: one collapse
             if (e.is_missing<Collapsed>()) {
                 e.addComponent<Collapsed>();
+                // A VIP collapsing is neglect: the penalty lands now,
+                // not at death — a rescued VIP still cost rating. A
+                // VIP already served is a normal guest again: its
+                // later collapse is ordinary harm, not VIP neglect.
+                if (!e.is_missing<VIPGuest>() && !e.get<VIPGuest>().served)
+                    apply_vip_neglect_penalty(e.get<VIPGuest>(),
+                                              "collapsed from neglect");
                 auto* gs = EntityHelper::get_singleton_cmp<GameState>();
                 if (gs) gs->injury_count++;
                 if (collapse_toast_cooldown <= 0.f) {
@@ -547,6 +605,12 @@ struct UpdateAgentGoalSystem : System<Agent, AgentNeeds, Transform> {
         if (!e.is_missing<WatchingStage>()) return;
         if (!e.is_missing<Collapsed>()) return;
         if (!e.is_missing<RestingOnBench>()) return;  // rest runs its course
+        // A penalised VIP is leaving: keep want=Exit / the gate target
+        // VIPPatienceSystem set — do not retarget to a need or back
+        // to the stage.
+        if (!e.is_missing<VIPGuest>() && e.get<VIPGuest>().penalized &&
+            !e.get<VIPGuest>().served)
+            return;
 
         auto* grid = EntityHelper::get_singleton_cmp<Grid>();
         if (!grid) return;
@@ -903,6 +967,11 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
             if (bs.time_remaining <= 0.f) {
                 auto* gs = EntityHelper::get_singleton_cmp<GameState>();
                 if (gs) gs->total_agents_served++;
+                // VIP service: first completed service pays the bonus
+                // (penalised VIPs never earn it — see the helper).
+                if (!e.is_missing<VIPGuest>())
+                    pay_vip_service_bonus(e, e.get<VIPGuest>(),
+                                          bs.facility_type);
                 auto& rng = RandomEngine::get();
                 if (bs.facility_type == FacilityType::Bathroom) {
                     needs.needs_bathroom = false;
@@ -1001,6 +1070,46 @@ struct FacilityServiceSystem : System<Agent, AgentNeeds, Transform> {
     }
 };
 
+// VIP patience: an unserved VIP's patience drains in real seconds.
+// At zero the neglect penalty lands once and the VIP walks out through
+// the gate (UpdateAgentGoalSystem leaves a penalised VIP's Exit goal
+// alone; reaching a Gate tile here removes them — GateExitSystem only
+// runs during Exodus). Patience pauses while being serviced (the need
+// is being met) and stops entirely once served. A collapsed VIP has
+// already been penalised by NeedTickSystem, so it never leaves via
+// this path; rescue may still revive it.
+struct VIPPatienceSystem : System<Agent, VIPGuest, Transform> {
+    void for_each_with(Entity& e, Agent& agent, VIPGuest& vip, Transform& tf,
+                       float dt) override {
+        if (skip_game_logic()) return;
+        if (vip.served) return;
+        if (vip.penalized) {
+            auto* grid = EntityHelper::get_singleton_cmp<Grid>();
+            if (!grid) return;
+            auto [gx, gz] = grid->world_to_grid(tf.position.x, tf.position.y);
+            if (grid->in_bounds(gx, gz) &&
+                grid->at(gx, gz).type == TileType::Gate) {
+                log_info("[VIP] unhappy guest left through the gate");
+                e.cleanup = true;
+            }
+            return;
+        }
+        if (!e.is_missing<BeingServiced>()) return;
+        if (!e.is_missing<Collapsed>()) return;
+        vip.patience -= dt;
+        if (vip.patience > 0.f) return;
+        apply_vip_neglect_penalty(vip, "left unhappy");
+        agent.want = FacilityType::Exit;
+        agent.set_target(GATE_X, GATE_Z1);
+        if (!e.is_missing<WatchingStage>()) e.removeComponent<WatchingStage>();
+        if (!e.is_missing<QueuedForStage>())
+            e.removeComponent<QueuedForStage>();
+        if (!e.is_missing<RestingOnBench>())
+            e.removeComponent<RestingOnBench>();
+        agent.queue_admitted = false;
+    }
+};
+
 void register_agent_goal_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<NeedTickSystem>());
     // Queue first: promotions / slot advances land before the goal
@@ -1012,6 +1121,9 @@ void register_agent_goal_systems(SystemManager& sm) {
 void register_agent_movement_systems(SystemManager& sm) {
     // Bench rest first: a sitter must not move on the frame it sits.
     sm.register_update_system(std::make_unique<BenchRestSystem>());
+    // VIP patience before movement: a VIP whose patience just expired
+    // must walk toward the gate on this same frame.
+    sm.register_update_system(std::make_unique<VIPPatienceSystem>());
     sm.register_update_system(std::make_unique<AgentMovementSystem>());
     sm.register_update_system(std::make_unique<StageWatchingSystem>());
     sm.register_update_system(std::make_unique<FacilityServiceSystem>());

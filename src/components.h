@@ -634,6 +634,21 @@ struct PheromoneDepositor : afterhours::BaseComponent {
 // Tag: agent carried over from previous day (stuck after exodus)
 struct CarryoverAgent : afterhours::BaseComponent {};
 
+// Guest of Honor / VIP guest: one per VIPVisit, spawned at the gate
+// with a real need (food by default). Distinct gold body + star bubble
+// in the renderers (see render_world.cpp); the bonus / penalty hooks
+// live in agent_systems.cpp (service completion, collapse) and the
+// patience/leaving hook in VIPPatienceSystem there. `served` and
+// `penalized` are once-only latches: a VIP who collapsed and was then
+// rescued gets no bonus, and a VIP is never penalised twice.
+// Not save-persisted (like CarryoverAgent): a loaded game keeps the
+// agent, but it is no longer a VIP.
+struct VIPGuest : afterhours::BaseComponent {
+    bool served = false;
+    bool penalized = false;
+    float patience = VIP_PATIENCE_SECONDS;
+};
+
 // Attached while agent is being serviced inside a facility
 struct BeingServiced : afterhours::BaseComponent {
     int facility_grid_x = 0;
@@ -912,6 +927,12 @@ struct ParkRatingState : afterhours::BaseComponent {
     float rating = PARK_RATING_START;
     float target = PARK_RATING_START;
     float harm_pool = 0.f;
+    // Accumulated VIP service bonuses (see VIP_SERVICE_BONUS_RATING):
+    // added to the rating target like the inspection bonus, so a VIP
+    // bonus does not evaporate in seconds as the rating re-approaches
+    // its target. Halved at each day rollover, like the harm pool.
+    // Not save-persisted (like harm_pool).
+    float vip_bonus_pool = 0.f;
     float need_pressure = 0.f;
     float crowding_pressure = 0.f;
     float yesterday_rating = PARK_RATING_START;
@@ -1139,7 +1160,11 @@ inline constexpr EventDef EVENT_DEFS[] = {
     // Legacy: triggerable, never director-picked (weight 0).
     {EventType::PowerOutage, "poweroutage", "Power outage", 15.f, 30.f, 0,
      false},
-    {EventType::VIPVisit, "vipvisit", "VIP visit", 30.f, 60.f, 0, false},
+    // VIP visit: weight 3 = rare next to the weight-10 events, and the
+    // director only considers it at/above VIP_MIN_TIER (see
+    // director_pick_type), so the low-tier seeded director sequences
+    // pinned by events_save.e2e are unchanged.
+    {EventType::VIPVisit, "vipvisit", "VIP visit", 30.f, 60.f, 3, false},
 };
 
 inline const EventDef* event_def_for(EventType type) {
@@ -1168,6 +1193,10 @@ struct EventDirectorState : afterhours::BaseComponent {
     std::vector<int> fired_yesterday;  // EventType values from the prior day
     std::vector<std::string> announcement_queue;  // NEWS ticker + toasts
     std::string seed = "default_seed";
+    // Patience (seconds) each newly spawned VIP starts with. Game
+    // default VIP_PATIENCE_SECONDS; E2E `set_vip_patience` overrides
+    // it so a test need not wait out the full minute.
+    float vip_patience_seconds = VIP_PATIENCE_SECONDS;
 };
 
 // Difficulty scaling singleton

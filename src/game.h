@@ -197,6 +197,30 @@ constexpr float EVENT_VIRAL_EXPOSURE_SECONDS = 2.0f;
 constexpr float EVENT_EQUIPMENT_MIN_SECONDS = 60.0f;
 constexpr float EVENT_EQUIPMENT_MAX_SECONDS = 120.0f;
 
+// Guest of Honor / VIP visit: a single VIP guest arrives shortly after a
+// VIPVisit event fires, but only at/above this festival tier (tier 2 =
+// National, 2000 cumulative arrivals). Below it the event fires with no
+// guest — the park is not yet famous enough to draw one.
+constexpr int VIP_MIN_TIER = 2;
+// Announcement-to-arrival gap: the VIP walks in after the toast, so
+// arrival is a timed condition (and an `eventually_` assert target),
+// not a same-frame side effect of `trigger_event`.
+constexpr float VIP_ARRIVAL_DELAY_SECONDS = 1.0f;
+// How long an unserved VIP waits before leaving unhappy. Long enough
+// to walk a pathed route from the gate to a facility; short enough
+// that ignoring one is a real decision. Per-VIP state, seeded from
+// EventDirectorState::vip_patience_seconds (E2E `set_vip_patience`).
+constexpr float VIP_PATIENCE_SECONDS = 60.0f;
+// First service of a VIP's need: flat bonus, paid once per VIP.
+constexpr int VIP_SERVICE_BONUS_CASH = 250;
+constexpr float VIP_SERVICE_BONUS_RATING = 25.0f;
+// Neglect (collapse, or patience expiry): instant rating hit + the
+// same amount added to the harm pool, mirroring death/injury harm.
+constexpr float VIP_NEGLECT_RATING_PENALTY = 40.0f;
+// Cap on the accumulated VIP bonus pool (it halves each day, like
+// the harm pool, so the bonus cannot ratchet the rating up forever).
+constexpr float VIP_BONUS_POOL_CAP = 100.0f;
+
 // Version
 constexpr std::string_view VERSION = "0.0.1";
 

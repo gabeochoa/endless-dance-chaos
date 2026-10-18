@@ -7,6 +7,8 @@
 #define AFTER_HOURS_REPLACE_LOGGING
 #include "log.h"
 
+#include <chrono>
+
 #include "components.h"
 #include "entity_makers.h"
 #include "game.h"
@@ -3111,6 +3113,391 @@ static void cmd_assert_floater_count(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// ── Guest of Honor / VIP test hooks ───────────────────────────────────────
+
+// Give one agent a VIP need (same semantics as force_need: the flag is
+// set and the timer is at its threshold, so the goal system routes the
+// agent to that facility at once). Heat uses threshold - 2s, as in
+// force_need: ~2s from collapse if unserved.
+static bool vip_set_need(Entity& e, const std::string& need) {
+    if (e.is_missing<AgentNeeds>()) return false;
+    auto& needs = e.get<AgentNeeds>();
+    if (need == "bathroom") {
+        needs.needs_bathroom = true;
+        needs.bathroom_timer = needs.bathroom_threshold;
+    } else if (need == "food") {
+        needs.needs_food = true;
+        needs.food_timer = needs.food_threshold;
+    } else if (need == "bar") {
+        needs.needs_bar = true;
+        needs.bar_timer = needs.bar_threshold;
+    } else if (need == "heat") {
+        needs.needs_heat = true;
+        needs.heat_timer = needs.heat_threshold - 2.f;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// spawn_vip X Z [NEED] — spawn one VIP guest at (X, Z) with NEED
+// (food|bathroom|bar|heat, default food). Same ticket rule as
+// spawn_agent: a VIP spawned on a Gate tile pays the ticket. Patience
+// comes from EventDirectorState::vip_patience_seconds (see
+// set_vip_patience). Use this instead of trigger_event when the test
+// needs the VIP at a chosen spot (next to a facility, or far from
+// one); the event path (VIPArrivalSystem) always spawns at the gate.
+static void cmd_spawn_vip(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("spawn_vip requires X Z [NEED]");
+        return;
+    }
+    std::string need = cmd.has_args(3) ? cmd.arg(2) : "food";
+    std::transform(need.begin(), need.end(), need.begin(), ::tolower);
+    if (need != "food" && need != "bathroom" && need != "bar" &&
+        need != "heat") {
+        cmd.fail(fmt::format("spawn_vip: unknown need '{}'", cmd.arg(2)));
+        return;
+    }
+    int x = cmd.arg_as<int>(0), z = cmd.arg_as<int>(1);
+    Entity& e = make_agent(x, z, FacilityType::Stage, STAGE_X + STAGE_SIZE / 2,
+                           STAGE_Z + STAGE_SIZE / 2);
+    e.addComponent<VIPGuest>();
+    auto& vip = e.get<VIPGuest>();
+    if (auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>())
+        vip.patience = director->vip_patience_seconds;
+    vip_set_need(e, need);
+    EntityHelper::merge_entity_arrays();
+    cmd.consume();
+}
+
+// set_vip_patience SECONDS — patience for subsequently spawned VIPs
+// (event arrivals and spawn_vip read it at spawn time). Lets a test
+// exercise leaving-unhappy without waiting out the 60s game default.
+static void cmd_set_vip_patience(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_vip_patience requires SECONDS");
+        return;
+    }
+    float seconds = cmd.arg_as<float>(0);
+    if (seconds < 0.f) {
+        cmd.fail("set_vip_patience: SECONDS must be >= 0");
+        return;
+    }
+    auto* director = EntityHelper::get_singleton_cmp<EventDirectorState>();
+    if (!director) {
+        cmd.fail("set_vip_patience: no EventDirectorState");
+        return;
+    }
+    director->vip_patience_seconds = seconds;
+    cmd.consume();
+}
+
+static void cmd_assert_vip_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_vip_count requires OP VALUE");
+        return;
+    }
+    int actual =
+        (int) EntityQuery().whereHasComponent<Agent, VIPGuest>().gen_count();
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format("assert_vip_count failed: {} {} {} (actual: {})",
+                             actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_vip_served_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_vip_served_count requires OP VALUE");
+        return;
+    }
+    int actual = 0;
+    auto agents = EntityQuery().whereHasComponent<Agent, VIPGuest>().gen();
+    for (Entity& a : agents)
+        if (a.get<VIPGuest>().served) actual++;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(
+            fmt::format("assert_vip_served_count failed: {} {} {} (actual: {})",
+                        actual, cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_vip_penalized_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_vip_penalized_count requires OP VALUE");
+        return;
+    }
+    int actual = 0;
+    auto agents = EntityQuery().whereHasComponent<Agent, VIPGuest>().gen();
+    for (Entity& a : agents)
+        if (a.get<VIPGuest>().penalized) actual++;
+    if (!compare_op(actual, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format(
+            "assert_vip_penalized_count failed: {} {} {} (actual: {})", actual,
+            cmd.arg(0), cmd.arg_as<int>(1), actual));
+    else
+        cmd.consume();
+}
+
+// ── Eventually asserts ───────────────────────────────────────────────────
+//
+// Opt-in eventual versions of the `assert_*` commands. Every plain
+// `assert_*` handler calls `cmd.fail()` on its first failing evaluation,
+// so a plain assert can never wait for agents to arrive, a facility to
+// fill, or an event to fire — the script has to guess a `wait` long
+// enough for the slowest machine instead. The `eventually_*` commands
+// re-evaluate the same condition every frame until it holds or a
+// caller-supplied timeout (seconds) expires.
+//
+// Mechanism: the handler probes the wrapped assert on a *fresh*
+// PendingE2ECommand carrying only the inner args.
+// `PendingE2ECommand::fail()` is sticky — it flips the command's
+// private success flag to false with no way back — so probing the
+// live command would poison it on the first failure even if the
+// condition later held. The probe takes the failure; the live command
+// only ever `consume()`s (probe passed) or `retry()`s (probe not yet
+// passed), and only `fail()`s at the deadline or on a deterministic
+// usage error. This is why the wrapper is restricted to `assert_*`
+// handlers: they are read-only probes. Wrapping a side-effecting
+// command (spawn, place, set_*) would execute its effect once per
+// probe frame.
+//
+// Deadline: the vendor cleanup system fails any command still pending
+// after `PendingE2ECommand::MAX_FRAMES` (30) frames, so a retrying
+// command cannot outlive ~0.5s on `retry()` alone — `expect_text`
+// retries the same way and is subject to the same cap. Each retry here
+// therefore resets `cmd.frames_alive`, and the `eventually_*` handler
+// owns the deadline itself, measured in wall-clock seconds from the
+// first evaluation (stored in `cmd.seen_render`, the one per-command
+// slot the vendor leaves untouched for non-`expect_text` commands:
+// `expect_text` is the only family that reads it, and `eventually_*`
+// never wraps that family). No static per-command state: the deadline
+// lives on the command entity, so two `eventually_*` commands pending
+// at once cannot clobber each other's timers the way a
+// line-number-keyed static (the `drag_to` pattern) would.
+//
+// Forms:
+//   eventually_assert <timeout_seconds> <assert_name> <assert_args...>
+//   eventually_assert <assert_name> <assert_args...>   (default timeout)
+// A timeout-last generic form is deliberately NOT supported: the
+// generic wrapper does not know the inner assert's arity, so a trailing
+// number is ambiguous with the inner assert's own trailing argument
+// (most asserts end in a numeric VALUE). The concrete variants know
+// their arity, so they accept the timeout first, last, or omitted:
+//   eventually_assert_agent_count <op> <value> [timeout]
+//   eventually_assert_agent_watching <op> <value> [timeout]
+//   eventually_assert_agents_on_tiletype <type> <op> <count> [timeout]
+//   eventually_assert_count is an alias for
+//   eventually_assert_agent_count.
+
+static constexpr float EVENTUALLY_DEFAULT_TIMEOUT_SECONDS = 5.0f;
+
+// Strict float parse: the whole string must be one number (stoi/stof
+// alone accept "5x" as 5, which would silently misread an op or a
+// tiletype as a timeout).
+inline bool eventually_parse_float_strict(const std::string& s, float& out) {
+    if (s.empty()) return false;
+    try {
+        size_t used = 0;
+        float v = std::stof(s, &used);
+        if (used != s.size() || !std::isfinite(v)) return false;
+        out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Shared eventual machinery: probe the inner assert, consume on pass,
+// retry until the deadline, fail at the deadline (or immediately on a
+// deterministic usage error, so a typo does not burn the whole
+// timeout). The inner handler is looked up in the same registry the
+// dispatch system uses, so `eventually_assert` works for any
+// `assert_*` added later without touching this code.
+static void eventually_assert_impl(testing::PendingE2ECommand& cmd,
+                                   const std::string& inner_name,
+                                   const std::vector<std::string>& inner_args,
+                                   float timeout_seconds) {
+    auto& reg = get_registry();
+    auto it = reg.handlers.find(inner_name);
+    if (it == reg.handlers.end()) {
+        cmd.fail(
+            fmt::format("eventually_assert: unknown assert '{}'", inner_name));
+        return;
+    }
+    if (cmd.seen_render == -1) {
+        cmd.seen_render = static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+    // Fresh probe, not a copy: PendingE2ECommand is move-only
+    // (BaseComponent deletes the copy constructor), and a copy would
+    // also carry the live command's seen_render / frames_alive. The
+    // probe needs only the inner args; assert handlers read nothing
+    // else off the command.
+    testing::PendingE2ECommand probe;
+    probe.name = inner_name;
+    probe.args = inner_args;
+    it->second(probe);
+    if (probe.is_consumed() && probe.succeeded()) {
+        log_info("[E2E] {} {} PASSED (eventual)", cmd.name, inner_name);
+        cmd.consume();
+        return;
+    }
+    if (probe.is_consumed() && !probe.succeeded()) {
+        // Deterministic usage errors ("requires ...", "unknown ...")
+        // will never become true by waiting: fail fast instead of
+        // burning the timeout, and surface the inner message verbatim.
+        if (probe.error_message.find("requires") != std::string::npos ||
+            probe.error_message.find("unknown") != std::string::npos) {
+            cmd.fail(probe.error_message);
+            return;
+        }
+    }
+    double elapsed_seconds =
+        (static_cast<double>(
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+                 .count()) -
+         static_cast<double>(cmd.seen_render)) /
+        1000000.0;
+    if (elapsed_seconds >= timeout_seconds) {
+        std::string last =
+            probe.is_consumed() && !probe.succeeded() &&
+                    !probe.error_message.empty()
+                ? fmt::format(" last failure: {}", probe.error_message)
+                : " condition never became true";
+        cmd.fail(fmt::format(
+            "{}: {} timed out after {:.1f}s (timeout {:.1f}s).{}", cmd.name,
+            inner_name, elapsed_seconds, timeout_seconds, last));
+        return;
+    }
+    // The vendor cleanup fails a command still pending after 30 frames;
+    // this reset keeps a legitimately long wait alive until OUR
+    // deadline above fires.
+    cmd.frames_alive = 0;
+    cmd.retry();
+}
+
+// eventually_assert [TIMEOUT_SECONDS] ASSERT_NAME [ARGS...]
+static void cmd_eventually_assert(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail(
+            "eventually_assert requires [TIMEOUT_SECONDS] ASSERT_NAME "
+            "[ARGS...]");
+        return;
+    }
+    float timeout = EVENTUALLY_DEFAULT_TIMEOUT_SECONDS;
+    std::string inner_name;
+    std::vector<std::string> inner_args;
+    float first_num = 0.f;
+    if (cmd.has_args(2) &&
+        eventually_parse_float_strict(cmd.arg(0), first_num)) {
+        if (first_num <= 0.f) {
+            cmd.fail("eventually_assert: TIMEOUT_SECONDS must be > 0");
+            return;
+        }
+        timeout = first_num;
+        inner_name = cmd.arg(1);
+        inner_args.assign(cmd.args.begin() + 2, cmd.args.end());
+    } else {
+        inner_name = cmd.arg(0);
+        inner_args.assign(cmd.args.begin() + 1, cmd.args.end());
+    }
+    if (inner_name.rfind("assert_", 0) != 0) {
+        cmd.fail(fmt::format(
+            "eventually_assert: can only wrap assert_* commands, got '{}'",
+            inner_name));
+        return;
+    }
+    if (inner_name.rfind("eventually_", 0) == 0) {
+        cmd.fail(
+            "eventually_assert: nesting eventually_ asserts is not "
+            "supported");
+        return;
+    }
+    if (get_registry().handlers.find(inner_name) ==
+        get_registry().handlers.end()) {
+        cmd.fail(
+            fmt::format("eventually_assert: unknown assert '{}'", inner_name));
+        return;
+    }
+    eventually_assert_impl(cmd, inner_name, inner_args, timeout);
+}
+
+// Parse a concrete eventual variant: the base assert's args, plus an
+// optional timeout either first or last (both are unambiguous here
+// because the base arity is known: a leading number can only be the
+// timeout, since no base arg of these asserts is numeric-first).
+// Returns false after failing `cmd` on a malformed invocation.
+static bool eventually_concrete_args(testing::PendingE2ECommand& cmd,
+                                     size_t base_arity,
+                                     std::vector<std::string>& inner_args,
+                                     float& timeout_seconds) {
+    timeout_seconds = EVENTUALLY_DEFAULT_TIMEOUT_SECONDS;
+    if (cmd.args.size() == base_arity) {
+        inner_args = cmd.args;
+        return true;
+    }
+    if (cmd.args.size() == base_arity + 1) {
+        float first_num = 0.f;
+        if (eventually_parse_float_strict(cmd.arg(0), first_num)) {
+            if (first_num <= 0.f) {
+                cmd.fail("eventually_assert: TIMEOUT_SECONDS must be > 0");
+                return false;
+            }
+            timeout_seconds = first_num;
+            inner_args.assign(cmd.args.begin() + 1, cmd.args.end());
+            return true;
+        }
+        float last_num = 0.f;
+        if (!eventually_parse_float_strict(cmd.arg(cmd.args.size() - 1),
+                                           last_num) ||
+            last_num <= 0.f) {
+            cmd.fail(fmt::format(
+                "eventually_assert: trailing timeout must be a positive "
+                "number, got '{}'",
+                cmd.arg(cmd.args.size() - 1)));
+            return false;
+        }
+        timeout_seconds = last_num;
+        inner_args.assign(cmd.args.begin(), cmd.args.end() - 1);
+        return true;
+    }
+    cmd.fail(fmt::format(
+        "eventually_assert: expected {} assert arg(s) plus an optional "
+        "timeout, got {} arg(s)",
+        base_arity, cmd.args.size()));
+    return false;
+}
+
+static void cmd_eventually_assert_agent_count(testing::PendingE2ECommand& cmd) {
+    std::vector<std::string> inner_args;
+    float timeout = EVENTUALLY_DEFAULT_TIMEOUT_SECONDS;
+    if (!eventually_concrete_args(cmd, 2, inner_args, timeout)) return;
+    eventually_assert_impl(cmd, "assert_agent_count", inner_args, timeout);
+}
+
+static void cmd_eventually_assert_agent_watching(
+    testing::PendingE2ECommand& cmd) {
+    std::vector<std::string> inner_args;
+    float timeout = EVENTUALLY_DEFAULT_TIMEOUT_SECONDS;
+    if (!eventually_concrete_args(cmd, 2, inner_args, timeout)) return;
+    eventually_assert_impl(cmd, "assert_agent_watching", inner_args, timeout);
+}
+
+static void cmd_eventually_assert_agents_on_tiletype(
+    testing::PendingE2ECommand& cmd) {
+    std::vector<std::string> inner_args;
+    float timeout = EVENTUALLY_DEFAULT_TIMEOUT_SECONDS;
+    if (!eventually_concrete_args(cmd, 3, inner_args, timeout)) return;
+    eventually_assert_impl(cmd, "assert_agents_on_tiletype", inner_args,
+                           timeout);
+}
+
 // ── Registration ─────────────────────────────────────────────────────────
 
 static void init_e2e_registry() {
@@ -3266,6 +3653,18 @@ static void init_e2e_registry() {
     r.add("assert_top_thought", cmd_assert_top_thought);
     r.add("assert_thought_count", cmd_assert_thought_count);
     r.add("set_watch_capacity", cmd_set_watch_capacity);
+    r.add("eventually_assert", cmd_eventually_assert);
+    r.add("eventually_assert_agent_count", cmd_eventually_assert_agent_count);
+    r.add("eventually_assert_count", cmd_eventually_assert_agent_count);
+    r.add("eventually_assert_agent_watching",
+          cmd_eventually_assert_agent_watching);
+    r.add("eventually_assert_agents_on_tiletype",
+          cmd_eventually_assert_agents_on_tiletype);
+    r.add("spawn_vip", cmd_spawn_vip);
+    r.add("set_vip_patience", cmd_set_vip_patience);
+    r.add("assert_vip_count", cmd_assert_vip_count);
+    r.add("assert_vip_served_count", cmd_assert_vip_served_count);
+    r.add("assert_vip_penalized_count", cmd_assert_vip_penalized_count);
 }
 
 void register_e2e_systems(SystemManager& sm) {

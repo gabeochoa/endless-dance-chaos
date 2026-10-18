@@ -1,0 +1,12 @@
+# NEGATIVE CONTROL for eventually_ (expected-failure script).
+# The runner treats a `fail_` prefix as expected-to-fail: this script
+# PASSES the batch only if the command below actually FAILS. The
+# condition can never become true (spawning is off, no agents), so a
+# correct eventually_ implementation fails it after the 2s timeout.
+# If the timeout path silently consumed instead of failing, this
+# script would (incorrectly) pass its assertion and the batch would
+# report this script as FAILED — that is the control firing.
+reset_game
+set_spawn_enabled 0
+wait_frames 5
+eventually_assert 2 assert_agent_count gte 1

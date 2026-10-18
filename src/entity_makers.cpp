@@ -323,6 +323,7 @@ void reset_game_state() {
         rating->rating = PARK_RATING_START;
         rating->target = PARK_RATING_START;
         rating->harm_pool = 0.f;
+        rating->vip_bonus_pool = 0.f;
         rating->need_pressure = 0.f;
         rating->crowding_pressure = 0.f;
         rating->yesterday_rating = PARK_RATING_START;

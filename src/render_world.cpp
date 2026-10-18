@@ -236,6 +236,7 @@ struct IsoPeep {
     Color pip{255, 255, 255, 255};
     const char* glyph = nullptr;  // thought-bubble glyph, or nullptr
     bool is_staff = false;
+    bool is_vip = false;  // gold body + star bubble, not a need glyph
 };
 
 struct IsoPoint {
@@ -416,6 +417,10 @@ struct RenderIsoSystem : System<> {
                 Color body =
                     AGENT_SHIRT_PALETTE[hash_agent_color(eid, agent.color_idx) %
                                         8];
+                // VIP guests wear gold, off-palette, so they read at a
+                // glance even in a crowd.
+                bool is_vip = !e.is_missing<VIPGuest>();
+                if (is_vip) body = Color{255, 215, 0, 255};
                 float bob = 0.f;
                 if (!e.is_missing<WatchingStage>()) {
                     auto& ws = e.get<WatchingStage>();
@@ -437,9 +442,12 @@ struct RenderIsoSystem : System<> {
                 int desire_idx = static_cast<int>(agent.want);
                 int ref = static_cast<int>(peeps.size());
                 peeps.push_back({wx, wz, bob, body, DESIRE_COLORS[desire_idx],
-                                 glyph, false});
+                                 glyph, false, is_vip});
                 items.push_back({wx + wz, 3, 3, 0, 0, {}, 0, ref});
-                if (glyph) items.push_back({wx + wz, 4, 4, 0, 0, {}, 0, ref});
+                // VIPs always get their star bubble; other agents only
+                // get a bubble for an urgent need.
+                if (glyph || is_vip)
+                    items.push_back({wx + wz, 4, 4, 0, 0, {}, 0, ref});
             }
         }
 
@@ -546,9 +554,15 @@ struct RenderIsoSystem : System<> {
                 }
                 case 4: {
                     const IsoPeep& p = peeps[it.ref];
-                    if (!p.glyph) break;
+                    if (!p.glyph && !p.is_vip) break;
                     vec2 s = cam.iso_project(p.wx, p.wz);
-                    draw_iso_bubble(s.x, s.y - p.bob * th, tw, th, p.glyph);
+                    // The star bubble wins over the need glyph: a VIP's
+                    // identity is the signal; their need still shows
+                    // in the gold body + desire pip.
+                    if (p.is_vip)
+                        draw_iso_star_bubble(s.x, s.y - p.bob * th, tw, th);
+                    else
+                        draw_iso_bubble(s.x, s.y - p.bob * th, tw, th, p.glyph);
                     break;
                 }
                 case 5: {
@@ -619,6 +633,43 @@ struct RenderIsoSystem : System<> {
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         vtr.register_text_if_visible(
             glyph, bx, by, bw, bh, DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
+    }
+
+    // VIP star bubble: same white bubble + tail as the text bubble,
+    // but the content is a gold 5-point star drawn as a triangle fan.
+    // It cannot be a text glyph: neither game font (Exo2-Bold,
+    // Fredoka) contains U+2605 ★, so a "★" string would render as
+    // tofu. The star is the VIP marker; the need glyph is suppressed
+    // for VIPs (see the kind-4 draw branch).
+    static void draw_iso_star_bubble(float sx, float sy, float tw, float th) {
+        if (tw < 24.0f) return;  // too small to read when zoomed out
+        float body_h = std::max(5.0f, th * 0.62f);
+        float head_r = std::max(2.0f, tw * 0.07f);
+        float bw = 26.0f;
+        float bh = 20.0f;
+        float by = sy - body_h - head_r * 2.0f - bh - 6.0f;
+        draw_ellipse(static_cast<int>(sx), static_cast<int>(by + bh * 0.5f),
+                     bw * 0.5f, bh * 0.5f, Color{255, 255, 255, 255});
+        vec2 tail_top{sx - 2.0f, by + bh - 2.0f};
+        vec2 tail_tip{sx, by + bh + 4.0f};
+        vec2 tail_right{sx + 4.0f, by + bh - 2.0f};
+        vec2 tail_mid{sx + 1.0f, by + bh - 1.0f};
+        iso_draw_poly4(tail_top, tail_tip, tail_right, tail_mid,
+                       Color{255, 255, 255, 255});
+        float cx = sx;
+        float cy = by + bh * 0.5f;
+        float outer = bh * 0.38f;
+        float inner = outer * 0.45f;
+        vec2 pts[10];
+        for (int i = 0; i < 10; i++) {
+            float r = (i % 2 == 0) ? outer : inner;
+            float a = -static_cast<float>(M_PI) / 2.0f +
+                      static_cast<float>(i) * static_cast<float>(M_PI) / 5.0f;
+            pts[i] = {cx + std::cos(a) * r, cy + std::sin(a) * r};
+        }
+        for (int i = 0; i < 10; i++)
+            draw_triangle({cx, cy}, pts[i], pts[(i + 1) % 10],
+                          Color{255, 215, 0, 255});
     }
 };
 
@@ -824,6 +875,11 @@ struct RenderAgentsSystem : System<> {
 
             Color body_col =
                 AGENT_SHIRT_PALETTE[hash_agent_color(eid, agent.color_idx) % 8];
+            // VIP guests wear gold in the top-down pass too (no
+            // thought bubbles there, so the gold body + gold pip are
+            // the whole signal).
+            bool is_vip_3d = !e.is_missing<VIPGuest>();
+            if (is_vip_3d) body_col = Color{255, 215, 0, 255};
 
             float bob_y = 0.0f;
             if (!e.is_missing<WatchingStage>()) {
@@ -852,6 +908,7 @@ struct RenderAgentsSystem : System<> {
 
             int desire_idx = static_cast<int>(agent.want);
             Color pip_col = DESIRE_COLORS[desire_idx];
+            if (is_vip_3d) pip_col = Color{255, 215, 0, 255};
             float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
             draw_cube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
         }

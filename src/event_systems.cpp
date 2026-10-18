@@ -16,6 +16,7 @@
 #include "afterhours/src/core/entity_query.h"
 #include "components.h"
 #include "engine/random_engine.h"
+#include "entity_makers.h"
 #include "systems.h"
 #include "update_helpers.h"
 
@@ -170,6 +171,7 @@ static void reset_director_singleton() {
     director->fired_today.clear();
     director->fired_yesterday.clear();
     director->announcement_queue.clear();
+    director->vip_patience_seconds = VIP_PATIENCE_SECONDS;
 }
 
 void reset_event_director() {
@@ -321,6 +323,14 @@ static bool director_pick_type(const EventDirectorState& director,
     std::vector<const EventDef*> eligible;
     for (const auto& def : EVENT_DEFS) {
         if (def.weight <= 0) continue;
+        // VIP visits are high-tier only: below VIP_MIN_TIER the park
+        // is not famous enough to draw one, so the event stays out
+        // of the eligible set (and out of the weight total — low-tier
+        // director sequences are unchanged).
+        if (def.type == EventType::VIPVisit) {
+            auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+            if (!lineup || lineup->tier < VIP_MIN_TIER) continue;
+        }
         int v = static_cast<int>(def.type);
         if (std::find(director.fired_yesterday.begin(),
                       director.fired_yesterday.end(),
@@ -415,9 +425,68 @@ struct EventDirectorSystem : System<> {
     }
 };
 
+// VIP arrival: while a VIPVisit event is active, one VIP guest walks
+// in after VIP_ARRIVAL_DELAY_SECONDS — but only at/above VIP_MIN_TIER,
+// and only if no VIP is already in the park (a second firing while
+// one is present does not stack guests). A VIPVisit fired below the
+// tier still announces and still counts as a fired event; it just
+// spawns no guest. The delay is deliberate: the toast announces the
+// visit first, and arrival itself is a timed condition.
+struct VIPArrivalSystem : System<> {
+    float timer = 0.f;
+
+    void once(float dt) override {
+        if (skip_game_logic()) return;
+        // One guest per event: ActiveEvent::notified is this event's
+        // already-spawned latch (it had no other reader). A VIP who
+        // leaves unhappy mid-event is NOT replaced.
+        Entity* vip_event = nullptr;
+        auto events = EntityQuery().whereHasComponent<ActiveEvent>().gen();
+        for (Entity& ev : events) {
+            auto& act = ev.get<ActiveEvent>();
+            if (act.type == EventType::VIPVisit && !act.notified) {
+                vip_event = &ev;
+                break;
+            }
+        }
+        if (!vip_event) {
+            timer = 0.f;
+            return;
+        }
+        timer += dt;
+        if (timer < VIP_ARRIVAL_DELAY_SECONDS) return;
+        if (EntityQuery().whereHasComponent<VIPGuest>().gen_count() > 0) return;
+        auto* lineup = EntityHelper::get_singleton_cmp<LineupState>();
+        if (!lineup || lineup->tier < VIP_MIN_TIER) return;
+        vip_event->get<ActiveEvent>().notified = true;
+        timer = 0.f;
+        // Arrive through the gate like any other guest (pays the
+        // ticket via make_agent), then walk to their need.
+        auto [sx, sz] = best_stage_spot(SPAWN_X, SPAWN_Z);
+        Entity& vip = make_agent(SPAWN_X, SPAWN_Z, FacilityType::Stage, sx, sz);
+        vip.addComponent<VIPGuest>();
+        auto& guest = vip.get<VIPGuest>();
+        if (auto* director =
+                EntityHelper::get_singleton_cmp<EventDirectorState>())
+            guest.patience = director->vip_patience_seconds;
+        if (!vip.is_missing<AgentNeeds>()) {
+            auto& needs = vip.get<AgentNeeds>();
+            needs.needs_food = true;
+            needs.food_timer = needs.food_threshold;
+        }
+        EntityHelper::merge_entity_arrays();
+        spawn_toast(
+            "A VIP guest has arrived! Serve them quickly for a "
+            "bonus.",
+            5.0f);
+        log_info("[Event] VIP guest arrived (tier {})", lineup->tier);
+    }
+};
+
 void register_event_effect_systems(SystemManager& sm) {
     sm.register_update_system(std::make_unique<ApplyEventEffectsSystem>());
     sm.register_update_system(std::make_unique<ViralSpreadSystem>());
+    sm.register_update_system(std::make_unique<VIPArrivalSystem>());
 }
 
 void register_event_random_systems(SystemManager& sm) {
