@@ -1,0 +1,24 @@
+# Mock vs Game — endless dance chaos (2026-10-17)
+
+Target: RCT2 style (Gabe correction) — `mocks/threejs/index.html` (#iso,
+`close.html`): 2:1 isometric, floating tabbed windows, bottom toolbar,
+money floaters, peeps with thought bubbles, height steps.
+Mock PNGs blocked in the boulder sandbox (bootstrap_check_in 1100).
+Real-game capture: tests/e2e/screenshots/tycoon_02_built_festival.png.
+
+## Ranked gaps (impact order)
+1. **Projection**: game is flat top-down; RCT2 target is 2:1 isometric with
+   4-way rotation. Biggest single change: iso tile rendering of the existing
+   grid (data is already tile-based), fixed rotations.
+2. **Peeps**: game agents are colored cubes with pips; target has tiny readable
+   peeps + thought bubbles (needs). Add bubble icons over agents with urgent
+   needs + slightly articulated sprites (head/body).
+3. **Windows UI**: game HUD is bars; target is floating tabbed windows (Park /
+   Finances / Guests / Staff / Lineup). Reframe sidebar panels as RCT2 windows
+   with title bars + tabs.
+4. **Terrain & scenery**: target has height steps, path/queue variety, scenery.
+   Add height to expansion plots + decorative scenery placeables.
+5. **Money floaters**: target pops +$20 over earners. Add floating cash text on
+   ticket/bar income (already have floating-text patterns in ticker/toasts).
+
+Next chunks: (1) iso projection pass, (2) peep bubbles, (3) window-framed panels.
