@@ -1,5 +1,44 @@
 # afterhours gaps / limitations
 
+## 2026-10-18 — fmt 8.0.1 -> 11.2.0 re-vendor: afterhours does NOT vendor fmt
+- Afterhours itself vendors no copy of fmt: there is no `vendor/fmt` under
+  `vendor/afterhours`. Its headers include `<fmt/...>` / `"fmt/format.h"`
+  and rely on the HOST to supply fmt headers. Dance supplies them from
+  `vendor/fmt/` via `-Ivendor/`; afterhours' own tests/examples Makefiles
+  instead point at the Homebrew include dir. So afterhours is affected
+  by the host's fmt version, not by any copy it controls.
+- Afterhours' fmt usage is unaffected by the 8 -> 11 jump: `fmt::format`
+  (~66 sites in `vendor/afterhours/src`), plus `translation.h`'s
+  `fmt::vformat` + `fmt::dynamic_format_arg_store<fmt::format_context>` +
+  `fmt::arg`. All still exist in fmt 11.2.0. Verified compiling clean:
+  full dance build on Apple clang 17, and `src/render_ui.cpp` (heaviest
+  TU, `log.h`-first) plus `vendor/afterhours/src/plugins/settings.cpp`
+  (which pulls in the fmt-using UI headers) on Homebrew clang 21.1.8.
+  No afterhours edits were needed (and none were made). No dance
+  call-site fixes were needed either: dance uses only `fmt::format`,
+  `fmt::vformat`, `fmt::make_format_args`, `fmt::print`,
+  `fmt::string_view`, `fmt::format_args` (in `src/log/log.h`), and
+  nothing includes the deleted `fmt/locale.h` (a deprecated shim in 8).
+- Latent gap (not fixed; do not edit `vendor/afterhours`): afterhours
+  headers include fmt BEFORE any std header (`translation.h:3-4`
+  includes `<fmt/args.h>` / `<fmt/format.h>` first). fmt 11.2's
+  `format.h` uses unqualified `::malloc` / `::free` without including
+  `<cstdlib>`, so a bare TU that instantiates fmt without a later
+  `<cstdlib>` / `<iostream>` fails on clang 21 (reproduced:
+  `format.h:747` / `format.h:752`, `malloc` / `free` undeclared).
+  Dance is safe because every fmt-instantiating TU reaches `<iostream>`
+  via `log/log.h` (included from `src/log.h` right after fmt) before
+  any instantiation point. Afterhours standalone TUs that include
+  `translation.h` first and instantiate fmt with no later `<cstdlib>`
+  would break on newer toolchains. Upstream fix would be `<cstdlib>`
+  before fmt in `translation.h` (or fmt upstream including `<cstdlib>`
+  in `format.h`).
+- Unrelated observation from the same clang 21 probe: `settings.cpp`
+  emits deprecated-literal-operator warnings from `vendor/nlohmann/json.hpp`
+  (`operator"" _json`), not from fmt. Pre-existing, different vendor lib,
+  left alone.
+
+
 Found while bumping `vendor/afterhours` from `a2f125d` to `d1d7f0e`.
 File references are inside `vendor/afterhours`. Nothing in this file is a
 reason to stay on the old submodule; the app-side fixes are in the working
