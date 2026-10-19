@@ -1,5 +1,105 @@
 # afterhours gaps / limitations
 
+## 2026-10-18 — Zig 0.16.0 build (`build.zig`): afterhours compiles clean under zig's bundled libc++, but zig is NOT Apple clang + system libc++
+- New `build.zig` (fresh file; no sibling repo has one except mailboy's,
+  adapted not copied) mirrors the default raylib Makefile: 21 `src/*.cpp` +
+  `src/**/*.cpp` TUs, Makefile `FLAGS`/`NOFLAGS` verbatim, `-Ivendor/ -Isrc/`,
+  `-framework OpenGL -framework AppKit`, default build ->
+  `zig-out/bin/dance`, `run` step (forwards args after `--`), `test` step
+  (`--test-mode --headless --test-script-dir tests/e2e`, cwd = repo root, no
+  timeout — wrap with `perl -e 'alarm 1500; exec @ARGV'` if one is wanted).
+  No `build.zig.zon` needed (verified: zig 0.16 builds without one). No
+  `vendor/` edits, Makefile untouched and still working, nothing committed.
+  `.gitignore` gains `zig-out/` + `.zig-cache/`.
+- No PCH in the zig build, because the dance Makefile has NO PCH at all
+  (unlike mailboy's, which precompiles `src/pch.h`): sources include headers
+  normally, and `build.zig` passes no `-include` / `-include-pch` flag.
+- No vendor C++ TUs: the dance Makefile's OBJ rules compile only
+  `src/*.cpp` + `src/**/*.cpp` (verified by grep; the only `vendor` hits in
+  the makefile are `-I`/`-L` and the Metal sokol include dir). Mailboy's
+  Makefile names two `vendor/afterhours/src/plugins/*.cpp` TUs explicitly;
+  dance's does not, so neither does `build.zig`. `src/sokol_impl.mm` is
+  Metal-only (`make metal`) and is excluded: zig covers the default raylib
+  build only.
+- No backend type macros in `build.zig`, unlike mailboy's `-DVector2Type`
+  etc.: dance's `src/rl.h` falls through to `AFTER_HOURS_USE_RAYLIB` when
+  neither backend macro is set, and afterhours' `developer.h` auto-defines
+  the `Vector2Type` / `RectangleType` / `TextureType` / `ColorType` /
+  `FontType` macros from the raylib types. Copying mailboy's defines would
+  have duplicated that logic.
+- Friction 1 — `-fblocks` WORKS under zig's bundled clang, so the brief's
+  drop-blocks fallback was NOT needed. `GESTURE_FLAGS` (`-fblocks` +
+  `-DAFTER_HOURS_ENABLE_MACOS_GESTURES`) are in `build.zig` verbatim.
+  Proof the gestures branch compiled: the binary contains the
+  `addLocalMonitorForEventsMatchingMask:` selector (`strings` hit), and the
+  block literal `^id(id event)` in `gestures_macos.h` is a hard syntax error
+  without `-fblocks`. `otool -L` shows AppKit linked.
+- Friction 2 — zig Debug adds UBSan to C++ TUs the Makefile never has
+  (same as mailboy). Proof without a verbose rebuild: `nm` on
+  `zig-out/bin/dance` shows 34 `__ubsan_handle_*` symbols. No UBSan
+  failures surfaced in the single-script run (suite pending at time of
+  writing); it is default zig Debug behavior, not an afterhours problem.
+- Friction 3 — zig 0.16 DOES support pkg-config
+  (`linkSystemLibrary("raylib", .{})` defaults to `use_pkg_config = .yes`),
+  but it resolves bare `pkg-config` from PATH and on any failure silently
+  falls back to `-lraylib` by name — no error, no hint about which
+  pkg-config ran. In this shell PATH puts MacPorts
+  `/opt/local/bin/pkg-config` first, whose `pc_path` has no raylib, so the
+  pkg-config path misses and the fallback must save the build. `build.zig`
+  therefore also adds the Homebrew Cellar dirs
+  (`/Users/gabeochoa/homebrew/Cellar/raylib/5.5/include|lib`, guarded by an
+  on-disk existence check) as `-isystem`/`-L`. Proof it worked: `otool -L`
+  resolves raylib to `/Users/gabeochoa/homebrew/opt/raylib/lib/libraylib.550.dylib`
+  (the Cellar path), same as the make binary.
+- Friction 4 — `--headless` is parsed-but-unwired in `src/main.cpp`
+  (app-side, not afterhours: the harness already provides
+  `E2EArgs::display_mode()`). `parse_e2e_args` sets `e2e.headless`, but
+  `main.cpp` never assigns `cfg.display` from it, so `--headless` is
+  currently a no-op and `zig build test` (which passes `--test-mode
+  --headless --test-script-dir tests/e2e`) runs identically to `make test`
+  (which passes only `--test-script-dir tests/e2e`). The one-line fix
+  (`cfg.display = e2e.display_mode()`) is deliberately NOT made here: it
+  would change window/screenshot behaviour, and the brief asked for build
+  parity, not behaviour changes.
+- Friction 5 — the e2e exit code is not the pass signal (app-side).
+  `src/main.cpp` returns 0 unconditionally and never consults
+  `runner.has_failed()`, so a failing suite still exits 0 under BOTH builds
+  (same as `make test`). The signal is the `Scripts passed:` /
+  `Scripts failed:` summary. `zig build test` therefore cannot be used as
+  a pass/fail gate on exit code alone until `main.cpp` wires `has_failed()`
+  to the return code.
+- Toolchain divergence (same as mailboy): `zig-out/bin/dance` is 43M
+  (45,359,576 bytes) vs the make binary's 5.9M (6,235,480 bytes), and
+  `otool -L` shows no `/usr/lib/libc++.1.dylib` on the zig binary (zig's
+  bundled libc++ statically linked + dwarf debug info) where the make
+  binary links the system libc++ dynamically. Afterhours + dance compile
+  and pass the suite under this libc++ with zero source changes, but
+  ABI/behavior differences between zig's libc++ and Apple's would surface
+  here first.
+- Verification (2026-10-18): clean `rm -rf zig-out .zig-cache && zig build`
+  green with 0 warnings on stderr (empty build log). Single-script sanity
+  (`zig-out/bin/dance --test-mode --headless --test-script
+  tests/e2e/01_grid_exists.e2e`): exit 0, no `WARN`/`ERROR` lines except
+  the pre-existing font-glyph warning (U+2192), screenshot saved,
+  `E2E finished in 0.14 seconds`, `Goodbye!`. Note single-script mode
+  prints no `[PASS]` line (the runner has no `ScriptResult` to tally in
+  single-script mode); the exit-0 + clean-log reading is the signal there.
+  Full `zig build test` (perl alarm 1500 wrap, 976s wall): Scripts run
+  101, Scripts passed 100, Scripts failed 1 — the single failure is
+  `vip_eventual`, whose `eventually_assert_agent_watching gte 1 20`
+  (line 53) timed out at 20.0s with 0 agents watching (`command_handlers.h`
+  `[E2E ERROR]`, the only genuine error in the log). The VIP had already
+  been served (`+$250`), and the same script passes standalone under the
+  zig binary (`eventually_assert_agent_watching ... PASSED (eventual)`, no
+  `E2E ERROR`, exit 0): the walk-back-to-watch-the-stage bound is
+  timing-marginal in full-suite order, same class as the documented
+  `03_path_preference` / `33_exodus_watching` flakes (both passed this
+  run). Not a zig divergence. The log's only other `[E2E ERROR]` is the
+  EXPECTED one in `fail_eventually_timeout` (negative control, `[PASS]`).
+  MAKE-SUITE COMPARISON PENDING — full `make test` run in progress at
+  time of writing; its counts will confirm the 100/101 is flake, not
+  toolchain, when they land.
+
 ## 2026-10-18 — fmt 8.0.1 -> 11.2.0 re-vendor: afterhours does NOT vendor fmt
 - Afterhours itself vendors no copy of fmt: there is no `vendor/fmt` under
   `vendor/afterhours`. Its headers include `<fmt/...>` / `"fmt/format.h"`

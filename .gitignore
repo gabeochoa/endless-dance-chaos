@@ -1,6 +1,8 @@
 # Build artifacts
 output/
 build/
+zig-out/
+.zig-cache/
 *.o
 *.d
 *.exe
