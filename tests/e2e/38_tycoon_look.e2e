@@ -13,6 +13,11 @@ place_building bar 40 10
 place_building securitypost 40 13
 place_building waterstation 40 16
 wait_frames 5
+# Silhouette subjects exist: bar counter front (40,10), stage
+# canopy/speakers + WC sign + awning + med cross are pre-placed.
+assert_tile_type 40 10 bar
+assert_tile_type 40 13 securitypost
+assert_tile_type 40 16 waterstation
 spawn_agents 28 26 20 stage
 wait 3
 screenshot tycoon_02_built_festival

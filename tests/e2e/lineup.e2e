@@ -54,11 +54,11 @@ assert_booked_count eq 1
 assert_toast_contains "Already booked"
 
 # --- (1) Panel click books a second act: switch to the Lineup tab
-# first (tab centre 1254,145), then row 1 button centre 1248,402 ---
-click 1254 145
+# first (tab centre 1259,145), then row 1 button centre 1236,402 ---
+click 1259 145
 wait_frames 2
 assert_window_tab lineup
-click 1248 402
+click 1236 402
 wait_frames 3
 assert_cash eq 8700
 assert_booked_count eq 2

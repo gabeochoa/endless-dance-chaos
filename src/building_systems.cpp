@@ -5,6 +5,7 @@
 #include "afterhours/src/core/entity_helper.h"
 #include "audio.h"
 #include "components.h"
+#include "render_helpers.h"
 #include "systems.h"
 #include "update_helpers.h"
 
@@ -116,6 +117,35 @@ struct PathBuildSystem : System<> {
             input::is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) {
             pds->is_drawing = false;
             return;
+        }
+
+        // A press must act where the mouse IS, not where hover was
+        // last frame. E2E `click` teleports the mouse and presses
+        // atomically, and this system (update) runs before
+        // HoverTracking (render) refreshes hover — without this, a
+        // UI click with a build tool active starts a drag / places
+        // a building at the stale hover tile. That is how 17's
+        // ISO-toggle clicks leaked a drag that later broke grounds'
+        // drag (the finish rect was computed from the stale start).
+        // click_grid is unaffected: it moves the mouse to the same
+        // tile whose hover it injects, so the refresh agrees.
+        if (input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
+            auto mouse = input::get_mouse_position();
+            if (mouse_over_ui(mouse.x, mouse.y)) {
+                pds->hover_valid = false;
+            } else {
+                auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
+                auto result = cam ? cam->cam.screen_to_grid(mouse.x, mouse.y)
+                                  : std::nullopt;
+                if (result.has_value()) {
+                    auto [gx, gz] = result.value();
+                    pds->hover_x = gx;
+                    pds->hover_z = gz;
+                    pds->hover_valid = grid->in_bounds(gx, gz);
+                } else {
+                    pds->hover_valid = false;
+                }
+            }
         }
 
         if (!pds->hover_valid) return;

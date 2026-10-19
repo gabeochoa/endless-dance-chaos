@@ -2280,6 +2280,35 @@ static void cmd_assert_needs_heat_count(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// assert_urgent_bubble_count OP VALUE — agents that get a thought
+// bubble in the iso renderer: an urgent need glyph (same
+// urgent_need_glyph the renderer uses, so the threshold cannot drift)
+// or a VIP star bubble. Beings being serviced get no bubble (the
+// renderer skips them), so they are skipped here too. An
+// expect_no_text check cannot express this: the visible-text registry
+// is only cleared at script boundaries, so expect_no_text never sees
+// a fresh generation inside a script and always times out.
+static void cmd_assert_urgent_bubble_count(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_urgent_bubble_count requires OP VALUE");
+        return;
+    }
+    int count = 0;
+    auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    for (Entity& a : agents) {
+        if (!a.is_missing<BeingServiced>()) continue;
+        if (urgent_need_glyph(&a.get<AgentNeeds>()) != nullptr ||
+            !a.is_missing<VIPGuest>())
+            count++;
+    }
+    if (!compare_op(count, cmd.arg(0), cmd.arg_as<int>(1)))
+        cmd.fail(fmt::format(
+            "assert_urgent_bubble_count failed: {} {} {} (actual: {})", count,
+            cmd.arg(0), cmd.arg_as<int>(1), count));
+    else
+        cmd.consume();
+}
+
 // set_heat_timer VALUE / set_heat_threshold VALUE — all agents.
 static void cmd_set_heat_timer(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(1)) {
@@ -4143,6 +4172,7 @@ static void init_e2e_registry() {
     r.add("assert_facility_online", cmd_assert_facility_online);
     r.add("infect_agent", cmd_infect_agent);
     r.add("assert_needs_heat_count", cmd_assert_needs_heat_count);
+    r.add("assert_urgent_bubble_count", cmd_assert_urgent_bubble_count);
     r.add("set_heat_timer", cmd_set_heat_timer);
     r.add("set_heat_threshold", cmd_set_heat_threshold);
     r.add("assert_heat_timer", cmd_assert_heat_timer);

@@ -20,7 +20,7 @@ wait_frames 3
 assert_zoom > 39
 assert_zoom < 41
 
-# Clamped at max_distance (50), not run away
+# Clamped at max_distance (80), not run away
 pinch -0.8
 wait_frames 3
-assert_zoom <= 50
+assert_zoom <= 80

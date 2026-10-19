@@ -182,12 +182,14 @@ static void iso_draw_diamond(float cx, float cy, float tw, float th,
 }
 
 // Ground tile with a dark seam: a full-size darkened diamond underneath
-// a slightly inset tile-color diamond reads as a 1px grid line without
-// a per-tile line call (cheaper, and batch-friendly).
+// a slightly inset tile-color diamond reads as a thin grid line without
+// a per-tile line call (cheaper, and batch-friendly). The seam is thin
+// (1px inset) and dark (50% darken): the old 2px / 35% seam read as a
+// bright mint grid over the vivid grass.
 static void iso_draw_tile(float cx, float cy, float tw, float th, Color color) {
-    iso_draw_diamond(cx, cy, tw, th, darken_color(color, 0.35f));
-    iso_draw_diamond(cx, cy, std::max(tw - 2.0f, 1.0f),
-                     std::max(th - 1.0f, 1.0f), color);
+    iso_draw_diamond(cx, cy, tw, th, darken_color(color, 0.50f));
+    iso_draw_diamond(cx, cy, std::max(tw - 1.0f, 1.0f),
+                     std::max(th - 0.5f, 1.0f), color);
 }
 
 // Raised terrain tile: side skirts from the base diamond up to the
@@ -229,24 +231,8 @@ static void iso_draw_block(float cx, float cy, float tw, float th, float h,
     iso_draw_diamond(cx, ry, tw, th, lighten_color(color, 0.40f));
 }
 
-// Urgent-need glyph for a thought bubble: the highest need ratio wins;
-// heat breaks ties (it can kill). Returns nullptr below the 85% line.
-static const char* iso_urgent_glyph(const AgentNeeds* needs) {
-    if (!needs) return nullptr;
-    auto ratio = [](float timer, float threshold) {
-        return threshold > 0.f ? timer / threshold : 0.f;
-    };
-    float heat = ratio(needs->heat_timer, needs->heat_threshold);
-    float wc = ratio(needs->bathroom_timer, needs->bathroom_threshold);
-    float food = ratio(needs->food_timer, needs->food_threshold);
-    float bar = ratio(needs->bar_timer, needs->bar_threshold);
-    float best = std::max(std::max(heat, wc), std::max(food, bar));
-    if (best <= 0.85f) return nullptr;
-    if (heat >= best) return "HEAT";
-    if (wc >= best) return "WC";
-    if (food >= best) return "FOOD";
-    return "BAR";
-}
+// The renderer's urgent-glyph lookup is urgent_need_glyph in
+// render_helpers.h (shared with the E2E bubble-count assert).
 
 struct IsoPeep {
     float wx = 0, wz = 0, bob = 0;
@@ -271,7 +257,7 @@ struct IsoDraw {
     float depth = 0;  // x+z; continuous for agents
     int order = 0;    // tile 0, overlay 1, building 2, peep 3, bubble 4, fx 5
     // kind: 0 tile, 1 overlay, 2 building, 3 peep, 4 bubble, 5 fx,
-    // 6 tree, 7 lamp
+    // 6 tree, 7 lamp, 8 building silhouette (per-footprint extras)
     int kind = 0;
     int x = 0, z = 0;
     Color color{255, 255, 255, 255};
@@ -280,7 +266,28 @@ struct IsoDraw {
     // Screen-px terrain lift for tiles/buildings/trees/lamps on
     // raised plots (Tile::height * iso_tile_h * 0.35).
     float lift = 0;
+    // Building-silhouette extras (kind 8 only): the footprint's tile
+    // type and side length in tiles.
+    int tile_type = -1;
+    int span = 0;
 };
+
+// Footprint side length (tiles) for buildings with silhouette extras:
+// Stage 4x4, the 2x2 facilities 2x2. Anything else (Bench, Security
+// Post, Water Station) gets plain blocks, no extras.
+static int silhouette_span(TileType type) {
+    switch (type) {
+        case TileType::Stage:
+            return 4;
+        case TileType::Bathroom:
+        case TileType::Food:
+        case TileType::MedTent:
+        case TileType::Bar:
+            return 2;
+        default:
+            return 0;
+    }
+}
 
 struct RenderIsoSystem : System<> {
     void once(float) const override {
@@ -365,6 +372,22 @@ struct RenderIsoSystem : System<> {
                                                              : th * 0.55f;
                     items.push_back(
                         {depth, 2, 2, x, z, weather_color, h, -1, lift});
+                    // Per-footprint silhouette extras (kind 8): one
+                    // item per footprint, emitted from its anchor tile
+                    // (no same-type neighbour up/left). Depth sits just
+                    // past the footprint's farthest tile so the canopy
+                    // / awning / sign is never half-covered by a later
+                    // tile of its own footprint.
+                    int span = silhouette_span(tile.type);
+                    bool anchor =
+                        span > 0 &&
+                        !(x > 0 && grid->at(x - 1, z).type == tile.type) &&
+                        !(z > 0 && grid->at(x, z - 1).type == tile.type);
+                    if (anchor) {
+                        items.push_back({depth + 2.f * span - 1.f, 2, 8, x, z,
+                                         weather_color, h, -1, lift,
+                                         static_cast<int>(tile.type), span});
+                    }
                 }
                 if (stage_glow && tile.type == TileType::Stage) {
                     items.push_back(
@@ -480,7 +503,7 @@ struct RenderIsoSystem : System<> {
                 }
                 const char* glyph = nullptr;
                 if (!e.is_missing<AgentNeeds>())
-                    glyph = iso_urgent_glyph(&e.get<AgentNeeds>());
+                    glyph = urgent_need_glyph(&e.get<AgentNeeds>());
                 int desire_idx = static_cast<int>(agent.want);
                 int ref = static_cast<int>(peeps.size());
                 float peep_lift = 0.f;
@@ -622,6 +645,15 @@ struct RenderIsoSystem : System<> {
                                 Color{255, 240, 150, 255});
                     break;
                 }
+                case 8: {
+                    // Per-footprint silhouette extras: geometric shapes
+                    // only, no text — the building reads by silhouette.
+                    draw_iso_silhouette(cam, static_cast<float>(it.x),
+                                        static_cast<float>(it.z), it.span,
+                                        static_cast<TileType>(it.tile_type),
+                                        it.lift, tw, th, it.h, it.color);
+                    break;
+                }
                 case 3: {
                     const IsoPeep& p = peeps[it.ref];
                     vec2 s = cam.iso_project(p.wx, p.wz);
@@ -722,13 +754,19 @@ struct RenderIsoSystem : System<> {
 
     static void draw_iso_peep(float sx, float sy, float tw, float th,
                               const IsoPeep& p) {
-        // Soft ground shadow, then billboarded body + head + desire pip.
+        // Drop-shadow ellipse on the ground, then a two-tone body:
+        // shirt-color torso, darkened legs, skin-tone head, desire
+        // pip on top. Head / torso / legs read as separate tones even
+        // at the small default-zoom peep size.
         float body_w = std::max(4.0f, tw * 0.20f);
         float body_h = std::max(5.0f, th * 0.62f);
         float head_r = std::max(2.0f, tw * 0.07f);
         draw_ellipse(static_cast<int>(sx), static_cast<int>(sy), body_w * 0.6f,
                      body_w * 0.25f, Color{0, 0, 0, 60});
-        draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, body_h, p.body);
+        float torso_h = body_h * 0.62f;
+        draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, torso_h, p.body);
+        draw_rect(sx - body_w * 0.5f, sy - body_h + torso_h, body_w,
+                  body_h - torso_h, darken_color(p.body, 0.35f));
         float hx = sx;
         float hy = sy - body_h - head_r + 1.0f;
         draw_circle(static_cast<int>(hx), static_cast<int>(hy), head_r,
@@ -739,7 +777,10 @@ struct RenderIsoSystem : System<> {
 
     static void draw_iso_bubble(float sx, float sy, float tw, float th,
                                 const char* glyph) {
-        if (tw < 24.0f) return;  // too small to read when zoomed out
+        // Gated low: default-zoom tiles are ~21px, and an urgent bubble
+        // must still show at the default framing. Below ~12px tiles the
+        // bubble would be bigger than the peep is tall.
+        if (tw < 12.0f) return;
         float body_h = std::max(5.0f, th * 0.62f);
         float head_r = std::max(2.0f, tw * 0.07f);
         float font_size = 11.0f;
@@ -770,7 +811,8 @@ struct RenderIsoSystem : System<> {
     // tofu. The star is the VIP marker; the need glyph is suppressed
     // for VIPs (see the kind-4 draw branch).
     static void draw_iso_star_bubble(float sx, float sy, float tw, float th) {
-        if (tw < 24.0f) return;  // too small to read when zoomed out
+        // Same gate as the need bubble: visible at default zoom.
+        if (tw < 12.0f) return;
         float body_h = std::max(5.0f, th * 0.62f);
         float head_r = std::max(2.0f, tw * 0.07f);
         float bw = 26.0f;
@@ -798,6 +840,150 @@ struct RenderIsoSystem : System<> {
         for (int i = 0; i < 10; i++)
             draw_triangle({cx, cy}, pts[i], pts[(i + 1) % 10],
                           Color{255, 215, 0, 255});
+    }
+
+    // Per-footprint silhouette extras, drawn from the anchor tile
+    // (ax, az) of a span x span footprint. All geometry is derived
+    // from the footprint diamond's extreme vertices — the top vertex
+    // of the anchor tile, the right vertex of the (ax+span-1, az)
+    // tile, the bottom vertex of the far tile, the left vertex of
+    // the (ax, az+span-1) tile — so the extras sit on the same
+    // diamond the per-tile blocks draw. Half-tile corner points
+    // would skew the shape into a parallelogram. iso_project
+    // applies rotation, so "front" follows the view. All shapes
+    // are geometric — no text labels.
+    static void draw_iso_silhouette(const IsometricCamera& cam, float ax,
+                                    float az, int span, TileType type,
+                                    float lift, float tw, float th,
+                                    float block_h, Color color) {
+        if (span <= 0) return;
+        // Diamond vertices at ground level: TL = north, TR = east,
+        // BR = south (front), BL = west.
+        vec2 tl = cam.iso_project(ax, az);
+        tl.y -= th * 0.5f;
+        vec2 tr = cam.iso_project(ax + span - 1, az);
+        tr.x += tw * 0.5f;
+        vec2 br = cam.iso_project(ax + span - 1, az + span - 1);
+        br.y += th * 0.5f;
+        vec2 bl = cam.iso_project(ax, az + span - 1);
+        bl.x -= tw * 0.5f;
+        tl.y -= lift;
+        tr.y -= lift;
+        br.y -= lift;
+        bl.y -= lift;
+        // Footprint centre at ground, then the roof level above it.
+        vec2 c =
+            cam.iso_project(ax + span * 0.5f - 0.5f, az + span * 0.5f - 0.5f);
+        c.y -= lift;
+        float roof_y = c.y - block_h;
+        auto at_roof = [&](vec2 p) {
+            p.y -= block_h;
+            return p;
+        };
+        switch (type) {
+            case TileType::Stage: {
+                // Canopy: a dark two-tone diamond floating above the
+                // roof, on the whole-footprint diamond.
+                float canopy_h = block_h + th * 0.55f;
+                auto up = [&](vec2 p) {
+                    p.y -= canopy_h;
+                    return p;
+                };
+                iso_draw_poly4(up(tl), up(tr), up(br), up(bl),
+                               darken_color(color, 0.45f));
+                vec2 mid{(up(tl).x + up(br).x) * 0.5f,
+                         (up(tl).y + up(br).y) * 0.5f};
+                auto inset = [&](vec2 p) {
+                    return vec2{mid.x + (p.x - mid.x) * 0.55f,
+                                mid.y + (p.y - mid.y) * 0.55f};
+                };
+                iso_draw_poly4(inset(up(tl)), inset(up(tr)), inset(up(br)),
+                               inset(up(bl)), lighten_color(color, 0.25f));
+                // Speaker stacks: dark columns with a light cone,
+                // standing on the ground at the front-edge midpoints.
+                vec2 fronts[2] = {{(bl.x + br.x) * 0.5f, (bl.y + br.y) * 0.5f},
+                                  {(br.x + tr.x) * 0.5f, (br.y + tr.y) * 0.5f}};
+                for (vec2 f : fronts) {
+                    float w = std::max(2.0f, tw * 0.18f);
+                    float hs = th * 0.95f;
+                    draw_rect(f.x - w * 0.5f, f.y - hs, w, hs,
+                              Color{25, 25, 25, 255});
+                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.15f, w * 0.5f,
+                              hs * 0.18f, Color{200, 200, 200, 255});
+                }
+                break;
+            }
+            case TileType::Bathroom: {
+                // WC signage block: a white board on the roof with a
+                // blue person pictogram (head + body) — the restroom
+                // sign, without relying on a "WC" text label.
+                float bw = tw * 1.1f;
+                float bh = th * 0.85f;
+                draw_rect(c.x - bw * 0.5f, roof_y - bh, bw, bh,
+                          Color{255, 255, 255, 255});
+                Color sign_blue{0, 60, 160, 255};
+                float hr = std::max(1.5f, th * 0.12f);
+                draw_circle(static_cast<int>(c.x),
+                            static_cast<int>(roof_y - bh + bh * 0.28f), hr,
+                            sign_blue);
+                float pw = std::max(2.0f, tw * 0.10f);
+                draw_rect(c.x - pw * 0.5f, roof_y - bh + bh * 0.45f, pw,
+                          bh * 0.45f, sign_blue);
+                break;
+            }
+            case TileType::Food: {
+                // Awning: striped panels (white / stall pink,
+                // alternating) hanging from the two front roof edges.
+                float drop = th * 0.5f;
+                vec2 rtr = at_roof(tr);
+                vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                auto panel = [&](vec2 p1, vec2 p2, Color pc) {
+                    iso_draw_poly4(p1, p2, {p2.x, p2.y + drop},
+                                   {p1.x, p1.y + drop}, pc);
+                };
+                auto striped_edge = [&](vec2 p1, vec2 p2) {
+                    vec2 m{(p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f};
+                    panel(p1, m, Color{255, 255, 255, 255});
+                    panel(m, p2, color);
+                };
+                striped_edge(rbl, rbr);
+                striped_edge(rbr, rtr);
+                break;
+            }
+            case TileType::MedTent: {
+                // Cross: a white medical cross standing on the roof.
+                float vw = std::max(2.0f, tw * 0.14f);
+                float vh = th * 0.75f;
+                float hw = tw * 0.42f;
+                float hh = std::max(2.0f, th * 0.22f);
+                Color cross{255, 255, 255, 255};
+                draw_rect(c.x - vw * 0.5f, roof_y - vh, vw, vh, cross);
+                draw_rect(c.x - hw * 0.5f, roof_y - vh * 0.68f, hw, hh, cross);
+                break;
+            }
+            case TileType::Bar: {
+                // Counter front: a wood counter bar across the front
+                // of the building with two bottles on top.
+                vec2 f{(bl.x + 2 * br.x + tr.x) * 0.25f,
+                       (bl.y + 2 * br.y + tr.y) * 0.25f};
+                float cw = tw * 1.5f;
+                float ch = std::max(3.0f, th * 0.32f);
+                float cy = f.y - th * 0.1f - ch;
+                draw_rect(f.x - cw * 0.5f, cy, cw, ch,
+                          Color{170, 110, 55, 255});
+                draw_rect(f.x - cw * 0.5f, cy, cw, std::max(1.0f, ch * 0.25f),
+                          Color{220, 170, 100, 255});
+                float bw = std::max(2.0f, tw * 0.08f);
+                float bh = std::max(3.0f, th * 0.30f);
+                draw_rect(f.x - cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
+                          Color{0, 180, 80, 255});
+                draw_rect(f.x + cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
+                          Color{255, 60, 60, 255});
+                break;
+            }
+            default:
+                break;
+        }
     }
 };
 

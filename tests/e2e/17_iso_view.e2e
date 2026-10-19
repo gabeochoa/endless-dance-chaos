@@ -6,11 +6,23 @@ wait_frames 2
 
 # Default view is iso (reset restores it).
 assert_view iso
-# Default framing: distance 18 => 80px tiles, 32 tile-steps across the
-# full 1280px width (~28 across the 1130px main view), so buildings and
-# peeps read clearly instead of the whole 52x52 park at once.
-assert_zoom == 18
+# Default framing: distance 68 => 21.2px tiles; the 52-tile fence ring
+# spans ~540px on screen (295..835, 74..614) inside the usable
+# viewport (0..1130, 44..644), clear of the park window at 1060.
+# The whole park footprint is in frame.
+assert_zoom == 68
+assert_camera_target 25.5 25.5
 screenshot 17_iso_default
+
+# Building silhouettes: the pre-placed buildings whose iso extras
+# (stage canopy/speakers, WC sign, awning, med cross) the screenshot
+# above captures at default zoom.
+assert_tile_type 30 25 stage
+assert_tile_type 20 20 bathroom
+assert_tile_type 20 30 food
+assert_tile_type 15 25 medtent
+assert_tile_type 32 35 stagefloor
+screenshot 17_iso_silhouettes
 
 # Mouse placement through the iso projection: click_grid converts the
 # tile to iso screen coords, the inverse projection must pick it back.
@@ -44,12 +56,19 @@ assert_tile_type 21 35 grass
 key Q
 wait_frames 2
 
-# Thought bubble: an agent with an urgent (>85%) bathroom need shows a
-# white bubble with a WC glyph, registered in visible text.
+# Thought bubbles are urgent-only: an agent whose needs are all below
+# the 85% line gets no bubble.
 spawn_agents 30 30 1 bathroom
 wait_frames 2
+set_need_timer bathroom 0.5
+wait_frames 2
+assert_urgent_bubble_count eq 0
+
+# Thought bubble: an agent with an urgent (>85%) bathroom need shows a
+# white bubble with a WC glyph, registered in visible text.
 set_need_timer bathroom 0.95
 wait_frames 2
+assert_urgent_bubble_count eq 1
 expect_text "WC"
 screenshot 17_iso_bubble
 

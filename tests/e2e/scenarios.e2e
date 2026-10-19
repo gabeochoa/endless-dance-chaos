@@ -27,8 +27,8 @@ expect_text "Scenario: None"
 expect_text "No scenario selected."
 
 # --- First Weekend: select via the Park-tab SELECT button ---
-# Row 0 button centre (1238, 281): x 1208..1268, y 272..290.
-click 1238 281
+# Row 0 button centre (1240, 281): x 1212..1268, y 272..290.
+click 1240 281
 wait_frames 2
 assert_scenario_id first_weekend
 assert_scenario_status active

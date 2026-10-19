@@ -304,11 +304,13 @@ void reset_game_state() {
     }
 
     // Reset the view to the default framing: iso ON, default zoom
-    // (distance), camera re-centred on the park centre. Rotation is
-    // intentionally left alone (existing behavior). Without the
-    // distance/target reset, a previous run's zoomed-out camera would
-    // leak into the fresh game (e.g. 17_iso_default captured at the
-    // pinch test's distance 50 instead of the default 18).
+    // (distance 68, framing the whole park footprint inside the
+    // usable viewport and clear of the park window), camera
+    // re-centred on the park centre. Rotation is intentionally left
+    // alone (existing behavior). Without the distance/target reset,
+    // a previous run's zoomed camera would leak into the fresh game
+    // (e.g. 17_iso_default captured at the pinch test's distance 80
+    // instead of the default 68).
     if (auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>()) {
         cam->cam.iso_mode = true;
         cam->cam.target = {(PLAY_MAX + 1) / 2.0f, 0, (PLAY_MAX + 1) / 2.0f};
@@ -317,6 +319,15 @@ void reset_game_state() {
 
     // Reset the park window to its default tab (Park).
     park_window_active_tab() = 0;
+
+    // Drop any in-progress path drag: it references tiles the reset
+    // just wiped, and a stale start would corrupt the next drag's
+    // finish rect (17's ISO-toggle clicks once leaked such a drag
+    // into grounds). The selected tool itself is UI state and stays.
+    if (auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>()) {
+        pds->is_drawing = false;
+        pds->hover_lock_frames = 0;
+    }
 
     // Reset the event director: default seed + fresh day bookkeeping,
     // so a restart never inherits the previous run's event sequence.

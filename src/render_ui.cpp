@@ -17,52 +17,35 @@
 // Floating window on the right of the viewport: title bar + one tab
 // row + content. Ends at y=560, leaving a gap above the minimap
 // (y=570) and clear of the compass / ISO toggle at (1100, 90).
-// Tabs are fixed-width (sum = PARK_WINDOW_W) so E2E `click` can
-// target tab centres: Park (1042,145), Finances (1098,145),
-// Guests (1158,145), Staff (1206,145), Lineup (1254,145).
-static constexpr float PARK_WINDOW_X = 1020.f;
-static constexpr float PARK_WINDOW_Y = 110.f;
-static constexpr float PARK_WINDOW_W = 260.f;
-static constexpr float PARK_WINDOW_H = 450.f;
+// Narrow by design (220px, flush to the right screen edge): the
+// default iso framing fits the whole park left of x=1060, so the
+// window covers almost no park viewport. Tabs are fixed-width
+// (sum = PARK_WINDOW_W) so E2E `click` can target tab centres:
+// Park (1079,145), Finances (1127,145), Guests (1178,145),
+// Staff (1219,145), Lineup (1259,145).
+// PARK_WINDOW_X/Y/W/H live in render_helpers.h (shared with the build
+// tool's UI hit-test); the rest of the geometry stays here.
 static constexpr float PARK_WINDOW_TITLE_H = 24.f;
 static constexpr float PARK_WINDOW_TAB_H = 22.f;
 static constexpr float PARK_WINDOW_TAB_Y = PARK_WINDOW_Y + PARK_WINDOW_TITLE_H;
 static constexpr float PARK_WINDOW_CONTENT_Y =
     PARK_WINDOW_TAB_Y + PARK_WINDOW_TAB_H;
-static constexpr float PARK_WINDOW_TAB_W[] = {44.f, 68.f, 52.f, 44.f, 52.f};
+static constexpr float PARK_WINDOW_TAB_W[] = {38.f, 58.f, 44.f, 38.f, 42.f};
 // Scenario rows (Park tab): header y=254; row i at 274 + i*22; SELECT
-// button x = PARK_WINDOW_X + 188, w 60, h 18, so row i's button centre is
-// (1238, 283 + 22*i) (row 0 = First Weekend). Checklist: "Objectives:"
+// button x = PARK_WINDOW_X + 152, w 56, h 18, so row i's button centre is
+// (1240, 283 + 22*i) (row 0 = First Weekend). Checklist: "Objectives:"
 // header y=344, one line per objective at 360 + 14*k, deadline y=402,
 // status y=416.
 static constexpr float SCENARIO_ROW_Y = 274.f;
 static constexpr float SCENARIO_ROW_H = 22.f;
-static constexpr float SCENARIO_BTN_X_OFF = 188.f;
-static constexpr float SCENARIO_BTN_W = 60.f;
+static constexpr float SCENARIO_BTN_X_OFF = 152.f;
+static constexpr float SCENARIO_BTN_W = 56.f;
 static constexpr const char* PARK_WINDOW_TAB_NAMES[] = {
     "Park", "Finances", "Guests", "Staff", "Lineup"};
 static constexpr int PARK_WINDOW_TAB_COUNT = 5;
 
 // Update hover grid position from mouse
 struct HoverTrackingSystem : System<> {
-    static bool mouse_over_ui(float mx, float my) {
-        if (my < 44) return true;
-        if (my > DEFAULT_SCREEN_HEIGHT - 54 - 22) return true;  // ticker + bar
-        if (mx > DEFAULT_SCREEN_WIDTH - 150) return true;
-        if (mx >= PARK_WINDOW_X && mx <= PARK_WINDOW_X + PARK_WINDOW_W &&
-            my >= PARK_WINDOW_Y && my <= PARK_WINDOW_Y + PARK_WINDOW_H)
-            return true;  // park window floats over the world
-        auto* gs = EntityHelper::get_singleton_cmp<GameState>();
-        if (gs && gs->show_debug) {
-            float pw = 300, ph = 240;
-            float px = 10;
-            float py = DEFAULT_SCREEN_HEIGHT - 54 - ph - 10;
-            if (mx >= px && mx <= px + pw && my >= py && my <= py + ph)
-                return true;
-        }
-        return false;
-    }
-
     void once(float) const override {
         auto* pds = EntityHelper::get_singleton_cmp<PathDrawState>();
         auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>();
@@ -1042,15 +1025,15 @@ static constexpr int MINIMAP_SIZE = 150;
 static constexpr float MINIMAP_SCALE = 150.0f / static_cast<float>(MAP_SIZE);
 
 // Booking panel geometry (Lineup tab, fixed so E2E `click` can target
-// it): rows start y=366, row height 24; the BOOK button is x=1222
-// w=52 h=18, so row i's button centre is (1248, 378 + 24*i)
+// it): rows start y=366, row height 24; the BOOK button is x=1212
+// w=48 h=18, so row i's button centre is (1236, 378 + 24*i)
 // (row 0 = DJ Cardboard Box). Switch to the Lineup tab first
-// (click 1254,145 or set_window_tab lineup). Locked rows show the
+// (click 1259,145 or set_window_tab lineup). Locked rows show the
 // required tier, booked rows show BOOKED, available rows show the fee.
 static constexpr float LINEUP_BOOKING_FIRST_ROW_Y = 366.f;
 static constexpr float LINEUP_BOOKING_ROW_H = 24.f;
-static constexpr float LINEUP_BOOKING_BTN_X_OFF = 202.f;  // from window x
-static constexpr float LINEUP_BOOKING_BTN_W = 52.f;
+static constexpr float LINEUP_BOOKING_BTN_X_OFF = 152.f;  // from window x
+static constexpr float LINEUP_BOOKING_BTN_W = 48.f;
 
 static std::string lineup_short_list(const std::vector<int>& list) {
     if (list.empty()) return "-";
@@ -1065,7 +1048,7 @@ static std::string lineup_short_list(const std::vector<int>& list) {
 
 // ── RCT2 park window ─────────────────────────────────────────────
 // One floating window replacing the stacked sidebar text blocks.
-// Title bar (park name + FPS + close/minimize deco) + one tab row;
+// Title bar (park name + FPS) + one tab row;
 // tabs switch the content page. The bottom bar stays the toolbar
 // (build tools + staff/land panels), and the top bar keeps its own
 // readouts — the pages below repeat those labels in window form so
@@ -1273,7 +1256,7 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
         Color status_col = row_status == "WON"      ? Color{0, 140, 0, 255}
                            : row_status == "FAILED" ? Color{200, 0, 0, 255}
                                                     : Color{0, 0, 0, 255};
-        ui_draw_text(row_status, x + 120, row_y, 12, status_col);
+        ui_draw_text(row_status, x + 100, row_y, 12, status_col);
         float btn_x = PARK_WINDOW_X + SCENARIO_BTN_X_OFF;
         float btn_y = row_y - 2;
         float btn_h = 18.f;
@@ -1317,7 +1300,9 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
         ui_draw_text(aw->history_rating_row(), x, 486, 11, Color{0, 0, 0, 255});
         float rating_bar_bottom = 514.f;
         for (size_t i = 0; i < aw->history.size(); i++) {
-            float bar_x = x + static_cast<float>(i) * 16.f;
+            // 14px spacing: 14 bars fit the 220px window (old 16px
+            // spacing ran past the right edge at the new window x).
+            float bar_x = x + static_cast<float>(i) * 14.f;
             float bar_h = 2.f + 12.f * std::clamp(aw->history[i].rating / 999.f,
                                                   0.f, 1.f);
             draw_rect(bar_x, rating_bar_bottom - bar_h, 12.f, bar_h,
@@ -1326,7 +1311,7 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
         ui_draw_text(aw->history_guests_row(), x, 518, 11, Color{0, 0, 0, 255});
         float guests_bar_bottom = 546.f;
         for (size_t i = 0; i < aw->history.size(); i++) {
-            float bar_x = x + static_cast<float>(i) * 16.f;
+            float bar_x = x + static_cast<float>(i) * 14.f;
             float bar_h =
                 2.f +
                 12.f * std::clamp(aw->history[i].attendees / 100.f, 0.f, 1.f);
@@ -1338,10 +1323,10 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
 
 // Finances page: cash / ticket + price buttons / earned / spent /
 // debt + loan buttons / repay buttons / 7-day history.
-// Price buttons: [-] centre (1162,204), [+] centre (1190,204).
-// Loan buttons: "$5k" centre (1118,322), "$10k" (1176,322), "$25k"
-// (1234,322). Repay buttons: "Repay $1k" centre (1076,350),
-// "Repay All" centre (1176,350).
+// Price buttons: [-] centre (1202,204), [+] centre (1230,204).
+// Loan buttons: "$5k" centre (1134,322), "$10k" (1188,322), "$25k"
+// (1242,322). Repay buttons: "Repay $1k" centre (1116,350),
+// "Repay All" centre (1216,350).
 static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
     auto* econ = EntityHelper::get_singleton_cmp<Economy>();
     if (!econ) return;
@@ -1353,8 +1338,8 @@ static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
                  Color{160, 100, 0, 255});
     float btn_y = 194.f;
     float btn_h = 20.f;
-    float minus_x = PARK_WINDOW_X + 130;  // 1150, w 24
-    float plus_x = PARK_WINDOW_X + 158;   // 1178, w 24
+    float minus_x = PARK_WINDOW_X + 130;  // 1190, w 24
+    float plus_x = PARK_WINDOW_X + 158;   // 1218, w 24
     if (mouse_click && !game_is_over() && mouse.y >= btn_y &&
         mouse.y <= btn_y + btn_h) {
         if (mouse.x >= minus_x && mouse.x <= minus_x + 24)
@@ -1383,7 +1368,7 @@ static void draw_park_window_finances_page(vec2 mouse, bool mouse_click) {
     ui_draw_text("Borrow:", x, 316, 14, Color{0, 0, 0, 255});
     float loan_y = 312.f;
     for (int i = 0; i < 3; i++) {
-        float loan_x = PARK_WINDOW_X + 72 + i * 58;  // 1092, 1150, 1208
+        float loan_x = PARK_WINDOW_X + 48 + i * 54;  // 1108, 1162, 1216
         if (mouse_click && !game_is_over() && mouse.y >= loan_y &&
             mouse.y <= loan_y + btn_h && mouse.x >= loan_x &&
             mouse.x <= loan_x + 52)
@@ -1460,7 +1445,7 @@ static void draw_park_window_guests_page() {
 
 // Staff page: roster counts + hire/fire.
 // Rows: Guard y=200, Medic y=240, Janitor y=280; hire "+" centre
-// (1172, row+9), fire "-" centre (1224, row+9). The bottom-bar staff
+// (1200, row+9), fire "-" centre (1248, row+9). The bottom-bar staff
 // panel keeps its own hire/fire buttons too (existing E2E coords).
 static void draw_park_window_staff_page(vec2 mouse, bool mouse_click) {
     float x = PARK_WINDOW_X + 10;
@@ -1473,8 +1458,8 @@ static void draw_park_window_staff_page(vec2 mouse, bool mouse_click) {
         std::string label =
             fmt::format("{} {}", SHORT_NAMES[i], staff_count(ROLES[i]));
         ui_draw_text(label, x, row_y, 14, Color{0, 0, 0, 255});
-        float hire_x = PARK_WINDOW_X + 130;  // 1150, w 44
-        float fire_x = PARK_WINDOW_X + 182;  // 1202, w 44
+        float hire_x = PARK_WINDOW_X + 118;  // 1178, w 44
+        float fire_x = PARK_WINDOW_X + 166;  // 1226, w 44
         float btn_y = row_y - 2;
         float btn_h = 22.f;
         if (mouse_click && !game_is_over() && mouse.y >= btn_y &&
@@ -1661,25 +1646,18 @@ struct RenderParkWindowSystem : System<> {
         draw_bevel_panel(PARK_WINDOW_X, PARK_WINDOW_Y, PARK_WINDOW_W,
                          PARK_WINDOW_H, Color{192, 192, 192, 255});
 
-        // Title bar: park name + FPS + close/minimize deco buttons
-        // (deco only — they do nothing when clicked).
+        // Title bar: park name + right-aligned FPS. The old
+        // close/minimize deco buttons are gone: they did nothing when
+        // clicked, and at the 220px window width they left no room
+        // for the title + FPS without overlap.
         draw_rect(PARK_WINDOW_X, PARK_WINDOW_Y, PARK_WINDOW_W,
                   PARK_WINDOW_TITLE_H, Color{122, 74, 33, 255});
         ui_draw_text("Endless Dance Chaos", PARK_WINDOW_X + 8,
                      PARK_WINDOW_Y + 6, 12, Color{255, 255, 255, 255});
         std::string fps_text = fmt::format("FPS: {}", get_fps());
         auto fps_m = ui_measure_text(fps_text, 12);
-        ui_draw_text(fps_text, PARK_WINDOW_X + PARK_WINDOW_W - 56 - fps_m.x,
+        ui_draw_text(fps_text, PARK_WINDOW_X + PARK_WINDOW_W - 8 - fps_m.x,
                      PARK_WINDOW_Y + 6, 12, Color{255, 255, 255, 255});
-        float deco_y = PARK_WINDOW_Y + 4;
-        draw_bevel_panel(PARK_WINDOW_X + PARK_WINDOW_W - 48, deco_y, 18, 16,
-                         Color{200, 200, 200, 255});
-        ui_draw_text("_", PARK_WINDOW_X + PARK_WINDOW_W - 44, deco_y + 1, 12,
-                     Color{0, 0, 0, 255});
-        draw_bevel_panel(PARK_WINDOW_X + PARK_WINDOW_W - 26, deco_y, 18, 16,
-                         Color{200, 200, 200, 255});
-        ui_draw_text("x", PARK_WINDOW_X + PARK_WINDOW_W - 21, deco_y + 2, 12,
-                     Color{0, 0, 0, 255});
 
         auto mouse = input::get_mouse_position();
         bool mouse_click = input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT);

@@ -19,7 +19,7 @@ wait_frames 2
 expect_text "Borrow:"
 expect_text "Repay $1k"
 expect_text "Repay All"
-click 1176 322
+click 1188 322
 wait_frames 2
 assert_cash eq 20000
 assert_debt eq 10000

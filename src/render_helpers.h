@@ -137,15 +137,18 @@ inline float get_day_night_t() {
 }
 
 // Shared day-palette colors for tiles, used by grid rendering and minimap.
-// Bright saturated '90s tycoon palette: every building type gets a distinct
-// saturated hue, grass is vivid green, paths are golden sand.
+// '90s tycoon palette, subdued where it washed out: every building type
+// keeps a distinct saturated hue, grass is a deeper green (the old vivid
+// green read mint under the tile seams), paths stay golden sand, and
+// the dance floor is a deeper lavender so it reads as a deliberate
+// area around the stage instead of a pale wash over ~185 tiles.
 inline constexpr Color TILE_DAY_COLORS[] = {
-    {80, 200, 100, 255},   // Grass
+    {58, 150, 78, 255},    // Grass
     {245, 205, 120, 255},  // Path (Concrete)
     {150, 95, 50, 255},    // Fence
     {255, 255, 255, 255},  // Gate
     {200, 30, 230, 255},   // Stage
-    {235, 190, 255, 255},  // StageFloor
+    {158, 118, 205, 255},  // StageFloor
     {0, 210, 200, 255},    // Bathroom
     {255, 80, 160, 255},   // Food
     {255, 45, 45, 255},    // MedTent
@@ -161,12 +164,12 @@ inline constexpr Color TILE_DAY_COLORS[] = {
 };
 
 inline constexpr Color TILE_NIGHT_COLORS[] = {
-    {45, 74, 62, 255},     // Grass
+    {32, 58, 48, 255},     // Grass
     {42, 42, 58, 255},     // Path (Concrete)
     {40, 40, 50, 255},     // Fence
     {68, 136, 170, 255},   // Gate
     {255, 230, 0, 255},    // Stage
-    {60, 60, 40, 255},     // StageFloor
+    {52, 44, 72, 255},     // StageFloor
     {60, 100, 90, 255},    // Bathroom
     {120, 80, 80, 255},    // Food
     {120, 50, 50, 255},    // MedTent
@@ -188,6 +191,30 @@ inline Color tile_day_color(TileType type) {
 inline Color tile_color(TileType type, float night_t) {
     int idx = static_cast<int>(type);
     return lerp_color(TILE_DAY_COLORS[idx], TILE_NIGHT_COLORS[idx], night_t);
+}
+
+// ── Urgent-need thought bubbles ──
+// Urgent-need glyph for a thought bubble: the highest need ratio wins;
+// heat breaks ties (it can kill). Returns nullptr below the 85% line,
+// so only agents with an urgent need get a bubble. Shared by the iso
+// renderer (which draws + registers the bubble) and the E2E
+// assert_urgent_bubble_count (which counts the same agents), so the
+// test and the renderer can never drift apart on the threshold.
+inline const char* urgent_need_glyph(const AgentNeeds* needs) {
+    if (!needs) return nullptr;
+    auto ratio = [](float timer, float threshold) {
+        return threshold > 0.f ? timer / threshold : 0.f;
+    };
+    float heat = ratio(needs->heat_timer, needs->heat_threshold);
+    float wc = ratio(needs->bathroom_timer, needs->bathroom_threshold);
+    float food = ratio(needs->food_timer, needs->food_threshold);
+    float bar = ratio(needs->bar_timer, needs->bar_threshold);
+    float best = std::max(std::max(heat, wc), std::max(food, bar));
+    if (best <= 0.85f) return nullptr;
+    if (heat >= best) return "HEAT";
+    if (wc >= best) return "WC";
+    if (food >= best) return "FOOD";
+    return "BAR";
 }
 
 // ── Atmosphere: day/night + weather presentation ──
@@ -395,4 +422,35 @@ void ticker_poll_events();
 inline int& park_window_active_tab() {
     static int tab = 0;
     return tab;
+}
+
+// ── Park window rect + UI hit-testing ──
+// The window rect lives here (not in render_ui.cpp) so the build tool
+// in building_systems.cpp tests the same rects HoverTracking does:
+// a press must never start a drag / place a building when the mouse
+// is over UI, even if hover is stale (see mouse_over_ui).
+inline constexpr float PARK_WINDOW_X = 1060.f;
+inline constexpr float PARK_WINDOW_Y = 110.f;
+inline constexpr float PARK_WINDOW_W = 220.f;
+inline constexpr float PARK_WINDOW_H = 450.f;
+
+// True when the mouse is over UI rather than the world: top bar,
+// ticker + build bar, sidebar, the floating park window, and the
+// debug panel when visible. Shared by HoverTrackingSystem (per-frame
+// hover) and PathBuildSystem (hover refresh on press).
+inline bool mouse_over_ui(float mx, float my) {
+    if (my < 44) return true;
+    if (my > DEFAULT_SCREEN_HEIGHT - 54 - 22) return true;  // ticker + bar
+    if (mx > DEFAULT_SCREEN_WIDTH - 150) return true;
+    if (mx >= PARK_WINDOW_X && mx <= PARK_WINDOW_X + PARK_WINDOW_W &&
+        my >= PARK_WINDOW_Y && my <= PARK_WINDOW_Y + PARK_WINDOW_H)
+        return true;  // park window floats over the world
+    auto* gs = EntityHelper::get_singleton_cmp<GameState>();
+    if (gs && gs->show_debug) {
+        float pw = 300, ph = 240;
+        float px = 10;
+        float py = DEFAULT_SCREEN_HEIGHT - 54 - ph - 10;
+        if (mx >= px && mx <= px + pw && my >= py && my <= py + ph) return true;
+    }
+    return false;
 }
