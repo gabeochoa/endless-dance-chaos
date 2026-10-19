@@ -17,3 +17,15 @@ seams + lavender dancefloor dominance, darker grass, (3) smaller movable window,
 clear viewport, (4) building silhouettes (canopy/speakers/WC sign/awning/medic
 cross), (5) peep head/body + shadows, selective bubbles. Mock flaw: mock peeps
 are confetti too; use full-island framing as target.
+
+## 2026-10-18 dance re-review (gpt-6-sol): fidelity D+, readability C- (DOWN from C/C)
+Reviewer: "debug map, not an RCT2 park." Framing partial (thin diamond, dead
+space, attractions tiny); seams still read as stitching; lavender slab
+conspicuous; silhouettes NOT landed (blocks still need labels); peeps not
+visible at this zoom (20 attendees = tiny cluster). Root tension: whole-park
+framing vs sprite readability — RCT2 solves it with bigger multi-tile sprites
++ closer default zoom on a park AREA, not the whole map. Next pass: larger
+multi-tile building sprites with roofs/shadows, textured ground (noise/varied
+tiles, no seam grid), dance floor as bordered plaza tiles, peeps bigger with
+contrast at default zoom; consider default view = stage area, minimap for
+whole park. Do not call visuals done until re-review improves.
