@@ -1799,6 +1799,30 @@ struct RenderMinimapSystem : System<> {
 
         draw_rect_lines(sidebar_x, minimap_y, MINIMAP_SIZE, MINIMAP_SIZE,
                         Color{90, 90, 90, 255});
+
+        // Click-to-jump: a click on the minimap re-centres the camera
+        // on the clicked tile, so the whole park stays reachable
+        // from the closer stage-area default view (zoom out to the
+        // 80 limit for the full park, or click a region to jump to
+        // it). The click is clamped to the bought park by the
+        // CameraInputSystem on the next frame. Only the strip
+        // above the bottom-bar readout (y < BUILD_BAR_Y) jumps:
+        // the readout panel paints over the minimap's bottom
+        // strip (Locked land south of the park, z > ~65) and owns
+        // clicks there.
+        if (!game_is_over() &&
+            input::is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) {
+            auto mouse = input::get_mouse_position();
+            if (mouse.x >= sidebar_x && mouse.x < sidebar_x + MINIMAP_SIZE &&
+                mouse.y >= minimap_y && mouse.y < BUILD_BAR_Y) {
+                if (auto* cam =
+                        EntityHelper::get_singleton_cmp<ProvidesCamera>()) {
+                    cam->cam.target.x = (mouse.x - sidebar_x) / MINIMAP_SCALE;
+                    cam->cam.target.z = (mouse.y - minimap_y) / MINIMAP_SCALE;
+                    cam->cam.update_camera_position();
+                }
+            }
+        }
     }
 };
 

@@ -9,15 +9,22 @@ screenshot tycoon_01_default_view
 # Built festival: paths, new buildings, crowd at the stage
 draw_path_rect 0 24 35 28
 draw_path_rect 19 14 22 38
-place_building bar 40 10
-place_building securitypost 40 13
-place_building waterstation 40 16
+# The extra buildings sit north-east of the stage floor, inside the
+# stage-area default framing (not the far corner, which is out of
+# frame at the default zoom): bar counter+roof (36,15), security
+# post tower (39,17), water block+sign (40,19). Water sits one
+# step further east so its sign board does not paint over the
+# bar's bottles.
+place_building bar 36 15
+place_building securitypost 39 17
+place_building waterstation 40 19
 wait_frames 5
-# Silhouette subjects exist: bar counter front (40,10), stage
-# canopy/speakers + WC sign + awning + med cross are pre-placed.
-assert_tile_type 40 10 bar
-assert_tile_type 40 13 securitypost
-assert_tile_type 40 16 waterstation
+# Silhouette subjects exist: bar counter front (36,15), security post
+# tower (39,17), water block+sign (40,19), stage canopy/speakers +
+# WC sign + awning + med peak are pre-placed.
+assert_tile_type 36 15 bar
+assert_tile_type 39 17 securitypost
+assert_tile_type 40 19 waterstation
 spawn_agents 28 26 20 stage
 wait 3
 screenshot tycoon_02_built_festival

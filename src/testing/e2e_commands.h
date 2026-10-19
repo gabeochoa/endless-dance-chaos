@@ -3434,6 +3434,43 @@ static void cmd_set_view(testing::PendingE2ECommand& cmd) {
     cmd.consume();
 }
 
+// assert_tile_on_screen X Z / assert_tile_off_screen X Z — the
+// tile's projected point (same grid_to_screen the renderer and
+// click_grid use) must lie inside / outside the usable world
+// viewport (x in [0, 1130], y in [44, 644]). Pins framing: the
+// stage area is on screen at the default view while the far fence
+// corners are not (whole-park framing is the zoom-out limit only).
+static void cmd_assert_tile_screen(testing::PendingE2ECommand& cmd,
+                                   bool want_on) {
+    if (!cmd.has_args(2)) {
+        cmd.fail("assert_tile_on/off_screen requires X Z");
+        return;
+    }
+    int gx = cmd.arg_as<int>(0), gz = cmd.arg_as<int>(1);
+    auto screen = grid_to_screen(gx, gz);
+    if (!screen) {
+        cmd.fail("assert_tile_on/off_screen: no camera");
+        return;
+    }
+    bool on_screen = screen->x >= 0.f && screen->x <= 1130.f &&
+                     screen->y >= 44.f && screen->y <= 644.f;
+    if (on_screen != want_on)
+        cmd.fail(fmt::format(
+            "assert_tile_{}_screen ({},{}) FAILED: projected to ({:.1f}, "
+            "{:.1f})",
+            want_on ? "on" : "off", gx, gz, screen->x, screen->y));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_tile_on_screen(testing::PendingE2ECommand& cmd) {
+    cmd_assert_tile_screen(cmd, true);
+}
+
+static void cmd_assert_tile_off_screen(testing::PendingE2ECommand& cmd) {
+    cmd_assert_tile_screen(cmd, false);
+}
+
 static void cmd_assert_view(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(1)) {
         cmd.fail("assert_view requires iso|top");
@@ -4236,6 +4273,8 @@ static void init_e2e_registry() {
     r.add("assert_expansion_cost", cmd_assert_expansion_cost);
     r.add("set_camera_target", cmd_set_camera_target);
     r.add("assert_camera_target", cmd_assert_camera_target);
+    r.add("assert_tile_on_screen", cmd_assert_tile_on_screen);
+    r.add("assert_tile_off_screen", cmd_assert_tile_off_screen);
     r.add("set_view", cmd_set_view);
     r.add("assert_view", cmd_assert_view);
     r.add("set_need_timer", cmd_set_need_timer);

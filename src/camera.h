@@ -25,20 +25,30 @@ struct IsometricCamera {
     static constexpr float ISO_CENTER_X = (DEFAULT_SCREEN_WIDTH - 150) / 2.0f;
     static constexpr float ISO_CENTER_Y = (44.0f + 644.0f) / 2.0f;
 
-    // Default iso zoom: the whole park footprint framed inside the
-    // usable viewport (x in [0, 1130], y in [44, 644]) and clear of
-    // the park window (left edge 1060). The fence ring is 52 tiles
-    // across; in iso the diamond's screen span is 51 * tw / 2
-    // horizontally and 102 * th / 2 vertically — the same 36720 /
-    // distance in both axes, so the diamond is square and the
-    // 600px viewport height binds. At distance 68 the tile is
-    // 21.2px wide and the diamond spans ~540px (295..835, 74..614),
-    // leaving ~30px top/bottom breathing room and the park clear of
-    // the window. The player can still zoom in to buildings / peeps
-    // (distance 18) and out a little past the default framing
-    // (distance 80) via wheel / pinch; the default stays a framing,
-    // not a zoom level.
-    static constexpr float DEFAULT_DISTANCE = 68.0f;
+    // Default iso zoom: the STAGE AREA framed inside the usable
+    // viewport (x in [0, 1130], y in [44, 644]) — stage + dance
+    // floor + nearby facilities — not the whole 51-tile park. At
+    // distance 36 the tile is 40px wide, so the 1130px viewport
+    // spans ~28 tiles across; the stage-area bounding box
+    // (x 15..40, z 19..35: medtent, bathroom, food, stage, dance
+    // floor) spans ~820x410px around the default target, with
+    // room for the stage canopy / labels above it. Whole-park
+    // framing is the zoom-OUT limit only: at max_distance 80 the
+    // 52-tile fence diamond spans ~936x468px, so zooming out +
+    // minimap-clicking the park centre shows the whole park.
+    // The player can still zoom in to buildings / peeps
+    // (distance 18) via wheel / pinch; the default stays a
+    // framing, not a zoom level.
+    static constexpr float DEFAULT_DISTANCE = 36.0f;
+
+    // Default camera target: centre of the stage-area bounding box
+    // (x 15..40, z 19..35), i.e. just west of the stage centre
+    // (32, 27) so the stage, dance floor and the three pre-placed
+    // facilities (medtent 15,25; bathroom 20,20; food 20,30) all
+    // sit in frame. The gate (0, 26) still peeks in at the left
+    // edge; the far fence corners are out of frame at this zoom.
+    static constexpr float DEFAULT_TARGET_X = 27.5f;
+    static constexpr float DEFAULT_TARGET_Z = 27.0f;
 
     // Camera distance and angle settings
     float distance = DEFAULT_DISTANCE;
@@ -116,8 +126,8 @@ struct IsometricCamera {
     }
 
     // ── 2D iso projection ──────────────────────────────────────────
-    // Tile size in px, driven by the shared zoom (distance): 21.2px at
-    // the default distance of 68, 2:1 diamonds (TILE_H = TILE_W / 2).
+    // Tile size in px, driven by the shared zoom (distance): 40px at
+    // the default distance of 36, 2:1 diamonds (TILE_H = TILE_W / 2).
     float iso_tile_w() const { return 1440.0f / distance; }
     float iso_tile_h() const { return iso_tile_w() * 0.5f; }
 

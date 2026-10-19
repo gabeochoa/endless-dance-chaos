@@ -18,10 +18,11 @@ Entity& make_sophie() {
     sophie.addComponent<ProvidesCamera>();
     EntityHelper::registerSingleton<ProvidesCamera>(sophie);
 
-    // Center camera on the initial bought park (fence at 0/51), not on
-    // the whole preallocated grid — most of it is Locked land.
-    sophie.get<ProvidesCamera>().cam.target = {(PLAY_MAX + 1) / 2.0f, 0,
-                                               (PLAY_MAX + 1) / 2.0f};
+    // Center camera on the stage area (DEFAULT_TARGET), not on the
+    // whole bought park — the default view frames the action.
+    sophie.get<ProvidesCamera>().cam.target = {
+        IsometricCamera::DEFAULT_TARGET_X, 0,
+        IsometricCamera::DEFAULT_TARGET_Z};
     sophie.get<ProvidesCamera>().cam.update_camera_position();
 
     sophie.addComponent<Grid>();
@@ -304,16 +305,16 @@ void reset_game_state() {
     }
 
     // Reset the view to the default framing: iso ON, default zoom
-    // (distance 68, framing the whole park footprint inside the
-    // usable viewport and clear of the park window), camera
-    // re-centred on the park centre. Rotation is intentionally left
-    // alone (existing behavior). Without the distance/target reset,
-    // a previous run's zoomed camera would leak into the fresh game
-    // (e.g. 17_iso_default captured at the pinch test's distance 80
-    // instead of the default 68).
+    // (distance 36, framing the stage area inside the usable
+    // viewport), camera re-centred on the stage area. Rotation is
+    // intentionally left alone (existing behavior). Without the
+    // distance/target reset, a previous run's zoomed camera would
+    // leak into the fresh game (e.g. 17_iso_default captured at
+    // the pinch test's distance 80 instead of the default 36).
     if (auto* cam = EntityHelper::get_singleton_cmp<ProvidesCamera>()) {
         cam->cam.iso_mode = true;
-        cam->cam.target = {(PLAY_MAX + 1) / 2.0f, 0, (PLAY_MAX + 1) / 2.0f};
+        cam->cam.target = {IsometricCamera::DEFAULT_TARGET_X, 0,
+                           IsometricCamera::DEFAULT_TARGET_Z};
         cam->cam.set_distance(IsometricCamera::DEFAULT_DISTANCE);
     }
 

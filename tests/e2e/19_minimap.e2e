@@ -16,3 +16,18 @@ wait_frames 5
 # Minimap should reflect the new content
 assert_region_not_blank 1130 570 140 140
 screenshot 19_minimap_with_content
+
+# Click-to-jump: a click on the minimap re-centres the camera on the
+# clicked tile (minimap origin 1130,570, scale 150/102 per tile), so
+# the whole park stays reachable from the closer stage-area default
+# view. Click (1200, 620) => tile (70*102/150, 50*102/150) = (47.6, 34).
+click 1200 620
+wait_frames 2
+assert_camera_target 47.6 34
+screenshot 19_minimap_jumped
+
+# Click back to the stage area: (1177, 610) => (47*102/150, 40*102/150)
+# = (31.96, 27.2), back on the stage.
+click 1177 610
+wait_frames 2
+assert_camera_target 31.96 27.2

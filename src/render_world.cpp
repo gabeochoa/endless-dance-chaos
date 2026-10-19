@@ -185,18 +185,48 @@ static void iso_draw_diamond(float cx, float cy, float tw, float th,
 // a slightly inset tile-color diamond reads as a thin grid line without
 // a per-tile line call (cheaper, and batch-friendly). The seam is thin
 // (1px inset) and dark (50% darken): the old 2px / 35% seam read as a
-// bright mint grid over the vivid grass.
+// bright mint grid over the vivid grass. Seams are for paving only
+// (paths / plaza / gate): grass is seamless (see iso_draw_tile_plain)
+// so the lawn stops reading as a stitched grid.
 static void iso_draw_tile(float cx, float cy, float tw, float th, Color color) {
     iso_draw_diamond(cx, cy, tw, th, darken_color(color, 0.50f));
     iso_draw_diamond(cx, cy, std::max(tw - 1.0f, 1.0f),
                      std::max(th - 0.5f, 1.0f), color);
 }
 
+// Seamless ground tile: one full diamond, no inset seam line.
+static void iso_draw_tile_plain(float cx, float cy, float tw, float th,
+                                Color color) {
+    iso_draw_diamond(cx, cy, tw, th, color);
+}
+
+// Deterministic per-tile shade variation: hashes (x, z) to a
+// brightness factor in [0.94, 1.06] (±6%), so neighbouring grass
+// tiles differ just enough to read as texture without banding or
+// a visible grid. Same (x, z) always yields the same shade, so the
+// variation is stable frame to frame.
+static float ground_shade(int x, int z) {
+    uint32_t h = static_cast<uint32_t>(x) * 73856093u ^
+                 static_cast<uint32_t>(z) * 19349663u;
+    h ^= h >> 16;
+    h *= 0x45d9f3b;
+    h ^= h >> 16;
+    return 0.94f + (static_cast<float>(h & 0xFFFF) / 65535.0f) * 0.12f;
+}
+
+static Color shade_color(Color c, float f) {
+    return Color{static_cast<unsigned char>(std::min(255.0f, c.r * f)),
+                 static_cast<unsigned char>(std::min(255.0f, c.g * f)),
+                 static_cast<unsigned char>(std::min(255.0f, c.b * f)), c.a};
+}
+
 // Raised terrain tile: side skirts from the base diamond up to the
 // lifted diamond, so a +1 plot reads as a step, not a floating tile.
 // Left skirt darker, right skirt lighter (same shading as iso blocks).
+// The lifted top follows the flat-ground seam rule: seamless for
+// grass, seamed for paving.
 static void iso_draw_raised_tile(float cx, float cy, float tw, float th,
-                                 Color color, float h) {
+                                 Color color, float h, bool seam) {
     float ry = cy - h;  // raised-diamond center
     vec2 right{cx + tw * 0.5f, ry};
     vec2 bottom{cx, ry + th * 0.5f};
@@ -208,7 +238,10 @@ static void iso_draw_raised_tile(float cx, float cy, float tw, float th,
                    darken_color(color, 0.35f));
     iso_draw_poly4(right, bottom, bottom_base, right_base,
                    darken_color(color, 0.15f));
-    iso_draw_tile(cx, ry, tw, th, color);
+    if (seam)
+        iso_draw_tile(cx, ry, tw, th, color);
+    else
+        iso_draw_tile_plain(cx, ry, tw, th, color);
 }
 
 // Extruded block: two side faces + a lightened roof diamond. Height is in
@@ -234,9 +267,17 @@ static void iso_draw_block(float cx, float cy, float tw, float th, float h,
 // The renderer's urgent-glyph lookup is urgent_need_glyph in
 // render_helpers.h (shared with the E2E bubble-count assert).
 
+// Hair-cap colors, picked by a hash of the entity id so neighbours
+// rarely share a hair color either.
+static constexpr Color HAIR_PALETTE[] = {
+    {30, 20, 15, 255},  {90, 55, 25, 255}, {200, 160, 60, 255},
+    {150, 40, 30, 255}, {60, 60, 60, 255}, {230, 230, 230, 255},
+};
+
 struct IsoPeep {
     float wx = 0, wz = 0, bob = 0;
     Color body{255, 255, 255, 255};
+    Color hair{30, 20, 15, 255};
     Color pip{255, 255, 255, 255};
     const char* glyph = nullptr;  // thought-bubble glyph, or nullptr
     bool is_staff = false;
@@ -273,8 +314,8 @@ struct IsoDraw {
 };
 
 // Footprint side length (tiles) for buildings with silhouette extras:
-// Stage 4x4, the 2x2 facilities 2x2. Anything else (Bench, Security
-// Post, Water Station) gets plain blocks, no extras.
+// Stage 4x4, the 2x2 facilities 2x2, the 1x1 posts 1x1. Bench gets a
+// plain low block, no extras.
 static int silhouette_span(TileType type) {
     switch (type) {
         case TileType::Stage:
@@ -284,6 +325,9 @@ static int silhouette_span(TileType type) {
         case TileType::MedTent:
         case TileType::Bar:
             return 2;
+        case TileType::SecurityPost:
+        case TileType::WaterStation:
+            return 1;
         default:
             return 0;
     }
@@ -367,9 +411,12 @@ struct RenderIsoSystem : System<> {
                     items.push_back(
                         {depth, 2, 7, x, z, weather_color, 0, -1, lift});
                 } else if (is_building_tile(tile.type)) {
+                    // Base box height: stage tallest, facilities
+                    // tall enough that walls + roof + sign read at
+                    // the default zoom, bench a low block.
                     float h = tile.type == TileType::Stage   ? th * 0.95f
                               : tile.type == TileType::Bench ? th * 0.25f
-                                                             : th * 0.55f;
+                                                             : th * 0.75f;
                     items.push_back(
                         {depth, 2, 2, x, z, weather_color, h, -1, lift});
                     // Per-footprint silhouette extras (kind 8): one
@@ -512,8 +559,12 @@ struct RenderIsoSystem : System<> {
                     if (grid->in_bounds(pgx, pgz))
                         peep_lift = grid->at(pgx, pgz).height * th * 0.35f;
                 }
-                peeps.push_back({wx, wz, bob, body, DESIRE_COLORS[desire_idx],
-                                 glyph, false, is_vip, peep_lift});
+                Color hair =
+                    HAIR_PALETTE[hash_agent_color(eid, agent.color_idx + 11) %
+                                 6];
+                peeps.push_back({wx, wz, bob, body, hair,
+                                 DESIRE_COLORS[desire_idx], glyph, false,
+                                 is_vip, peep_lift});
                 items.push_back({wx + wz, 3, 3, 0, 0, {}, 0, ref});
                 // VIPs always get their star bubble; other agents only
                 // get a bubble for an urgent need.
@@ -543,8 +594,11 @@ struct RenderIsoSystem : System<> {
                     if (grid->in_bounds(sgx, sgz))
                         staff_lift = grid->at(sgx, sgz).height * th * 0.35f;
                 }
-                peeps.push_back({tf.position.x, tf.position.y, 0, body, pip,
-                                 nullptr, true, false, staff_lift});
+                Color hair =
+                    HAIR_PALETTE[hash_agent_color(static_cast<int>(e.id), 7) %
+                                 6];
+                peeps.push_back({tf.position.x, tf.position.y, 0, body, hair,
+                                 pip, nullptr, true, false, staff_lift});
                 items.push_back(
                     {tf.position.x + tf.position.y, 3, 3, 0, 0, {}, 0, ref});
             }
@@ -594,11 +648,58 @@ struct RenderIsoSystem : System<> {
                 case 0: {
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
-                    if (it.lift > 0.f)
-                        iso_draw_raised_tile(s.x, s.y, tw, th, it.color,
-                                             it.lift);
-                    else
-                        iso_draw_tile(s.x, s.y, tw, th, it.color);
+                    TileType gtype = TileType::Grass;
+                    if (grid && grid->in_bounds(it.x, it.z))
+                        gtype = grid->at(it.x, it.z).type;
+                    // Ground seam rule: grass / locked lawn is
+                    // seamless with per-tile shade variation; paving
+                    // (paths, gate) keeps the seam; the dance floor
+                    // is a checker two-tone with a dark border edge
+                    // where it meets anything but floor / stage.
+                    if (gtype == TileType::StageFloor) {
+                        float ck = ((it.x + it.z) & 1) ? 1.07f : 0.93f;
+                        Color floor_c = shade_color(it.color, ck);
+                        bool border = false;
+                        if (grid) {
+                            static constexpr int NB[4][2] = {
+                                {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                            for (auto& d : NB) {
+                                int nx = it.x + d[0], nz = it.z + d[1];
+                                if (!grid->in_bounds(nx, nz)) {
+                                    border = true;
+                                    break;
+                                }
+                                TileType nt = grid->at(nx, nz).type;
+                                if (nt != TileType::StageFloor &&
+                                    nt != TileType::Stage) {
+                                    border = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (it.lift > 0.f)
+                            iso_draw_raised_tile(s.x, s.y, tw, th, floor_c,
+                                                 it.lift, true);
+                        else if (border)
+                            iso_draw_tile(s.x, s.y, tw, th, floor_c);
+                        else
+                            iso_draw_tile_plain(s.x, s.y, tw, th, floor_c);
+                    } else if (gtype == TileType::Grass ||
+                               gtype == TileType::Locked) {
+                        Color shaded =
+                            shade_color(it.color, ground_shade(it.x, it.z));
+                        if (it.lift > 0.f)
+                            iso_draw_raised_tile(s.x, s.y, tw, th, shaded,
+                                                 it.lift, false);
+                        else
+                            iso_draw_tile_plain(s.x, s.y, tw, th, shaded);
+                    } else {
+                        if (it.lift > 0.f)
+                            iso_draw_raised_tile(s.x, s.y, tw, th, it.color,
+                                                 it.lift, true);
+                        else
+                            iso_draw_tile(s.x, s.y, tw, th, it.color);
+                    }
                     break;
                 }
                 case 1: {
@@ -752,27 +853,45 @@ struct RenderIsoSystem : System<> {
         }
     }
 
+    // Peep proportions, as fractions of the tile size: ~1.4x the old
+    // body (tw*0.20 / th*0.62) so peeps read as individuals at the
+    // default zoom. The bubble drawers share these constants so the
+    // bubble stays attached to the head.
+    static constexpr float PEEP_BODY_W_FRAC = 0.28f;
+    static constexpr float PEEP_BODY_H_FRAC = 0.87f;
+    static constexpr float PEEP_HEAD_R_FRAC = 0.10f;
+    static constexpr Color PEEP_OUTLINE = {20, 20, 20, 255};
+    static constexpr Color PEEP_SKIN = {255, 210, 170, 255};
+
     static void draw_iso_peep(float sx, float sy, float tw, float th,
                               const IsoPeep& p) {
-        // Drop-shadow ellipse on the ground, then a two-tone body:
-        // shirt-color torso, darkened legs, skin-tone head, desire
-        // pip on top. Head / torso / legs read as separate tones even
-        // at the small default-zoom peep size.
-        float body_w = std::max(4.0f, tw * 0.20f);
-        float body_h = std::max(5.0f, th * 0.62f);
-        float head_r = std::max(2.0f, tw * 0.07f);
-        draw_ellipse(static_cast<int>(sx), static_cast<int>(sy), body_w * 0.6f,
-                     body_w * 0.25f, Color{0, 0, 0, 60});
+        // Drop-shadow ellipse on the ground, then an outlined
+        // two-tone body: shirt-color torso, darkened legs, skin-tone
+        // head with a varied hair cap, desire pip on top. The dark
+        // outline separates each peep from the ground and from its
+        // neighbours, so a crowd reads as individuals, not a blob.
+        float body_w = std::max(5.0f, tw * PEEP_BODY_W_FRAC);
+        float body_h = std::max(7.0f, th * PEEP_BODY_H_FRAC);
+        float head_r = std::max(2.5f, tw * PEEP_HEAD_R_FRAC);
+        draw_ellipse(static_cast<int>(sx), static_cast<int>(sy), body_w * 0.70f,
+                     body_w * 0.28f, Color{0, 0, 0, 90});
         float torso_h = body_h * 0.62f;
+        draw_rect(sx - body_w * 0.5f - 1.0f, sy - body_h - 1.0f, body_w + 2.0f,
+                  body_h + 2.0f, PEEP_OUTLINE);
         draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, torso_h, p.body);
         draw_rect(sx - body_w * 0.5f, sy - body_h + torso_h, body_w,
                   body_h - torso_h, darken_color(p.body, 0.35f));
         float hx = sx;
         float hy = sy - body_h - head_r + 1.0f;
-        draw_circle(static_cast<int>(hx), static_cast<int>(hy), head_r,
-                    Color{255, 210, 170, 255});
-        float pip_w = std::max(3.0f, tw * 0.08f);
-        draw_rect(sx - pip_w * 0.5f, hy - head_r - 3.0f, pip_w, 3.0f, p.pip);
+        draw_circle(static_cast<int>(hx), static_cast<int>(hy), head_r + 1.0f,
+                    PEEP_OUTLINE);
+        draw_circle(static_cast<int>(hx), static_cast<int>(hy - head_r * 0.35f),
+                    head_r * 0.95f, p.hair);
+        draw_circle(static_cast<int>(hx), static_cast<int>(hy + head_r * 0.35f),
+                    head_r * 0.92f, PEEP_SKIN);
+        float pip_w = std::max(3.0f, tw * 0.10f);
+        draw_rect(sx - pip_w * 0.5f, hy - head_r * 1.4f - 4.0f, pip_w, 4.0f,
+                  p.pip);
     }
 
     static void draw_iso_bubble(float sx, float sy, float tw, float th,
@@ -781,8 +900,8 @@ struct RenderIsoSystem : System<> {
         // must still show at the default framing. Below ~12px tiles the
         // bubble would be bigger than the peep is tall.
         if (tw < 12.0f) return;
-        float body_h = std::max(5.0f, th * 0.62f);
-        float head_r = std::max(2.0f, tw * 0.07f);
+        float body_h = std::max(7.0f, th * PEEP_BODY_H_FRAC);
+        float head_r = std::max(2.5f, tw * PEEP_HEAD_R_FRAC);
         float font_size = 11.0f;
         vec2 m = measure_text_ex(get_font(), glyph, font_size, FONT_SPACING);
         float bw = m.x + 8.0f;
@@ -813,8 +932,8 @@ struct RenderIsoSystem : System<> {
     static void draw_iso_star_bubble(float sx, float sy, float tw, float th) {
         // Same gate as the need bubble: visible at default zoom.
         if (tw < 12.0f) return;
-        float body_h = std::max(5.0f, th * 0.62f);
-        float head_r = std::max(2.0f, tw * 0.07f);
+        float body_h = std::max(7.0f, th * PEEP_BODY_H_FRAC);
+        float head_r = std::max(2.5f, tw * PEEP_HEAD_R_FRAC);
         float bw = 26.0f;
         float bh = 20.0f;
         float by = sy - body_h - head_r * 2.0f - bh - 6.0f;
@@ -880,15 +999,100 @@ struct RenderIsoSystem : System<> {
             p.y -= block_h;
             return p;
         };
+        // Front sign board: a panel in the building's own color,
+        // standing on the roof toward the front vertex, carrying a
+        // white geometric glyph (no text). Boards sit above the
+        // roof so they never cover the walls.
+        auto sign_board = [&](float bx, float bottom_y, float bw, float bh,
+                              Color bg, int glyph) {
+            float bx0 = bx - bw * 0.5f;
+            float by0 = bottom_y - bh;
+            draw_rect(bx0, by0, bw, bh, bg);
+            draw_rect_lines(bx0, by0, bw, bh, Color{0, 0, 0, 160});
+            Color g{255, 255, 255, 255};
+            float gcx = bx, gcy = by0 + bh * 0.5f;
+            switch (glyph) {
+                case 0: {  // cross (medtent)
+                    float vw = std::max(2.0f, bw * 0.16f);
+                    float vh = bh * 0.72f;
+                    float hw = bw * 0.52f;
+                    float hh = std::max(2.0f, bh * 0.22f);
+                    draw_rect(gcx - vw * 0.5f, gcy - vh * 0.5f, vw, vh, g);
+                    draw_rect(gcx - hw * 0.5f, gcy - hh * 0.5f, hw, hh, g);
+                    break;
+                }
+                case 1: {  // person pictogram (WC)
+                    float hr = std::max(1.5f, bh * 0.16f);
+                    draw_circle(static_cast<int>(gcx),
+                                static_cast<int>(gcy - bh * 0.22f), hr, g);
+                    float pw = std::max(2.0f, bw * 0.16f);
+                    draw_rect(gcx - pw * 0.5f, gcy - bh * 0.02f, pw, bh * 0.42f,
+                              g);
+                    break;
+                }
+                case 2: {  // plate (food)
+                    draw_ellipse(static_cast<int>(gcx), static_cast<int>(gcy),
+                                 bw * 0.30f, bh * 0.30f, g);
+                    draw_ellipse(static_cast<int>(gcx), static_cast<int>(gcy),
+                                 bw * 0.16f, bh * 0.16f, bg);
+                    draw_circle(static_cast<int>(gcx), static_cast<int>(gcy),
+                                std::max(1.0f, bh * 0.08f), g);
+                    break;
+                }
+                case 3: {  // droplet (water)
+                    float dr = std::max(1.5f, bh * 0.22f);
+                    draw_circle(static_cast<int>(gcx),
+                                static_cast<int>(gcy + bh * 0.10f), dr, g);
+                    draw_triangle({gcx - dr, gcy + bh * 0.10f},
+                                  {gcx + dr, gcy + bh * 0.10f},
+                                  {gcx, gcy - bh * 0.36f}, g);
+                    break;
+                }
+                case 4: {  // shield (security)
+                    float sw = bw * 0.20f;
+                    draw_rect(gcx - sw, gcy - bh * 0.32f, sw * 2.0f, bh * 0.38f,
+                              g);
+                    draw_triangle({gcx - sw, gcy + bh * 0.06f},
+                                  {gcx + sw, gcy + bh * 0.06f},
+                                  {gcx, gcy + bh * 0.36f}, g);
+                    break;
+                }
+                default:
+                    break;
+            }
+        };
+        // Board geometry for this footprint: centred between the
+        // roof centre and the front vertex, standing on the roof.
+        auto board_front = [&](int glyph) {
+            vec2 br_roof = at_roof(br);
+            float bx = (c.x + br_roof.x) * 0.5f;
+            float bottom_y = (roof_y + br_roof.y) * 0.5f;
+            float bw = tw * (span == 1 ? 0.55f : 0.85f);
+            float bh = th * (span == 1 ? 0.60f : 0.75f);
+            sign_board(bx, bottom_y, bw, bh, color, glyph);
+        };
+
         switch (type) {
             case TileType::Stage: {
-                // Canopy: a dark two-tone diamond floating above the
-                // roof, on the whole-footprint diamond.
+                // Raised platform (the per-tile blocks) + back wall
+                // + roof canopy on 4 posts + speaker towers: the
+                // back wall is a vertical face along the rear roof
+                // edge, rising to the canopy; the posts join the
+                // canopy corners to the roof.
                 float canopy_h = block_h + th * 0.55f;
                 auto up = [&](vec2 p) {
                     p.y -= canopy_h;
                     return p;
                 };
+                iso_draw_poly4(at_roof(tl), at_roof(tr), up(tr), up(tl),
+                               darken_color(color, 0.55f));
+                float post_w = std::max(2.0f, tw * 0.06f);
+                vec2 corners[4] = {tl, tr, br, bl};
+                for (vec2 corner : corners) {
+                    draw_rect(corner.x - post_w * 0.5f, corner.y - canopy_h,
+                              post_w, canopy_h - block_h,
+                              darken_color(color, 0.60f));
+                }
                 iso_draw_poly4(up(tl), up(tr), up(br), up(bl),
                                darken_color(color, 0.45f));
                 vec2 mid{(up(tl).x + up(br).x) * 0.5f,
@@ -899,42 +1103,40 @@ struct RenderIsoSystem : System<> {
                 };
                 iso_draw_poly4(inset(up(tl)), inset(up(tr)), inset(up(br)),
                                inset(up(bl)), lighten_color(color, 0.25f));
-                // Speaker stacks: dark columns with a light cone,
-                // standing on the ground at the front-edge midpoints.
+                // Speaker towers: tall dark columns with two light
+                // cones, standing on the ground at the front-edge
+                // midpoints.
                 vec2 fronts[2] = {{(bl.x + br.x) * 0.5f, (bl.y + br.y) * 0.5f},
                                   {(br.x + tr.x) * 0.5f, (br.y + tr.y) * 0.5f}};
                 for (vec2 f : fronts) {
-                    float w = std::max(2.0f, tw * 0.18f);
-                    float hs = th * 0.95f;
+                    float w = std::max(2.0f, tw * 0.22f);
+                    float hs = th * 1.15f;
                     draw_rect(f.x - w * 0.5f, f.y - hs, w, hs,
                               Color{25, 25, 25, 255});
-                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.15f, w * 0.5f,
+                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.12f, w * 0.5f,
+                              hs * 0.18f, Color{200, 200, 200, 255});
+                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.52f, w * 0.5f,
                               hs * 0.18f, Color{200, 200, 200, 255});
                 }
                 break;
             }
             case TileType::Bathroom: {
-                // WC signage block: a white board on the roof with a
-                // blue person pictogram (head + body) — the restroom
-                // sign, without relying on a "WC" text label.
-                float bw = tw * 1.1f;
-                float bh = th * 0.85f;
-                draw_rect(c.x - bw * 0.5f, roof_y - bh, bw, bh,
-                          Color{255, 255, 255, 255});
-                Color sign_blue{0, 60, 160, 255};
-                float hr = std::max(1.5f, th * 0.12f);
-                draw_circle(static_cast<int>(c.x),
-                            static_cast<int>(roof_y - bh + bh * 0.28f), hr,
-                            sign_blue);
-                float pw = std::max(2.0f, tw * 0.10f);
-                draw_rect(c.x - pw * 0.5f, roof_y - bh + bh * 0.45f, pw,
-                          bh * 0.45f, sign_blue);
+                // WC = small block + sign: a small extruded block
+                // on the roof, with the front sign board (building
+                // color, white person pictogram) standing on it.
+                float bh2 = th * 0.40f;
+                iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2, color);
+                float bw = tw * 0.70f;
+                float bh = th * 0.70f;
+                sign_board(c.x, roof_y - bh2, bw, bh, color, 1);
                 break;
             }
             case TileType::Food: {
-                // Awning: striped panels (white / stall pink,
-                // alternating) hanging from the two front roof edges.
-                float drop = th * 0.5f;
+                // Food = flat awning + sign: a striped slab jutting
+                // straight out from the two front roof edges (white
+                // / stall color, alternating), plus the front sign
+                // board (building color, white plate glyph).
+                float drop = th * 0.60f;
                 vec2 rtr = at_roof(tr);
                 vec2 rbr = at_roof(br), rbl = at_roof(bl);
                 auto panel = [&](vec2 p1, vec2 p2, Color pc) {
@@ -942,43 +1144,95 @@ struct RenderIsoSystem : System<> {
                                    {p1.x, p1.y + drop}, pc);
                 };
                 auto striped_edge = [&](vec2 p1, vec2 p2) {
-                    vec2 m{(p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f};
-                    panel(p1, m, Color{255, 255, 255, 255});
-                    panel(m, p2, color);
+                    vec2 m1{(2.0f * p1.x + p2.x) / 3.0f,
+                            (2.0f * p1.y + p2.y) / 3.0f};
+                    vec2 m2{(p1.x + 2.0f * p2.x) / 3.0f,
+                            (p1.y + 2.0f * p2.y) / 3.0f};
+                    panel(p1, m1, Color{255, 255, 255, 255});
+                    panel(m1, m2, color);
+                    panel(m2, p2, Color{255, 255, 255, 255});
                 };
                 striped_edge(rbl, rbr);
                 striped_edge(rbr, rtr);
+                board_front(2);
                 break;
             }
             case TileType::MedTent: {
-                // Cross: a white medical cross standing on the roof.
-                float vw = std::max(2.0f, tw * 0.14f);
-                float vh = th * 0.75f;
-                float hw = tw * 0.42f;
-                float hh = std::max(2.0f, th * 0.22f);
-                Color cross{255, 255, 255, 255};
-                draw_rect(c.x - vw * 0.5f, roof_y - vh, vw, vh, cross);
-                draw_rect(c.x - hw * 0.5f, roof_y - vh * 0.68f, hw, hh, cross);
+                // Med = tent peak roof + sign: a peaked (gable)
+                // roof — white front gable, shaded side gable,
+                // apex above the roof — plus the front sign board
+                // (building color, white cross glyph).
+                vec2 rtr = at_roof(tr);
+                vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                vec2 apex{c.x, roof_y - th * 0.55f};
+                draw_triangle(rbr, rtr, apex, lighten_color(color, 0.35f));
+                draw_triangle(rbl, rbr, apex, Color{255, 255, 255, 255});
+                board_front(0);
                 break;
             }
             case TileType::Bar: {
-                // Counter front: a wood counter bar across the front
-                // of the building with two bottles on top.
+                // Bar = long counter + roof: a flat roof slab on
+                // two posts above the roof, and a long counter
+                // across the front in the building's color with
+                // two bottles on top.
+                vec2 rtl = at_roof(tl), rtr = at_roof(tr);
+                vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                auto inset_slab = [&](vec2 p) {
+                    return vec2{c.x + (p.x - c.x) * 0.90f,
+                                (roof_y - th * 0.60f) + (p.y - roof_y) * 0.90f};
+                };
+                iso_draw_poly4(inset_slab(rtl), inset_slab(rtr),
+                               inset_slab(rbr), inset_slab(rbl),
+                               Color{110, 70, 35, 255});
+                float post_w = std::max(2.0f, tw * 0.05f);
+                vec2 post_xs[2] = {
+                    {(rbl.x + rbr.x) * 0.5f, (rbl.y + rbr.y) * 0.5f},
+                    {(rbr.x + rtr.x) * 0.5f, (rbr.y + rtr.y) * 0.5f}};
+                for (vec2 f : post_xs) {
+                    draw_rect(f.x - post_w * 0.5f, roof_y - th * 0.60f, post_w,
+                              th * 0.60f, Color{110, 70, 35, 255});
+                }
                 vec2 f{(bl.x + 2 * br.x + tr.x) * 0.25f,
                        (bl.y + 2 * br.y + tr.y) * 0.25f};
                 float cw = tw * 1.5f;
-                float ch = std::max(3.0f, th * 0.32f);
+                float ch = std::max(3.0f, th * 0.50f);
                 float cy = f.y - th * 0.1f - ch;
-                draw_rect(f.x - cw * 0.5f, cy, cw, ch,
-                          Color{170, 110, 55, 255});
+                draw_rect(f.x - cw * 0.5f, cy, cw, ch, color);
                 draw_rect(f.x - cw * 0.5f, cy, cw, std::max(1.0f, ch * 0.25f),
-                          Color{220, 170, 100, 255});
+                          lighten_color(color, 0.30f));
                 float bw = std::max(2.0f, tw * 0.08f);
                 float bh = std::max(3.0f, th * 0.30f);
                 draw_rect(f.x - cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
                           Color{0, 180, 80, 255});
                 draw_rect(f.x + cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
                           Color{255, 60, 60, 255});
+                break;
+            }
+            case TileType::SecurityPost: {
+                // Security = post tower: a tall post rising from
+                // the roof with a cap diamond, and the front sign
+                // board (building color, white shield glyph)
+                // mounted on the post.
+                float post_w = std::max(2.5f, tw * 0.10f);
+                float post_h = th * 1.15f;
+                draw_rect(c.x - post_w * 0.5f, roof_y - post_h, post_w, post_h,
+                          darken_color(color, 0.25f));
+                iso_draw_diamond(c.x, roof_y - post_h, tw * 0.75f, th * 0.75f,
+                                 lighten_color(color, 0.20f));
+                float bw = tw * 0.55f;
+                float bh = th * 0.60f;
+                sign_board(c.x, roof_y - th * 0.35f, bw, bh, color, 4);
+                break;
+            }
+            case TileType::WaterStation: {
+                // Water = small block + sign: a small extruded
+                // block on the roof, with the front sign board
+                // (building color, white droplet glyph) on it.
+                float bh2 = th * 0.40f;
+                iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2, color);
+                float bw = tw * 0.70f;
+                float bh = th * 0.70f;
+                sign_board(c.x, roof_y - bh2, bw, bh, color, 3);
                 break;
             }
             default:
