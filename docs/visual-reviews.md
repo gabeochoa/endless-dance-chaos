@@ -38,3 +38,13 @@ bodies/spacing, break path+apron repetition. NOTE: reviewer keeps grading
 vs full RCT2 sprite art — geometric-primitive ceiling is near; a step change
 needs real sprite assets (Kenney-style CC0 in wm_afterhours/resources/kenney
 is a candidate source). Flagged for Gabe's call, not silently gold-plating.
+
+## 2026-10-18 populated re-review (opus-5-5): C- (was D+/C-)
+Kenney pass made almost no visible difference (only stage music note reads).
+Real catches: (1) DRAW ORDER bug — guests behind stage draw OVER its roof,
+some stand on stage footprint; (2) magenta head squares on all 200 = noise;
+(3) sprite build shows NO guest bubbles (regression vs primitive WC bubble);
+(4) buildings barely taller than guests, jagged, plates double-label;
+(5) tile edges stair-stepped, 80% empty grass, GATE cut off; (6) Guests panel
+shows "Guests: -" with 200 attendees (data bug). Peeps C+ at crowd edge.
+Fix order logged for next dance chunk (draw order first — it's a bug).
