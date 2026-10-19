@@ -7,6 +7,7 @@
 #include "game.h"
 #include "input_mapping.h"
 #include "render_helpers.h"
+#include "sprites.h"
 #include "systems.h"
 #include "update_helpers.h"
 
@@ -203,6 +204,11 @@ void reset_game_state() {
         gs->max_attendees = 0;
         gs->show_data_layer = false;
         gs->show_debug = false;
+        // Sprite toggle is a render setting, not sim state, but
+        // resetting it to ON keeps scripts hermetic: a script that
+        // turns sprites off cannot leak primitives into the next
+        // script's screenshots.
+        sprites_enabled() = true;
         gs->speed_multiplier = 1.0f;
         gs->agents_exited = 0;
         gs->carryover_count = 0;

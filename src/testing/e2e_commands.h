@@ -15,6 +15,7 @@
 #include "guest_thoughts.h"
 #include "render_helpers.h"
 #include "save_system.h"
+#include "sprites.h"
 #include "systems.h"
 #include "update_helpers.h"
 
@@ -800,6 +801,46 @@ static void cmd_assert_overlay(testing::PendingE2ECommand& cmd) {
     if (gs->show_data_layer != want_on)
         cmd.fail(fmt::format("assert_overlay failed: expected {}, got {}",
                              cmd.arg(0), gs->show_data_layer ? "on" : "off"));
+    else
+        cmd.consume();
+}
+
+// ── Kenney sprites toggle ──────────────────────────────────────────────
+// set_sprites on|off — sprite rendering master toggle (default ON).
+// OFF draws only the geometric primitives; reset_game restores ON.
+// assert_sprites on|off checks the toggle. assert_sprites_loaded is a
+// probe, not a suite assert: it fails when no texture loaded at all,
+// which is the expected outcome on a headless run whose GL context
+// cannot upload textures (then screenshots show primitives).
+static void cmd_set_sprites(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("set_sprites requires on/off");
+        return;
+    }
+    bool want_on = (cmd.arg(0) == "on" || cmd.arg(0) == "1");
+    sprites_enabled() = want_on;
+    log_info("[E2E] Sprites: {}", want_on ? "ON" : "OFF");
+    cmd.consume();
+}
+
+static void cmd_assert_sprites(testing::PendingE2ECommand& cmd) {
+    if (!cmd.has_args(1)) {
+        cmd.fail("assert_sprites requires on/off");
+        return;
+    }
+    bool want_on = (cmd.arg(0) == "on" || cmd.arg(0) == "1");
+    if (sprites_enabled() != want_on)
+        cmd.fail(fmt::format("assert_sprites failed: expected {}, got {}",
+                             cmd.arg(0), sprites_enabled() ? "on" : "off"));
+    else
+        cmd.consume();
+}
+
+static void cmd_assert_sprites_loaded(testing::PendingE2ECommand& cmd) {
+    int n = sprites_loaded_count();
+    log_info("[E2E] Sprites loaded: {}/{}", n, SPRITE_COUNT);
+    if (n == 0)
+        cmd.fail("assert_sprites_loaded failed: no sprite texture loaded");
     else
         cmd.consume();
 }
@@ -4140,6 +4181,9 @@ static void init_e2e_registry() {
     r.add("assert_game_status", cmd_assert_game_status);
     r.add("toggle_overlay", cmd_toggle_overlay);
     r.add("assert_overlay", cmd_assert_overlay);
+    r.add("set_sprites", cmd_set_sprites);
+    r.add("assert_sprites", cmd_assert_sprites);
+    r.add("assert_sprites_loaded", cmd_assert_sprites_loaded);
     r.add("set_agent_speed", cmd_set_agent_speed);
     r.add("set_move_speed", cmd_set_move_speed);
     r.add("get_death_count", cmd_get_death_count);

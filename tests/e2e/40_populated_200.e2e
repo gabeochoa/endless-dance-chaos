@@ -1,0 +1,67 @@
+# Populated shot: 200+ guests in the stage area, sprites ON.
+# The re-review judges peeps at scale from tests/e2e/screenshots/populated_200.png.
+# Peeps stay geometric (no peep sprites exist in the Kenney packs);
+# the sprite win here is emote thought bubbles, building sign glyphs,
+# the stage music note, toolbar icons, and Guests-page need icons.
+#
+# Layout follows 22_stage_fill (narrow approaches from four sides +
+# a long artist so agents keep watching), scaled to 200 guests:
+# 10 spawns x 20 agents, each spawn tile at 20 agents — below the
+# 36/tile crush-damage line, so the >= 200 assert holds.
+
+reset_game
+set_spawn_enabled 0
+set_sprites on
+assert_sprites on
+set_agent_speed 10
+wait_frames 5
+
+# Force a very long artist so agents keep watching through the test.
+# At 10x clock speed, 1 real second = 20 game minutes, so 9999 minutes
+# lasts ~500 real seconds — far beyond this test's duration.
+force_artist LongAct 100 9999
+set_time 10 05
+wait_frames 5
+
+# Narrow (2-tile) paths from map edges, stopping before the
+# StageFloor ring (radius 8 from center 32,27).
+draw_path_rect 1 26 23 27
+draw_path_rect 41 26 50 27
+draw_path_rect 31 1 32 18
+draw_path_rect 31 36 32 50
+wait_frames 5
+
+# 200 guests from all four sides + two mid-map spawns.
+spawn_agents 1 26 20 stage
+spawn_agents 1 27 20 stage
+spawn_agents 50 26 20 stage
+spawn_agents 50 27 20 stage
+spawn_agents 31 1 20 stage
+spawn_agents 32 1 20 stage
+spawn_agents 31 50 20 stage
+spawn_agents 32 50 20 stage
+spawn_agents 5 26 20 stage
+spawn_agents 45 27 20 stage
+wait_frames 5
+
+assert_agent_count >= 200
+
+# Wait for agents to cross the map, arrive, and settle at the stage.
+wait 15
+set_time 11 00
+wait 10
+set_time 12 00
+
+screenshot populated_200
+
+# Most agents should be on StageFloor tiles; a good number watching.
+assert_agents_on_tiletype stagefloor >= 30
+assert_agent_watching >= 10
+
+# Fallback: the same scene with sprites OFF must still render
+# (geometric primitives only) without crashing, then restore ON.
+set_sprites off
+assert_sprites off
+screenshot populated_200_nosprites
+set_sprites on
+assert_sprites on

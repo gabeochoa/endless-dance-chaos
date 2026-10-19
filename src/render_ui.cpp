@@ -9,6 +9,7 @@
 #include "gfx3d.h"
 #include "guest_thoughts.h"
 #include "render_helpers.h"
+#include "sprites.h"
 #include "save_system.h"
 #include "systems.h"
 #include "update_helpers.h"
@@ -213,19 +214,24 @@ struct ToolInfo {
     const char* label;
     Color color;
     const char* full_name;
+    // Kenney icon drawn in place of the letter when sprites are on
+    // and the texture loaded; Count keeps the letter + color chip.
+    // Tools without an unambiguous icon in the verified packs keep
+    // the letter: no icon is better than a forced one.
+    SpriteId icon = SpriteId::Count;
 };
 static constexpr ToolInfo TOOL_INFO[] = {
     {"P", {245, 205, 120, 255}, "Path"},
     {"F", {150, 95, 50, 255}, "Fence"},
-    {"G", {255, 255, 255, 255}, "Gate"},
-    {"S", {200, 30, 230, 255}, "Stage"},
+    {"G", {255, 255, 255, 255}, "Gate", SpriteId::Door},
+    {"S", {200, 30, 230, 255}, "Stage", SpriteId::MusicOn},
     {"B", {0, 210, 200, 255}, "Bathroom"},
     {"Fd", {255, 80, 160, 255}, "Food Stall"},
-    {"M", {255, 45, 45, 255}, "Med Tent"},
-    {"X", {255, 68, 68, 255}, "Demolish"},
+    {"M", {255, 45, 45, 255}, "Med Tent", SpriteId::Cross},
+    {"X", {255, 68, 68, 255}, "Demolish", SpriteId::Trashcan},
     {"Br", {255, 145, 0, 255}, "Bar"},
     {"SP", {50, 90, 255, 255}, "Security Post"},
-    {"W", {0, 180, 255, 255}, "Water Station"},
+    {"W", {0, 180, 255, 255}, "Water Station", SpriteId::Drop},
     {"Tr", {34, 139, 34, 255}, "Tree"},
     {"Bn", {160, 120, 80, 255}, "Bench"},
     {"Di", {176, 141, 88, 255}, "Dirt Path"},
@@ -456,7 +462,10 @@ struct RenderBuildBarSystem : System<> {
 
             // Panel-styled button: raised bevel, or pressed-in when
             // selected. The tool's building color shows as a chip strip
-            // across the top; the letter sits below it in black.
+            // across the top; the letter sits below it in black — or a
+            // Kenney icon replaces the letter when one is assigned and
+            // its texture loaded (sprites off / load failure keeps the
+            // letter, so the button stays usable either way).
             if (selected)
                 draw_bevel_panel_pressed(ox, oy, s, s,
                                          Color{165, 165, 165, 255});
@@ -464,10 +473,17 @@ struct RenderBuildBarSystem : System<> {
                 draw_bevel_panel(ox, oy, s, s, Color{200, 200, 200, 255});
             draw_rect(ox + 5, oy + 5, s - 10, 9, TOOL_INFO[i].color);
             draw_rect_lines(ox + 5, oy + 5, s - 10, 9, Color{30, 30, 30, 255});
-            auto label_m = ui_measure_text(TOOL_INFO[i].label, 16);
-            float lx = ox + (s - label_m.x) / 2.f;
-            float ly = oy + s - label_m.y - 5.f;
-            ui_draw_text(TOOL_INFO[i].label, lx, ly, 16, Color{0, 0, 0, 255});
+            bool icon_drawn =
+                TOOL_INFO[i].icon != SpriteId::Count &&
+                draw_sprite_centered(TOOL_INFO[i].icon, ox + s * 0.5f,
+                                     oy + s * 0.68f, std::min(s * 0.55f, 20.f));
+            if (!icon_drawn) {
+                auto label_m = ui_measure_text(TOOL_INFO[i].label, 16);
+                float lx = ox + (s - label_m.x) / 2.f;
+                float ly = oy + s - label_m.y - 5.f;
+                ui_draw_text(TOOL_INFO[i].label, lx, ly, 16,
+                             Color{0, 0, 0, 255});
+            }
 
             if (mouse.x >= ox && mouse.x <= ox + s && mouse.y >= oy &&
                 mouse.y <= oy + s) {
@@ -1428,6 +1444,15 @@ static void draw_park_window_guests_page() {
                  Color{0, 0, 0, 255});
     ui_draw_text(fmt::format("Need Bar: {}", s.need_bar), x, 310, 14,
                  Color{0, 0, 0, 255});
+    // Need-row icons, right-aligned in the window: same face mapping
+    // as the thought bubbles, plus the music note for stage watching.
+    // Additive only — when sprites are off the text rows are unchanged.
+    float icon_x = PARK_WINDOW_X + PARK_WINDOW_W - 26;
+    draw_sprite_centered(SpriteId::Music, icon_x, 198 + 7, 16);
+    draw_sprite_centered(SpriteId::FaceSad, icon_x, 226 + 7, 16);
+    draw_sprite_centered(SpriteId::FaceSad, icon_x, 254 + 7, 16);
+    draw_sprite_centered(SpriteId::FaceAngry, icon_x, 282 + 7, 16);
+    draw_sprite_centered(SpriteId::Alert, icon_x, 310 + 7, 16);
     if (auto* qs = EntityHelper::get_singleton_cmp<StageQueueState>()) {
         ui_draw_text(
             fmt::format("Queue: {} ({}s avg)", qs->queue_length_cached,

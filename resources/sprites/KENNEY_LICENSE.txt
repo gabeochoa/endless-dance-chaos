@@ -1,0 +1,82 @@
+KENNEY SPRITE ART — CC0 LICENSE
+============================
+All PNGs in this directory are by Kenney Vleugels (Kenney.nl),
+released under Creative Commons Zero (CC0 1.0).
+Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
+Source packs (read-only mirror at ~/p/wm_afterhours/resources/kenney/):
+
+------------------------------------------------------------
+--- kenney_emotes-pack / License.txt ---
+------------------------------------------------------------
+	
+
+	Emotes
+
+	by Kenney Vleugels (Kenney.nl)
+
+			------------------------------
+
+	License (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	You may use these assets in personal and commercial projects.
+	Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
+
+			------------------------------
+
+	Donate:   http://support.kenney.nl
+	Request:  http://request.kenney.nl
+
+	Follow on Twitter for updates: @KenneyNL (www.twitter.com/kenneynl)
+------------------------------------------------------------
+--- kenney_game-icons / license.txt ---
+------------------------------------------------------------
+
+###############################################################################
+
+	Game icon pack by Kenney Vleugels (www.kenney.nl)
+
+			------------------------------
+
+			        License (CC0)
+	       http://creativecommons.org/publicdomain/zero/1.0/
+
+	You may use these graphics in personal and commercial projects.
+	Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
+
+###############################################################################
+------------------------------------------------------------
+--- kenney_fantasy-ui-borders / License.txt ---
+------------------------------------------------------------
+(No files copied from this pack: its 96x96 1-bit panels do not
+ fit as window frames. License reproduced here for provenance.)
+	
+
+	Fantasy UI Borders (1.0)
+
+	Created/distributed by Kenney (www.kenney.nl)
+	Creation date: 03-12-2023
+
+	For the sample image the font 'Aoboshi One' was used, OPL (Open Font License)
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	You can use this content for personal, educational, and commercial purposes.
+
+	Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)
+
+			------------------------------
+
+	• Website : www.kenney.nl
+	• Donate  : www.kenney.nl/donate
+
+	• Patreon : patreon.com/kenney
+	
+	Follow on social media for updates:
+
+	• Twitter:	twitter.com/KenneyNL
+	• Instagram: 	instagram.com/kenney_nl
+	• Mastodon:	mastodon.gamedev.place/@kenney

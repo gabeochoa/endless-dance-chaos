@@ -8,6 +8,7 @@
 #include "components.h"
 #include "gfx3d.h"
 #include "render_helpers.h"
+#include "sprites.h"
 #include "systems.h"
 
 static constexpr float LOD_CLOSE_MAX = 25.0f;
@@ -902,12 +903,28 @@ struct RenderIsoSystem : System<> {
         if (tw < 12.0f) return;
         float body_h = std::max(7.0f, th * PEEP_BODY_H_FRAC);
         float head_r = std::max(2.5f, tw * PEEP_HEAD_R_FRAC);
-        float font_size = 11.0f;
-        vec2 m = measure_text_ex(get_font(), glyph, font_size, FONT_SPACING);
-        float bw = m.x + 8.0f;
-        float bh = m.y + 6.0f;
-        float bx = sx - bw * 0.5f;
-        float by = sy - body_h - head_r * 2.0f - bh - 6.0f;
+        // Sprite first: the Kenney emote face replaces the text glyph
+        // inside the same white bubble shell + tail. When sprites are
+        // off or the texture failed to load, the old measured text
+        // bubble is the fallback — same geometry, same registry call.
+        SpriteId face = sprite_for_need_glyph(glyph);
+        bool use_sprite =
+            face != SpriteId::Count && sprites_enabled() && sprite_loaded(face);
+        float bw, bh;
+        float bx, by;
+        vec2 text_m{0.f, 0.f};
+        if (use_sprite) {
+            bw = 26.0f;
+            bh = 20.0f;
+        } else {
+            float font_size = 11.0f;
+            text_m =
+                measure_text_ex(get_font(), glyph, font_size, FONT_SPACING);
+            bw = text_m.x + 8.0f;
+            bh = text_m.y + 6.0f;
+        }
+        bx = sx - bw * 0.5f;
+        by = sy - body_h - head_r * 2.0f - bh - 6.0f;
         draw_ellipse(static_cast<int>(sx), static_cast<int>(by + bh * 0.5f),
                      bw * 0.5f, bh * 0.5f, Color{255, 255, 255, 255});
         vec2 tail_top{sx - 2.0f, by + bh - 2.0f};
@@ -916,8 +933,13 @@ struct RenderIsoSystem : System<> {
         vec2 tail_mid{sx + 1.0f, by + bh - 1.0f};
         iso_draw_poly4(tail_top, tail_tip, tail_right, tail_mid,
                        Color{255, 255, 255, 255});
-        draw_text_ex(get_font(), glyph, {bx + 4.0f, by + 3.0f}, font_size,
-                     FONT_SPACING, Color{0, 0, 0, 255});
+        if (use_sprite) {
+            draw_sprite_centered(face, sx, by + bh * 0.5f,
+                                 std::min(bw, bh) * 0.8f);
+        } else {
+            draw_text_ex(get_font(), glyph, {bx + 4.0f, by + 3.0f}, 11.0f,
+                         FONT_SPACING, Color{0, 0, 0, 255});
+        }
         auto& vtr = afterhours::testing::VisibleTextRegistry::instance();
         vtr.register_text_if_visible(
             glyph, bx, by, bw, bh, DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
@@ -1004,11 +1026,19 @@ struct RenderIsoSystem : System<> {
         // white geometric glyph (no text). Boards sit above the
         // roof so they never cover the walls.
         auto sign_board = [&](float bx, float bottom_y, float bw, float bh,
-                              Color bg, int glyph) {
+                              Color bg, int glyph,
+                              SpriteId glyph_sprite = SpriteId::Count) {
             float bx0 = bx - bw * 0.5f;
             float by0 = bottom_y - bh;
             draw_rect(bx0, by0, bw, bh, bg);
             draw_rect_lines(bx0, by0, bw, bh, Color{0, 0, 0, 160});
+            // Sprite glyph first (MedTent cross, Water drop); the
+            // geometric glyph below is the fallback when sprites are
+            // off or the texture failed to load.
+            if (glyph_sprite != SpriteId::Count &&
+                draw_sprite_centered(glyph_sprite, bx, by0 + bh * 0.5f,
+                                     std::min(bw, bh) * 0.8f))
+                return;
             Color g{255, 255, 255, 255};
             float gcx = bx, gcy = by0 + bh * 0.5f;
             switch (glyph) {
@@ -1063,13 +1093,14 @@ struct RenderIsoSystem : System<> {
         };
         // Board geometry for this footprint: centred between the
         // roof centre and the front vertex, standing on the roof.
-        auto board_front = [&](int glyph) {
+        auto board_front = [&](int glyph,
+                               SpriteId glyph_sprite = SpriteId::Count) {
             vec2 br_roof = at_roof(br);
             float bx = (c.x + br_roof.x) * 0.5f;
             float bottom_y = (roof_y + br_roof.y) * 0.5f;
             float bw = tw * (span == 1 ? 0.55f : 0.85f);
             float bh = th * (span == 1 ? 0.60f : 0.75f);
-            sign_board(bx, bottom_y, bw, bh, color, glyph);
+            sign_board(bx, bottom_y, bw, bh, color, glyph, glyph_sprite);
         };
 
         switch (type) {
@@ -1103,6 +1134,23 @@ struct RenderIsoSystem : System<> {
                 };
                 iso_draw_poly4(inset(up(tl)), inset(up(tr)), inset(up(br)),
                                inset(up(bl)), lighten_color(color, 0.25f));
+                // Music-note sprite on the canopy panel (purely
+                // additive: no geometric glyph is replaced here, so
+                // there is no fallback to draw when sprites are off).
+                {
+                    vec2 q[4] = {inset(up(tl)), inset(up(tr)), inset(up(br)),
+                                 inset(up(bl))};
+                    float qx0 = std::min(std::min(q[0].x, q[1].x),
+                                         std::min(q[2].x, q[3].x));
+                    float qx1 = std::max(std::max(q[0].x, q[1].x),
+                                         std::max(q[2].x, q[3].x));
+                    float qy0 = std::min(std::min(q[0].y, q[1].y),
+                                         std::min(q[2].y, q[3].y));
+                    float qy1 = std::max(std::max(q[0].y, q[1].y),
+                                         std::max(q[2].y, q[3].y));
+                    draw_sprite_centered(SpriteId::Music, mid.x, mid.y,
+                                         std::min(qx1 - qx0, qy1 - qy0) * 0.6f);
+                }
                 // Speaker towers: tall dark columns with two light
                 // cones, standing on the ground at the front-edge
                 // midpoints.
@@ -1167,7 +1215,7 @@ struct RenderIsoSystem : System<> {
                 vec2 apex{c.x, roof_y - th * 0.55f};
                 draw_triangle(rbr, rtr, apex, lighten_color(color, 0.35f));
                 draw_triangle(rbl, rbr, apex, Color{255, 255, 255, 255});
-                board_front(0);
+                board_front(0, SpriteId::Cross);
                 break;
             }
             case TileType::Bar: {
@@ -1232,7 +1280,7 @@ struct RenderIsoSystem : System<> {
                 iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2, color);
                 float bw = tw * 0.70f;
                 float bh = th * 0.70f;
-                sign_board(c.x, roof_y - bh2, bw, bh, color, 3);
+                sign_board(c.x, roof_y - bh2, bw, bh, color, 3, SpriteId::Drop);
                 break;
             }
             default:
