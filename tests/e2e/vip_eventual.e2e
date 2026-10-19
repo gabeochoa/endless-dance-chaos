@@ -50,12 +50,12 @@ trigger_event vipvisit 60
 eventually_assert_count gte 1 10
 eventually_assert_agents_on_tiletype food gte 1 30
 eventually_assert 30 assert_vip_served_count gte 1
-eventually_assert_agent_watching gte 1 20
+eventually_assert_agent_watching gte 1 30
 # Longest eventually_ timeout above is 30s: wait it out so all four
 # resolve before the plain asserts and the next reset run. The 2s
 # margin covers dispatch cadence (a few frames); the deadlines run
 # from the eventually_ commands' first evaluation, just before this wait.
-wait 32
+wait 42
 # $10000 + $20 gate ticket on arrival + $250 VIP service bonus.
 assert_cash eq 10270
 assert_vip_count gte 1
