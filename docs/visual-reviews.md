@@ -29,3 +29,12 @@ multi-tile building sprites with roofs/shadows, textured ground (noise/varied
 tiles, no seam grid), dance floor as bordered plaza tiles, peeps bigger with
 contrast at default zoom; consider default view = stage area, minimap for
 whole park. Do not call visuals done until re-review improves.
+
+## 2026-10-18 re-review round 3 (gpt-6-sol): fidelity D+, readability C- (unchanged)
+Stage unmistakable, bar distinct; MED/WC/FOOD still color+label, not silhouette;
+peeps visible but read as pixel stack; grass textured OK; path/apron patterns
+still mechanical. Remaining: distinct roofs/fixtures per booth, peep heads/
+bodies/spacing, break path+apron repetition. NOTE: reviewer keeps grading
+vs full RCT2 sprite art — geometric-primitive ceiling is near; a step change
+needs real sprite assets (Kenney-style CC0 in wm_afterhours/resources/kenney
+is a candidate source). Flagged for Gabe's call, not silently gold-plating.
