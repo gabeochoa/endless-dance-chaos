@@ -169,21 +169,82 @@ static bool is_building_tile(TileType type);
 // the whole silhouette cannot satisfy both sides: the old
 // anchor+2*span-1 depth drew the canopy over front peeps' bubbles,
 // eating them.
-// Tiles/buildings are filled quads: on raylib, RL_TRIANGLES does not
-// rasterize in this render-texture pass (verified with a lone
-// DrawTriangle: background untouched, while RL_QUADS draws), so quads
-// go through afterhours draw_quad there. On Metal, draw_quad is only a
+// Tiles/buildings are filled quads: on raylib, RL_TRIANGLES rasterizes
+// only with draw_quad's winding (see the batching comment at
+// iso_draw_poly4); a lone (a, b, c) DrawTriangle draws nothing because
+// its winding is back-facing here. On Metal, draw_quad is only a
 // bounding box, so quads are split into two triangles (sgl handles
-// them) — iso_draw_poly4 hides the split.
+// them) — iso_draw_poly4 hides both splits.
+
+// Flat-primitive batching (raylib): every iso quad / rect is emitted as
+// two RL_TRIANGLES in ONE rlBegin/rlEnd, instead of one RL_QUADS
+// draw_quad (separate rlSetTexture + rlBegin per quad). rlgl coalesces
+// consecutive same-mode, same-texture primitives into a single draw
+// entry, so a run of tiles / peeps / buildings that used to flip
+// QUADS <-> TRIANGLES at every ellipse/circle/rect boundary now stays
+// in TRIANGLES until a textured sprite, text glyph, line, or
+// rect-outline intervenes (those are few per frame). Painter order is
+// unchanged: primitives are submitted to rlgl in exactly the same
+// order as before, and each quad/rect keeps one capture record.
+// Winding: the two triangles are (d, c, b) + (d, b, a) — the same
+// triangles draw_quad's QUADS index buffer (0,1,2, 0,2,3 over the
+// reversed vertex order) produced, so they rasterize where draw_quad
+// did. The Metal split (a, b, c) + (a, c, d) has the opposite winding
+// and is culled on raylib (verified: a lone (a, b, c) DrawTriangle
+// draws nothing in this pass), so it must not be reused here.
+// Depth test is disabled in the iso pass (rlgl init, no begin_3d),
+// so the per-quad rlEnd depth increment is preserved by the single
+// rlEnd per quad below, matching draw_quad's one increment.
+#ifdef AFTER_HOURS_USE_RAYLIB
+static void iso_emit_quad_tris(vec2 a, vec2 b, vec2 c, vec2 d, Color color) {
+    raylib::rlBegin(RL_TRIANGLES);
+    raylib::rlColor4ub(color.r, color.g, color.b, color.a);
+    raylib::rlVertex2f(d.x, d.y);
+    raylib::rlVertex2f(c.x, c.y);
+    raylib::rlVertex2f(b.x, b.y);
+    raylib::rlVertex2f(d.x, d.y);
+    raylib::rlVertex2f(b.x, b.y);
+    raylib::rlVertex2f(a.x, a.y);
+    raylib::rlEnd();
+}
+#endif
 
 // Fill a convex quad (a, b, c, d) in order.
 static void iso_draw_poly4(vec2 a, vec2 b, vec2 c, vec2 d, Color color) {
 #ifdef AFTER_HOURS_USE_RAYLIB
-    vec2 q[4] = {a, b, c, d};
-    draw_quad(q, color);
+    float min_x = std::min(std::min(a.x, b.x), std::min(c.x, d.x));
+    float max_x = std::max(std::max(a.x, b.x), std::max(c.x, d.x));
+    float min_y = std::min(std::min(a.y, b.y), std::min(c.y, d.y));
+    float max_y = std::max(std::max(a.y, b.y), std::max(c.y, d.y));
+    capture::record(
+        "quad", Rectangle{min_x, min_y, max_x - min_x, max_y - min_y}, color);
+    iso_emit_quad_tris(a, b, c, d, color);
 #else
     draw_triangle(a, b, c, color);
     draw_triangle(a, c, d, color);
+#endif
+}
+
+// Axis-aligned rect as two triangles (same winding / batching as
+// iso_draw_poly4). Replaces draw_rect (RL_QUADS via DrawRectangleRec)
+// for the iso pass only: peep bodies / tree trunks / lamp poles /
+// particles, so a peep's shadow ellipse + body rects + head circles +
+// pip stay in one TRIANGLES run.
+static void iso_draw_rect(float x, float y, float w, float h, Color color) {
+#ifdef AFTER_HOURS_USE_RAYLIB
+    if (w < 0) {
+        x += w;
+        w = -w;
+    }
+    if (h < 0) {
+        y += h;
+        h = -h;
+    }
+    if (w <= 0 || h <= 0) return;
+    capture::record("rectangle", Rectangle{x, y, w, h}, color);
+    iso_emit_quad_tris({x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}, color);
+#else
+    draw_rect(x, y, w, h, color);
 #endif
 }
 
@@ -878,9 +939,9 @@ struct RenderIsoSystem : System<> {
                     vec2 s = cam.iso_project(static_cast<float>(it.x),
                                              static_cast<float>(it.z));
                     s.y -= it.lift;
-                    draw_rect(s.x - std::max(tw * 0.03f, 1.0f),
-                              s.y - th * 0.12f, std::max(tw * 0.06f, 2.0f),
-                              th * 0.14f, Color{120, 80, 40, 255});
+                    iso_draw_rect(s.x - std::max(tw * 0.03f, 1.0f),
+                                  s.y - th * 0.12f, std::max(tw * 0.06f, 2.0f),
+                                  th * 0.14f, Color{120, 80, 40, 255});
                     draw_ellipse(static_cast<int>(s.x),
                                  static_cast<int>(s.y - th * 0.22f), tw * 0.30f,
                                  th * 0.30f, darken_color(it.color, 0.25f));
@@ -896,9 +957,9 @@ struct RenderIsoSystem : System<> {
                                              static_cast<float>(it.z));
                     s.y -= it.lift;
                     float pole_h = std::max(th * 0.35f, 4.0f);
-                    draw_rect(s.x - std::max(tw * 0.02f, 1.0f), s.y - pole_h,
-                              std::max(tw * 0.04f, 2.0f), pole_h,
-                              Color{60, 60, 70, 255});
+                    iso_draw_rect(s.x - std::max(tw * 0.02f, 1.0f),
+                                  s.y - pole_h, std::max(tw * 0.04f, 2.0f),
+                                  pole_h, Color{60, 60, 70, 255});
                     draw_circle(static_cast<int>(s.x),
                                 static_cast<int>(s.y - pole_h - 1.0f),
                                 std::max(tw * 0.06f, 2.0f),
@@ -960,8 +1021,8 @@ struct RenderIsoSystem : System<> {
                                   static_cast<int>(s.y - d), pt.color);
                     } else {
                         float sz = std::max(pt.size * th, 2.0f);
-                        draw_rect(s.x - sz * 0.5f, s.y - sz * 0.5f, sz, sz,
-                                  pt.color);
+                        iso_draw_rect(s.x - sz * 0.5f, s.y - sz * 0.5f, sz, sz,
+                                      pt.color);
                     }
                     break;
                 }
@@ -1051,11 +1112,11 @@ struct RenderIsoSystem : System<> {
         draw_ellipse(static_cast<int>(sx), static_cast<int>(sy), body_w * 0.70f,
                      body_w * 0.28f, Color{0, 0, 0, 90});
         float torso_h = body_h * 0.62f;
-        draw_rect(sx - body_w * 0.5f - 1.0f, sy - body_h - 1.0f, body_w + 2.0f,
-                  body_h + 2.0f, PEEP_OUTLINE);
-        draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, torso_h, p.body);
-        draw_rect(sx - body_w * 0.5f, sy - body_h + torso_h, body_w,
-                  body_h - torso_h, darken_color(p.body, 0.35f));
+        iso_draw_rect(sx - body_w * 0.5f - 1.0f, sy - body_h - 1.0f,
+                      body_w + 2.0f, body_h + 2.0f, PEEP_OUTLINE);
+        iso_draw_rect(sx - body_w * 0.5f, sy - body_h, body_w, torso_h, p.body);
+        iso_draw_rect(sx - body_w * 0.5f, sy - body_h + torso_h, body_w,
+                      body_h - torso_h, darken_color(p.body, 0.35f));
         float hx = sx;
         float hy = sy - body_h - head_r + 1.0f;
         draw_circle(static_cast<int>(hx), static_cast<int>(hy), head_r + 1.0f,
@@ -1069,8 +1130,8 @@ struct RenderIsoSystem : System<> {
         // every head.
         if (p.show_pip) {
             float pip_w = std::max(3.0f, tw * 0.10f);
-            draw_rect(sx - pip_w * 0.5f, hy - head_r * 1.4f - 4.0f, pip_w, 4.0f,
-                      p.pip);
+            iso_draw_rect(sx - pip_w * 0.5f, hy - head_r * 1.4f - 4.0f, pip_w,
+                          4.0f, p.pip);
         }
     }
 

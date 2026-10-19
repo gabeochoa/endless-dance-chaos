@@ -1,0 +1,53 @@
+# Draw batching in RenderIsoSystem: iso quads/rects are emitted as
+# RL_TRIANGLES (two per quad, draw_quad winding) instead of RL_QUADS, so
+# rlgl coalesces flat primitives into one draw entry per run. These
+# pixels pin the primitives batching touches, in an order that also
+# pins painter order: a tile + a building-block face + a sign-board
+# rect + a peep body rect + a translucent overlay diamond that must
+# draw AFTER (over) its tile, not under it. A winding flip (e.g. the
+# Metal (a,b,c) split) makes the quad pixels read as the tile behind
+# them; a batch that sorted by color instead of submission order
+# makes the overlay pixel read as the plain tile.
+#
+# Coordinates use the default framing (target 27.5,27, distance 36:
+# tw=40, th=20, centre 565,344; see IsometricCamera::iso_project).
+reset_game
+set_spawn_enabled 0
+set_time 12 00
+wait_frames 2
+dismiss_nux
+wait_frames 2
+
+# Stage canopy: iso_draw_poly4 (was draw_quad).
+assert_pixel 616 318 is 110 16 126 255
+# Stage block roof diamond: iso_draw_poly4 (was draw_quad).
+assert_pixel 613 335 is 222 120 240 255
+# Bathroom sign board background (building color). The board itself
+# is still a RL_QUADS draw_rect in the silhouette path; it pins that
+# a triangle-batched tile does not overdraw it.
+assert_pixel 420 182 is 0 210 200 255
+# StageFloor checker tile and grass tile: iso_draw_tile_plain. These
+# two pixels are 7x7-uniform patches in the noon static shot, so they
+# sit well inside one tile instead of on a diamond edge.
+assert_pixel 573 384 is 169 126 219 255
+assert_pixel 635 174 is 56 145 75 255
+
+# Peep body rects over a tile: frozen 30-guest cloud at (30,29), so
+# the centre pixel is a torso/outline/leg rect, not the tile beneath.
+# set_agent_speed 0 freezes them at spawn + hash scatter (as in
+# 42_iso_cull); stagefloor at (30,29) is (169,126,219).
+set_agent_speed 0
+spawn_agents 30 29 30 stage
+wait_frames 2
+assert_pixel 615 380 not 169 126 219 255
+
+# Density overlay over the same tile: 30 guests on a tile is density
+# 30/36, so the overlay diamond (alpha 200) blends over the tile.
+# Pixel (598,389) is inside the tile diamond but outside the peep
+# bodies clustered at the centre, so it reads as blended overlay,
+# not the plain stagefloor.
+toggle_overlay
+wait_frames 2
+assert_pixel 598 389 not 169 126 219 255
+toggle_overlay
+screenshot 43_iso_batch
