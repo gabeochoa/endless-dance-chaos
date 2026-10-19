@@ -1,0 +1,63 @@
+# Viewport culling in RenderIsoSystem: an item whose centre is
+# off-screen must still draw when its geometry reaches on-screen
+# (building overhang / peep body / thought bubble), and an item
+# fully off-screen must not draw. Each case pins a pixel that a
+# zero-margin cull would lose, while a no-cull build draws it
+# identically — so this test guards the cull margins, not the
+# mere existence of culling.
+# No fixed-pixel case for a single moving peep: guest render
+# positions add hash_scatter(eid), and the entity-id counter
+# survives reset_game, so one bubble's on-screen sliver moves with
+# suite order; staff patrol (random target, 1.5 tiles/s), so a
+# staff pixel drifts too. The bubble case below uses a frozen
+# 30-guest cloud instead (see its note).
+reset_game
+set_spawn_enabled 0
+set_time 12 00
+wait_frames 2
+dismiss_nux
+wait_frames 2
+
+# Stage anchor (30,25) projects above the screen (sy -3), but the
+# front speaker tower of the 4x4 stage still reaches into the
+# viewport: a zero-margin cull drops the anchor and the tower sliver
+# at (305,45) vanishes.
+set_camera_target 44 45.7
+wait_frames 2
+assert_camera_target 44 45.7
+assert_tile_off_screen 30 25
+assert_pixel 305 45 is 25 25 25 255
+screenshot 42_iso_cull_stage
+
+# A cloud of 30 guests standing left of the screen (tile (5,30)
+# projects to sx -10, each peep scattered by hash_scatter(eid)
+# within +-7px, so every centre stays off-screen) still draws
+# thought bubbles reaching into the frame. Any one bubble's shell,
+# glyph text, or emote face over (2,258) reads far from this
+# tile's grass (56,146,76); a zero-margin cull drops all 30 peeps
+# and the pixel reads exactly that grass. The covering
+# probability per guest is ~0.57, so 30 guests miss it with
+# probability ~1e-11. set_agent_speed 0 freezes the guests at
+# spawn+scatter (reset_game restores the multiplier): without it
+# they walk, and a walked-off-screen guest would make this case
+# pass even with a broken cull, while drift would move the cloud.
+reset_game
+set_spawn_enabled 0
+set_time 12 00
+wait_frames 2
+dismiss_nux
+wait_frames 2
+set_camera_target 33.75 5.65
+wait_frames 2
+assert_camera_target 33.75 5.65
+assert_tile_off_screen 5 30
+set_agent_speed 0
+spawn_agents 5 30 30 stage
+wait_frames 2
+dismiss_nux
+wait_frames 2
+set_need_timer bathroom 0.95
+wait_frames 2
+assert_urgent_bubble_count eq 30
+assert_pixel 2 258 not 56 146 76 255
+screenshot 42_iso_cull_peep

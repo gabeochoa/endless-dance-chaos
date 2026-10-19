@@ -370,6 +370,51 @@ struct RenderIsoSystem : System<> {
         int x1 = vr ? vr->max_x : MAP_SIZE - 1;
         int z0 = vr ? vr->min_z : 0;
         int z1 = vr ? vr->max_z : MAP_SIZE - 1;
+        // Viewport cull by projected screen position, BEFORE item
+        // construction. BeginRenderSystem's VisibleRegion is the
+        // axis-aligned bounding box of the viewport's four corners in
+        // grid coords; at default zoom that box iterates 5192 tiles
+        // while the cull below keeps ~4191, and every culled tile
+        // still paid tile_color_weather + an item + a sort slot +
+        // draw calls.
+        // Kept items are constructed in the same order as before, so
+        // on-screen pixels are unchanged. Bounds are the full
+        // 1280x720 texture, not the 1130x644 world viewport, so the
+        // cull never depends on UI strips being opaque. Margins cover
+        // the largest overhang of any item drawn from one centre:
+        // tiles — a 4x4 building footprint reaches +2tw in x and
+        // +3.5th below its anchor, roof extras ~2.65th above it;
+        // peeps — a thought bubble reaches ~1.6th + 26px above the
+        // feet, a shadow ~0.16th below; markers/particles are
+        // sub-tile. The peep bounds are asymmetric on purpose: the
+        // lower bound is the downward extent, the upper bound the
+        // upward extent (a peep below the screen can still show its
+        // bubble, never its shadow).
+        const float tile_mx = 2.5f * tw;
+        const float tile_my = 5.0f * th + 4.0f;
+        const float peep_mx = 0.5f * tw + 16.0f;
+        const float peep_up = 2.0f * th + 32.0f;
+        const float peep_down = 0.5f * th + 4.0f;
+        const float fx_mx = tw;
+        const float fx_my = th + 4.0f;
+        auto tile_on_screen = [&](float sx, float sy) {
+            return sx >= -tile_mx &&
+                   sx <= static_cast<float>(DEFAULT_SCREEN_WIDTH) + tile_mx &&
+                   sy >= -tile_my &&
+                   sy <= static_cast<float>(DEFAULT_SCREEN_HEIGHT) + tile_my;
+        };
+        auto peep_on_screen = [&](float sx, float sy) {
+            return sx >= -peep_mx &&
+                   sx <= static_cast<float>(DEFAULT_SCREEN_WIDTH) + peep_mx &&
+                   sy >= -peep_down &&
+                   sy <= static_cast<float>(DEFAULT_SCREEN_HEIGHT) + peep_up;
+        };
+        auto fx_on_screen = [&](float sx, float sy) {
+            return sx >= -fx_mx &&
+                   sx <= static_cast<float>(DEFAULT_SCREEN_WIDTH) + fx_mx &&
+                   sy >= -fx_my &&
+                   sy <= static_cast<float>(DEFAULT_SCREEN_HEIGHT) + fx_my;
+        };
         float night_t = get_day_night_t();
         float t = get_time();
         auto weather = atmosphere_weather();
@@ -411,6 +456,12 @@ struct RenderIsoSystem : System<> {
         // Tiles (+ building extrusions + ground overlays).
         for (int z = z0; z <= z1; z++) {
             for (int x = x0; x <= x1; x++) {
+                // Cull before tile_color_weather / item construction:
+                // a rejected tile draws no pixel on screen (the
+                // margin covers its footprint + roof extras).
+                vec2 ts = cam.iso_project(static_cast<float>(x),
+                                          static_cast<float>(z));
+                if (!tile_on_screen(ts.x, ts.y)) continue;
                 const Tile& tile = grid->at(x, z);
                 float depth = static_cast<float>(x + z);
                 // Raised-plot lift: one height step = 0.35 tile-heights.
@@ -523,6 +574,9 @@ struct RenderIsoSystem : System<> {
                 for (int z = min_z; z <= max_z; z++)
                     for (int x = min_x; x <= max_x; x++) {
                         if (!grid->in_bounds(x, z)) continue;
+                        vec2 ps = cam.iso_project(static_cast<float>(x),
+                                                  static_cast<float>(z));
+                        if (!tile_on_screen(ps.x, ps.y)) continue;
                         const Tile& pt = grid->at(x, z);
                         bool already_path = is_path_tile(pt.type);
                         items.push_back(
@@ -532,13 +586,18 @@ struct RenderIsoSystem : System<> {
                     }
             }
             if (grid->in_bounds(pds->hover_x, pds->hover_z)) {
-                float hover_lift =
-                    grid->at(pds->hover_x, pds->hover_z).height * th * 0.35f;
-                items.push_back(
-                    {static_cast<float>(pds->hover_x + pds->hover_z), 1, 1,
-                     pds->hover_x, pds->hover_z,
-                     pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL, 0, -1,
-                     hover_lift});
+                vec2 hs = cam.iso_project(static_cast<float>(pds->hover_x),
+                                          static_cast<float>(pds->hover_z));
+                if (tile_on_screen(hs.x, hs.y)) {
+                    float hover_lift =
+                        grid->at(pds->hover_x, pds->hover_z).height * th *
+                        0.35f;
+                    items.push_back(
+                        {static_cast<float>(pds->hover_x + pds->hover_z), 1, 1,
+                         pds->hover_x, pds->hover_z,
+                         pds->demolish_mode ? HOVER_DEMOLISH : HOVER_NORMAL, 0,
+                         -1, hover_lift});
+                }
             }
         }
 
@@ -557,11 +616,12 @@ struct RenderIsoSystem : System<> {
                 int eid = static_cast<int>(e.id);
                 wx += hash_scatter(eid * 7 + 3) * SCATTER_RANGE;
                 wz += hash_scatter(eid * 13 + 7) * SCATTER_RANGE;
-                if (vr) {
-                    auto [gx, gz] = grid->world_to_grid(wx, wz);
-                    if (gx < vr->min_x || gx > vr->max_x || gz < vr->min_z ||
-                        gz > vr->max_z)
-                        continue;
+                // Cull before palette / health / glyph work: the
+                // old VisibleRegion grid check is subsumed by this
+                // exact screen test (same projection the draw uses).
+                {
+                    vec2 as = cam.iso_project(wx, wz);
+                    if (!peep_on_screen(as.x, as.y)) continue;
                 }
                 Color body =
                     AGENT_SHIRT_PALETTE[hash_agent_color(eid, agent.color_idx) %
@@ -632,6 +692,11 @@ struct RenderIsoSystem : System<> {
             for (Entity& e : staff) {
                 auto& s = e.get<StaffMember>();
                 auto& tf = e.get<Transform>();
+                // Staff had no cull at all: same screen test as guests.
+                {
+                    vec2 ss = cam.iso_project(tf.position.x, tf.position.y);
+                    if (!peep_on_screen(ss.x, ss.y)) continue;
+                }
                 Color body =
                     s.role == StaffRole::Guard   ? Color{50, 90, 255, 255}
                     : s.role == StaffRole::Medic ? Color{255, 255, 255, 255}
@@ -661,6 +726,10 @@ struct RenderIsoSystem : System<> {
             auto markers = EntityQuery().whereHasComponent<DeathMarker>().gen();
             for (Entity& e : markers) {
                 auto& dm = e.get<DeathMarker>();
+                {
+                    vec2 ds = cam.iso_project(dm.position.x, dm.position.y);
+                    if (!fx_on_screen(ds.x, ds.y)) continue;
+                }
                 float alpha_f = 1.0f;
                 if (dm.lifetime < 3.0f) alpha_f = dm.lifetime / 3.0f;
                 int ref = static_cast<int>(points.size());
@@ -679,6 +748,10 @@ struct RenderIsoSystem : System<> {
             for (Entity& e : particles) {
                 auto& p = e.get<Particle>();
                 auto& tf = e.get<Transform>();
+                {
+                    vec2 ps = cam.iso_project(tf.position.x, tf.position.y);
+                    if (!fx_on_screen(ps.x, ps.y)) continue;
+                }
                 float life_t = 1.0f - (p.lifetime / p.max_lifetime);
                 int ref = static_cast<int>(points.size());
                 points.push_back({tf.position.x, tf.position.y,
@@ -906,8 +979,15 @@ struct RenderIsoSystem : System<> {
             for (int z = z0; z <= z1; z++) {
                 for (int x = x0; x <= x1; x++) {
                     const Tile& tile = grid->at(x, z);
+                    // Skip non-glow tiles before projecting, and
+                    // cull glow tiles that draw no pixel on screen.
+                    if (tile.type != TileType::Stage &&
+                        tile.type != TileType::StageFloor &&
+                        !is_lamp_tile(tile.type))
+                        continue;
                     vec2 s = cam.iso_project(static_cast<float>(x),
                                              static_cast<float>(z));
+                    if (!tile_on_screen(s.x, s.y)) continue;
                     if (tile.type == TileType::Stage) {
                         iso_draw_diamond(
                             s.x, s.y, tw * 1.6f, th * 1.6f,
