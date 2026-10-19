@@ -1312,8 +1312,20 @@ struct ParkAwardState : afterhours::BaseComponent {
         }
         return fmt::format("Rating: {} ({})", spark, values);
     }
-    std::string history_guests_row() const {
-        if (history.empty()) return "Guests: -";
+    // Guests history row. When no day has closed yet there is no
+    // history — but the park still has a live attendee count, and
+    // showing "Guests: -" next to 200 guests on the floor reads as a
+    // broken count binding. With a live count supplied (the Park
+    // page passes it), the empty-history row shows the live count
+    // in the same sparkline format instead of "-". -1 (no count
+    // supplied) keeps the old "-" for callers without a live count.
+    std::string history_guests_row(int live_attendees = -1) const {
+        if (history.empty()) {
+            if (live_attendees < 0) return "Guests: -";
+            return fmt::format("Guests: {} ({})",
+                               spark_block(live_attendees / 100.f),
+                               live_attendees);
+        }
         std::string spark, values;
         for (const auto& d : history) {
             spark += spark_block(d.attendees / 100.f);

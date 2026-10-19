@@ -153,8 +153,22 @@ static bool is_building_tile(TileType type);
 // ── 2D isometric renderer ────────────────────────────────────────────
 // One sorted draw list (painter's algorithm): every tile, building,
 // peep, overlay, particle and marker becomes an item keyed by depth
-// (x+z, continuous for agents) + a layer order, then items draw
-// back-to-front so nearer objects correctly overlap farther ones.
+// (x+z, continuous for agents) + the item's top height + a layer
+// order, then items draw back-to-front so nearer objects correctly
+// overlap farther ones. The height tie-break matters for tall
+// billboards: a peep's head/bubble and a building's roof/canopy share
+// a ground depth but sit at different heights, and the taller item
+// wins the tie. Buildings are split by part, not by footprint: the
+// roof/canopy extras sort at the footprint's BACK edge (so a peep
+// standing in front of the building — and its thought bubble, which
+// rises into the canopy's screen area — draws after the whole
+// building), while the front extras (sign boards, awnings, counters,
+// speaker towers) sort at the footprint's FRONT edge (so they are
+// never half-covered by the building's own front tiles, and a peep
+// behind the building loses to them). A single footprint depth for
+// the whole silhouette cannot satisfy both sides: the old
+// anchor+2*span-1 depth drew the canopy over front peeps' bubbles,
+// eating them.
 // Tiles/buildings are filled quads: on raylib, RL_TRIANGLES does not
 // rasterize in this render-texture pass (verified with a lone
 // DrawTriangle: background untouched, while RL_QUADS draws), so quads
@@ -283,6 +297,12 @@ struct IsoPeep {
     const char* glyph = nullptr;  // thought-bubble glyph, or nullptr
     bool is_staff = false;
     bool is_vip = false;  // gold body + star bubble, not a need glyph
+    // The desire pip above the head draws ONLY when show_pip is set:
+    // an urgent need, VIP status, or low HP for guests; always for
+    // staff (role marker). An always-on pip painted a magenta /
+    // purple square on every guest's head — 200 of them in the
+    // populated shot, one per desire, which read as noise.
+    bool show_pip = false;
     // Screen-px lift from the terrain height of the tile underfoot:
     // visual only, movement stays flat.
     float lift = 0;
@@ -299,7 +319,8 @@ struct IsoDraw {
     float depth = 0;  // x+z; continuous for agents
     int order = 0;    // tile 0, overlay 1, building 2, peep 3, bubble 4, fx 5
     // kind: 0 tile, 1 overlay, 2 building, 3 peep, 4 bubble, 5 fx,
-    // 6 tree, 7 lamp, 8 building silhouette (per-footprint extras)
+    // 6 tree, 7 lamp, 8 building roof extras (per-footprint, back
+    // edge), 9 building front extras (per-footprint, front edge)
     int kind = 0;
     int x = 0, z = 0;
     Color color{255, 255, 255, 255};
@@ -420,21 +441,36 @@ struct RenderIsoSystem : System<> {
                                                              : th * 0.75f;
                     items.push_back(
                         {depth, 2, 2, x, z, weather_color, h, -1, lift});
-                    // Per-footprint silhouette extras (kind 8): one
-                    // item per footprint, emitted from its anchor tile
-                    // (no same-type neighbour up/left). Depth sits just
-                    // past the footprint's farthest tile so the canopy
-                    // / awning / sign is never half-covered by a later
-                    // tile of its own footprint.
+                    // Per-footprint silhouette extras, emitted from
+                    // the anchor tile (no same-type neighbour
+                    // up/left), split by part: the roof extras (kind
+                    // 8: canopy, back wall, gable, roof blocks, posts)
+                    // sort at the footprint's BACK edge, so peeps
+                    // standing in front of the building draw after
+                    // the whole building, bubbles included; the front
+                    // extras (kind 9: sign boards, awnings, counters,
+                    // speaker towers) sort at the footprint's FRONT
+                    // edge, so the building's own front tiles never
+                    // half-cover them. Only the four types with front
+                    // extras get a kind-9 item.
                     int span = silhouette_span(tile.type);
                     bool anchor =
                         span > 0 &&
                         !(x > 0 && grid->at(x - 1, z).type == tile.type) &&
                         !(z > 0 && grid->at(x, z - 1).type == tile.type);
                     if (anchor) {
-                        items.push_back({depth + 2.f * span - 1.f, 2, 8, x, z,
-                                         weather_color, h, -1, lift,
-                                         static_cast<int>(tile.type), span});
+                        items.push_back({depth, 2, 8, x, z, weather_color, h,
+                                         -1, lift, static_cast<int>(tile.type),
+                                         span});
+                        if (tile.type == TileType::Stage ||
+                            tile.type == TileType::Food ||
+                            tile.type == TileType::MedTent ||
+                            tile.type == TileType::Bar) {
+                            items.push_back({depth + 2.f * span - 2.f, 2, 9, x,
+                                             z, weather_color, h, -1, lift,
+                                             static_cast<int>(tile.type),
+                                             span});
+                        }
                     }
                 }
                 if (stage_glow && tile.type == TileType::Stage) {
@@ -539,9 +575,11 @@ struct RenderIsoSystem : System<> {
                     auto& ws = e.get<WatchingStage>();
                     bob = std::sin(ws.watch_timer * 6.0f) * 0.03f;
                 }
+                bool low_hp = false;
                 if (!e.is_missing<AgentHealth>()) {
                     float hp = e.get<AgentHealth>().hp;
                     if (hp < 0.5f) {
+                        low_hp = true;
                         float ht = hp / 0.5f;
                         body.r = static_cast<unsigned char>(body.r * ht +
                                                             255 * (1.f - ht));
@@ -552,7 +590,21 @@ struct RenderIsoSystem : System<> {
                 const char* glyph = nullptr;
                 if (!e.is_missing<AgentNeeds>())
                     glyph = urgent_need_glyph(&e.get<AgentNeeds>());
-                int desire_idx = static_cast<int>(agent.want);
+                // Head pip: urgent need / VIP / low HP only. The pip
+                // colors the urgent need (or gold for a VIP, red for
+                // low HP), never the plain destination desire.
+                Color pip_color{255, 255, 255, 255};
+                bool show_pip = false;
+                if (glyph) {
+                    pip_color = urgent_need_pip_color(glyph);
+                    show_pip = true;
+                } else if (is_vip) {
+                    pip_color = Color{255, 215, 0, 255};
+                    show_pip = true;
+                } else if (low_hp) {
+                    pip_color = Color{255, 45, 45, 255};
+                    show_pip = true;
+                }
                 int ref = static_cast<int>(peeps.size());
                 float peep_lift = 0.f;
                 {
@@ -563,9 +615,8 @@ struct RenderIsoSystem : System<> {
                 Color hair =
                     HAIR_PALETTE[hash_agent_color(eid, agent.color_idx + 11) %
                                  6];
-                peeps.push_back({wx, wz, bob, body, hair,
-                                 DESIRE_COLORS[desire_idx], glyph, false,
-                                 is_vip, peep_lift});
+                peeps.push_back({wx, wz, bob, body, hair, pip_color, glyph,
+                                 false, is_vip, show_pip, peep_lift});
                 items.push_back({wx + wz, 3, 3, 0, 0, {}, 0, ref});
                 // VIPs always get their star bubble; other agents only
                 // get a bubble for an urgent need.
@@ -599,7 +650,7 @@ struct RenderIsoSystem : System<> {
                     HAIR_PALETTE[hash_agent_color(static_cast<int>(e.id), 7) %
                                  6];
                 peeps.push_back({tf.position.x, tf.position.y, 0, body, hair,
-                                 pip, nullptr, true, false, staff_lift});
+                                 pip, nullptr, true, false, true, staff_lift});
                 items.push_back(
                     {tf.position.x + tf.position.y, 3, 3, 0, 0, {}, 0, ref});
             }
@@ -638,9 +689,43 @@ struct RenderIsoSystem : System<> {
             }
         }
 
+        // Painter's sort: ground depth (x+z), then the item's top
+        // height, then the layer order. The height tie-break keeps
+        // tall items in the right order on one depth diagonal: a
+        // peep (body + head ≈ 1.3 tiles) wins over a building block
+        // (≤ 0.95 tiles) at the same depth, a thought bubble (peep
+        // height + bubble) wins over both, and a roof extra (block
+        // + extras ≈ +1.2 tiles) wins over a peep standing exactly
+        // on the anchor diagonal — the building occludes the peep
+        // behind it. Front extras sit half a tile above the block
+        // they face (they hang on the face's outside, and a peep
+        // in front still wins the tie by a hair). Fx (death
+        // markers / particles) sort last at any depth.
+        auto sort_height = [&](const IsoDraw& it) {
+            switch (it.kind) {
+                case 3:
+                    return th * 1.30f;  // peep: body + head
+                case 4:
+                    return th * 1.30f + 28.f;  // bubble: peep + bubble
+                case 5:
+                    return 1e9f;  // fx: always last at a depth
+                case 6:
+                    return th * 0.60f;  // tree canopy top
+                case 7:
+                    return th * 0.40f;  // lamp bulb
+                case 8:
+                    return it.h + th * 1.20f;  // roof extras' top
+                case 9:
+                    return it.h + th * 0.50f;  // front extras
+                default:
+                    return it.h;  // tile / overlay 0, building block h
+            }
+        };
         std::stable_sort(items.begin(), items.end(),
-                         [](const IsoDraw& a, const IsoDraw& b) {
+                         [&](const IsoDraw& a, const IsoDraw& b) {
                              if (a.depth != b.depth) return a.depth < b.depth;
+                             float ha = sort_height(a), hb = sort_height(b);
+                             if (ha != hb) return ha < hb;
                              return a.order < b.order;
                          });
 
@@ -748,12 +833,21 @@ struct RenderIsoSystem : System<> {
                     break;
                 }
                 case 8: {
-                    // Per-footprint silhouette extras: geometric shapes
+                    // Per-footprint roof extras: geometric shapes
                     // only, no text — the building reads by silhouette.
                     draw_iso_silhouette(cam, static_cast<float>(it.x),
                                         static_cast<float>(it.z), it.span,
                                         static_cast<TileType>(it.tile_type),
-                                        it.lift, tw, th, it.h, it.color);
+                                        it.lift, tw, th, it.h, it.color, 0);
+                    break;
+                }
+                case 9: {
+                    // Per-footprint front extras (sign boards, awnings,
+                    // counters, speaker towers).
+                    draw_iso_silhouette(cam, static_cast<float>(it.x),
+                                        static_cast<float>(it.z), it.span,
+                                        static_cast<TileType>(it.tile_type),
+                                        it.lift, tw, th, it.h, it.color, 1);
                     break;
                 }
                 case 3: {
@@ -890,9 +984,14 @@ struct RenderIsoSystem : System<> {
                     head_r * 0.95f, p.hair);
         draw_circle(static_cast<int>(hx), static_cast<int>(hy + head_r * 0.35f),
                     head_r * 0.92f, PEEP_SKIN);
-        float pip_w = std::max(3.0f, tw * 0.10f);
-        draw_rect(sx - pip_w * 0.5f, hy - head_r * 1.4f - 4.0f, pip_w, 4.0f,
-                  p.pip);
+        // Desire pip: urgent need / VIP / low HP (guests) or role
+        // marker (staff) only — never a plain destination color on
+        // every head.
+        if (p.show_pip) {
+            float pip_w = std::max(3.0f, tw * 0.10f);
+            draw_rect(sx - pip_w * 0.5f, hy - head_r * 1.4f - 4.0f, pip_w, 4.0f,
+                      p.pip);
+        }
     }
 
     static void draw_iso_bubble(float sx, float sy, float tw, float th,
@@ -993,10 +1092,15 @@ struct RenderIsoSystem : System<> {
     // would skew the shape into a parallelogram. iso_project
     // applies rotation, so "front" follows the view. All shapes
     // are geometric — no text labels.
+    // `parts`: 0 = roof/upper parts (canopy, back wall, gable, roof
+    // blocks, posts/slabs — sorted at the footprint's back edge),
+    // 1 = front parts (sign boards, awnings, counters, speaker
+    // towers — sorted at the footprint's front edge). The caller
+    // emits one draw item per part so each sorts at its own edge.
     static void draw_iso_silhouette(const IsometricCamera& cam, float ax,
                                     float az, int span, TileType type,
                                     float lift, float tw, float th,
-                                    float block_h, Color color) {
+                                    float block_h, Color color, int parts) {
         if (span <= 0) return;
         // Diamond vertices at ground level: TL = north, TR = east,
         // BR = south (front), BL = west.
@@ -1106,65 +1210,74 @@ struct RenderIsoSystem : System<> {
         switch (type) {
             case TileType::Stage: {
                 // Raised platform (the per-tile blocks) + back wall
-                // + roof canopy on 4 posts + speaker towers: the
-                // back wall is a vertical face along the rear roof
-                // edge, rising to the canopy; the posts join the
-                // canopy corners to the roof.
-                float canopy_h = block_h + th * 0.55f;
-                auto up = [&](vec2 p) {
-                    p.y -= canopy_h;
-                    return p;
-                };
-                iso_draw_poly4(at_roof(tl), at_roof(tr), up(tr), up(tl),
-                               darken_color(color, 0.55f));
-                float post_w = std::max(2.0f, tw * 0.06f);
-                vec2 corners[4] = {tl, tr, br, bl};
-                for (vec2 corner : corners) {
-                    draw_rect(corner.x - post_w * 0.5f, corner.y - canopy_h,
-                              post_w, canopy_h - block_h,
-                              darken_color(color, 0.60f));
+                // + roof canopy on 4 posts (roof parts) + speaker
+                // towers (front parts): the back wall is a vertical
+                // face along the rear roof edge, rising to the
+                // canopy; the posts join the canopy corners to the
+                // roof.
+                if (parts == 0) {
+                    float canopy_h = block_h + th * 0.55f;
+                    auto up = [&](vec2 p) {
+                        p.y -= canopy_h;
+                        return p;
+                    };
+                    iso_draw_poly4(at_roof(tl), at_roof(tr), up(tr), up(tl),
+                                   darken_color(color, 0.55f));
+                    float post_w = std::max(2.0f, tw * 0.06f);
+                    vec2 corners[4] = {tl, tr, br, bl};
+                    for (vec2 corner : corners) {
+                        draw_rect(corner.x - post_w * 0.5f, corner.y - canopy_h,
+                                  post_w, canopy_h - block_h,
+                                  darken_color(color, 0.60f));
+                    }
+                    iso_draw_poly4(up(tl), up(tr), up(br), up(bl),
+                                   darken_color(color, 0.45f));
+                    vec2 mid{(up(tl).x + up(br).x) * 0.5f,
+                             (up(tl).y + up(br).y) * 0.5f};
+                    auto inset = [&](vec2 p) {
+                        return vec2{mid.x + (p.x - mid.x) * 0.55f,
+                                    mid.y + (p.y - mid.y) * 0.55f};
+                    };
+                    iso_draw_poly4(inset(up(tl)), inset(up(tr)), inset(up(br)),
+                                   inset(up(bl)), lighten_color(color, 0.25f));
+                    // Music-note sprite on the canopy panel (purely
+                    // additive: no geometric glyph is replaced here, so
+                    // there is no fallback to draw when sprites are off).
+                    {
+                        vec2 q[4] = {inset(up(tl)), inset(up(tr)),
+                                     inset(up(br)), inset(up(bl))};
+                        float qx0 = std::min(std::min(q[0].x, q[1].x),
+                                             std::min(q[2].x, q[3].x));
+                        float qx1 = std::max(std::max(q[0].x, q[1].x),
+                                             std::max(q[2].x, q[3].x));
+                        float qy0 = std::min(std::min(q[0].y, q[1].y),
+                                             std::min(q[2].y, q[3].y));
+                        float qy1 = std::max(std::max(q[0].y, q[1].y),
+                                             std::max(q[2].y, q[3].y));
+                        draw_sprite_centered(
+                            SpriteId::Music, mid.x, mid.y,
+                            std::min(qx1 - qx0, qy1 - qy0) * 0.6f);
+                    }
                 }
-                iso_draw_poly4(up(tl), up(tr), up(br), up(bl),
-                               darken_color(color, 0.45f));
-                vec2 mid{(up(tl).x + up(br).x) * 0.5f,
-                         (up(tl).y + up(br).y) * 0.5f};
-                auto inset = [&](vec2 p) {
-                    return vec2{mid.x + (p.x - mid.x) * 0.55f,
-                                mid.y + (p.y - mid.y) * 0.55f};
-                };
-                iso_draw_poly4(inset(up(tl)), inset(up(tr)), inset(up(br)),
-                               inset(up(bl)), lighten_color(color, 0.25f));
-                // Music-note sprite on the canopy panel (purely
-                // additive: no geometric glyph is replaced here, so
-                // there is no fallback to draw when sprites are off).
-                {
-                    vec2 q[4] = {inset(up(tl)), inset(up(tr)), inset(up(br)),
-                                 inset(up(bl))};
-                    float qx0 = std::min(std::min(q[0].x, q[1].x),
-                                         std::min(q[2].x, q[3].x));
-                    float qx1 = std::max(std::max(q[0].x, q[1].x),
-                                         std::max(q[2].x, q[3].x));
-                    float qy0 = std::min(std::min(q[0].y, q[1].y),
-                                         std::min(q[2].y, q[3].y));
-                    float qy1 = std::max(std::max(q[0].y, q[1].y),
-                                         std::max(q[2].y, q[3].y));
-                    draw_sprite_centered(SpriteId::Music, mid.x, mid.y,
-                                         std::min(qx1 - qx0, qy1 - qy0) * 0.6f);
-                }
-                // Speaker towers: tall dark columns with two light
-                // cones, standing on the ground at the front-edge
-                // midpoints.
-                vec2 fronts[2] = {{(bl.x + br.x) * 0.5f, (bl.y + br.y) * 0.5f},
-                                  {(br.x + tr.x) * 0.5f, (br.y + tr.y) * 0.5f}};
-                for (vec2 f : fronts) {
-                    float w = std::max(2.0f, tw * 0.22f);
-                    float hs = th * 1.15f;
-                    draw_rect(f.x - w * 0.5f, f.y - hs, w, hs,
-                              Color{25, 25, 25, 255});
-                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.12f, w * 0.5f,
-                              hs * 0.18f, Color{200, 200, 200, 255});
-                    draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.52f, w * 0.5f,
-                              hs * 0.18f, Color{200, 200, 200, 255});
+                if (parts == 1) {
+                    // Speaker towers: tall dark columns with two light
+                    // cones, standing on the ground at the front-edge
+                    // midpoints.
+                    vec2 fronts[2] = {
+                        {(bl.x + br.x) * 0.5f, (bl.y + br.y) * 0.5f},
+                        {(br.x + tr.x) * 0.5f, (br.y + tr.y) * 0.5f}};
+                    for (vec2 f : fronts) {
+                        float w = std::max(2.0f, tw * 0.22f);
+                        float hs = th * 1.15f;
+                        draw_rect(f.x - w * 0.5f, f.y - hs, w, hs,
+                                  Color{25, 25, 25, 255});
+                        draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.12f,
+                                  w * 0.5f, hs * 0.18f,
+                                  Color{200, 200, 200, 255});
+                        draw_rect(f.x - w * 0.25f, f.y - hs + hs * 0.52f,
+                                  w * 0.5f, hs * 0.18f,
+                                  Color{200, 200, 200, 255});
+                    }
                 }
                 break;
             }
@@ -1172,11 +1285,16 @@ struct RenderIsoSystem : System<> {
                 // WC = small block + sign: a small extruded block
                 // on the roof, with the front sign board (building
                 // color, white person pictogram) standing on it.
-                float bh2 = th * 0.40f;
-                iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2, color);
-                float bw = tw * 0.70f;
-                float bh = th * 0.70f;
-                sign_board(c.x, roof_y - bh2, bw, bh, color, 1);
+                // All roof parts: the board sits on the centre roof
+                // block, above the front tiles' reach.
+                if (parts == 0) {
+                    float bh2 = th * 0.40f;
+                    iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2,
+                                   color);
+                    float bw = tw * 0.70f;
+                    float bh = th * 0.70f;
+                    sign_board(c.x, roof_y - bh2, bw, bh, color, 1);
+                }
                 break;
             }
             case TileType::Food: {
@@ -1184,25 +1302,29 @@ struct RenderIsoSystem : System<> {
                 // straight out from the two front roof edges (white
                 // / stall color, alternating), plus the front sign
                 // board (building color, white plate glyph).
-                float drop = th * 0.60f;
-                vec2 rtr = at_roof(tr);
-                vec2 rbr = at_roof(br), rbl = at_roof(bl);
-                auto panel = [&](vec2 p1, vec2 p2, Color pc) {
-                    iso_draw_poly4(p1, p2, {p2.x, p2.y + drop},
-                                   {p1.x, p1.y + drop}, pc);
-                };
-                auto striped_edge = [&](vec2 p1, vec2 p2) {
-                    vec2 m1{(2.0f * p1.x + p2.x) / 3.0f,
-                            (2.0f * p1.y + p2.y) / 3.0f};
-                    vec2 m2{(p1.x + 2.0f * p2.x) / 3.0f,
-                            (p1.y + 2.0f * p2.y) / 3.0f};
-                    panel(p1, m1, Color{255, 255, 255, 255});
-                    panel(m1, m2, color);
-                    panel(m2, p2, Color{255, 255, 255, 255});
-                };
-                striped_edge(rbl, rbr);
-                striped_edge(rbr, rtr);
-                board_front(2);
+                // All front parts: the awning hangs off the front
+                // faces, so it sorts at the front edge.
+                if (parts == 1) {
+                    float drop = th * 0.60f;
+                    vec2 rtr = at_roof(tr);
+                    vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                    auto panel = [&](vec2 p1, vec2 p2, Color pc) {
+                        iso_draw_poly4(p1, p2, {p2.x, p2.y + drop},
+                                       {p1.x, p1.y + drop}, pc);
+                    };
+                    auto striped_edge = [&](vec2 p1, vec2 p2) {
+                        vec2 m1{(2.0f * p1.x + p2.x) / 3.0f,
+                                (2.0f * p1.y + p2.y) / 3.0f};
+                        vec2 m2{(p1.x + 2.0f * p2.x) / 3.0f,
+                                (p1.y + 2.0f * p2.y) / 3.0f};
+                        panel(p1, m1, Color{255, 255, 255, 255});
+                        panel(m1, m2, color);
+                        panel(m2, p2, Color{255, 255, 255, 255});
+                    };
+                    striped_edge(rbl, rbr);
+                    striped_edge(rbr, rtr);
+                    board_front(2);
+                }
                 break;
             }
             case TileType::MedTent: {
@@ -1210,77 +1332,93 @@ struct RenderIsoSystem : System<> {
                 // roof — white front gable, shaded side gable,
                 // apex above the roof — plus the front sign board
                 // (building color, white cross glyph).
-                vec2 rtr = at_roof(tr);
-                vec2 rbr = at_roof(br), rbl = at_roof(bl);
-                vec2 apex{c.x, roof_y - th * 0.55f};
-                draw_triangle(rbr, rtr, apex, lighten_color(color, 0.35f));
-                draw_triangle(rbl, rbr, apex, Color{255, 255, 255, 255});
-                board_front(0, SpriteId::Cross);
+                if (parts == 0) {
+                    vec2 rtr = at_roof(tr);
+                    vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                    vec2 apex{c.x, roof_y - th * 0.55f};
+                    draw_triangle(rbr, rtr, apex, lighten_color(color, 0.35f));
+                    draw_triangle(rbl, rbr, apex, Color{255, 255, 255, 255});
+                }
+                if (parts == 1) board_front(0, SpriteId::Cross);
                 break;
             }
             case TileType::Bar: {
                 // Bar = long counter + roof: a flat roof slab on
-                // two posts above the roof, and a long counter
-                // across the front in the building's color with
-                // two bottles on top.
-                vec2 rtl = at_roof(tl), rtr = at_roof(tr);
-                vec2 rbr = at_roof(br), rbl = at_roof(bl);
-                auto inset_slab = [&](vec2 p) {
-                    return vec2{c.x + (p.x - c.x) * 0.90f,
-                                (roof_y - th * 0.60f) + (p.y - roof_y) * 0.90f};
-                };
-                iso_draw_poly4(inset_slab(rtl), inset_slab(rtr),
-                               inset_slab(rbr), inset_slab(rbl),
-                               Color{110, 70, 35, 255});
-                float post_w = std::max(2.0f, tw * 0.05f);
-                vec2 post_xs[2] = {
-                    {(rbl.x + rbr.x) * 0.5f, (rbl.y + rbr.y) * 0.5f},
-                    {(rbr.x + rtr.x) * 0.5f, (rbr.y + rtr.y) * 0.5f}};
-                for (vec2 f : post_xs) {
-                    draw_rect(f.x - post_w * 0.5f, roof_y - th * 0.60f, post_w,
-                              th * 0.60f, Color{110, 70, 35, 255});
+                // two posts above the roof (roof parts), and a long
+                // counter across the front in the building's color
+                // with two bottles on top (front part).
+                if (parts == 0) {
+                    vec2 rtl = at_roof(tl), rtr = at_roof(tr);
+                    vec2 rbr = at_roof(br), rbl = at_roof(bl);
+                    auto inset_slab = [&](vec2 p) {
+                        return vec2{
+                            c.x + (p.x - c.x) * 0.90f,
+                            (roof_y - th * 0.60f) + (p.y - roof_y) * 0.90f};
+                    };
+                    iso_draw_poly4(inset_slab(rtl), inset_slab(rtr),
+                                   inset_slab(rbr), inset_slab(rbl),
+                                   Color{110, 70, 35, 255});
+                    float post_w = std::max(2.0f, tw * 0.05f);
+                    vec2 post_xs[2] = {
+                        {(rbl.x + rbr.x) * 0.5f, (rbl.y + rbr.y) * 0.5f},
+                        {(rbr.x + rtr.x) * 0.5f, (rbr.y + rtr.y) * 0.5f}};
+                    for (vec2 f : post_xs) {
+                        draw_rect(f.x - post_w * 0.5f, roof_y - th * 0.60f,
+                                  post_w, th * 0.60f, Color{110, 70, 35, 255});
+                    }
                 }
-                vec2 f{(bl.x + 2 * br.x + tr.x) * 0.25f,
-                       (bl.y + 2 * br.y + tr.y) * 0.25f};
-                float cw = tw * 1.5f;
-                float ch = std::max(3.0f, th * 0.50f);
-                float cy = f.y - th * 0.1f - ch;
-                draw_rect(f.x - cw * 0.5f, cy, cw, ch, color);
-                draw_rect(f.x - cw * 0.5f, cy, cw, std::max(1.0f, ch * 0.25f),
-                          lighten_color(color, 0.30f));
-                float bw = std::max(2.0f, tw * 0.08f);
-                float bh = std::max(3.0f, th * 0.30f);
-                draw_rect(f.x - cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
-                          Color{0, 180, 80, 255});
-                draw_rect(f.x + cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
-                          Color{255, 60, 60, 255});
+                if (parts == 1) {
+                    vec2 f{(bl.x + 2 * br.x + tr.x) * 0.25f,
+                           (bl.y + 2 * br.y + tr.y) * 0.25f};
+                    float cw = tw * 1.5f;
+                    float ch = std::max(3.0f, th * 0.50f);
+                    float cy = f.y - th * 0.1f - ch;
+                    draw_rect(f.x - cw * 0.5f, cy, cw, ch, color);
+                    draw_rect(f.x - cw * 0.5f, cy, cw,
+                              std::max(1.0f, ch * 0.25f),
+                              lighten_color(color, 0.30f));
+                    float bw = std::max(2.0f, tw * 0.08f);
+                    float bh = std::max(3.0f, th * 0.30f);
+                    draw_rect(f.x - cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
+                              Color{0, 180, 80, 255});
+                    draw_rect(f.x + cw * 0.30f - bw * 0.5f, cy - bh, bw, bh,
+                              Color{255, 60, 60, 255});
+                }
                 break;
             }
             case TileType::SecurityPost: {
                 // Security = post tower: a tall post rising from
                 // the roof with a cap diamond, and the front sign
                 // board (building color, white shield glyph)
-                // mounted on the post.
-                float post_w = std::max(2.5f, tw * 0.10f);
-                float post_h = th * 1.15f;
-                draw_rect(c.x - post_w * 0.5f, roof_y - post_h, post_w, post_h,
-                          darken_color(color, 0.25f));
-                iso_draw_diamond(c.x, roof_y - post_h, tw * 0.75f, th * 0.75f,
-                                 lighten_color(color, 0.20f));
-                float bw = tw * 0.55f;
-                float bh = th * 0.60f;
-                sign_board(c.x, roof_y - th * 0.35f, bw, bh, color, 4);
+                // mounted on the post. All roof parts (1x1: no front
+                // tiles to clip them).
+                if (parts == 0) {
+                    float post_w = std::max(2.5f, tw * 0.10f);
+                    float post_h = th * 1.15f;
+                    draw_rect(c.x - post_w * 0.5f, roof_y - post_h, post_w,
+                              post_h, darken_color(color, 0.25f));
+                    iso_draw_diamond(c.x, roof_y - post_h, tw * 0.75f,
+                                     th * 0.75f, lighten_color(color, 0.20f));
+                    float bw = tw * 0.55f;
+                    float bh = th * 0.60f;
+                    sign_board(c.x, roof_y - th * 0.35f, bw, bh, color, 4);
+                }
                 break;
             }
             case TileType::WaterStation: {
                 // Water = small block + sign: a small extruded
                 // block on the roof, with the front sign board
                 // (building color, white droplet glyph) on it.
-                float bh2 = th * 0.40f;
-                iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2, color);
-                float bw = tw * 0.70f;
-                float bh = th * 0.70f;
-                sign_board(c.x, roof_y - bh2, bw, bh, color, 3, SpriteId::Drop);
+                // All roof parts (1x1: no front tiles to clip them).
+                if (parts == 0) {
+                    float bh2 = th * 0.40f;
+                    iso_draw_block(c.x, roof_y, tw * 0.70f, th * 0.70f, bh2,
+                                   color);
+                    float bw = tw * 0.70f;
+                    float bh = th * 0.70f;
+                    sign_board(c.x, roof_y - bh2, bw, bh, color, 3,
+                               SpriteId::Drop);
+                }
                 break;
             }
             default:
@@ -1592,11 +1730,21 @@ struct RenderAgentsSystem : System<> {
             draw_cube({wx, base_y + 0.012f, wz}, BODY_W, BODY_H + 0.024f,
                       BODY_W, body_col);
 
-            int desire_idx = static_cast<int>(agent.want);
-            Color pip_col = DESIRE_COLORS[desire_idx];
-            if (is_vip_3d) pip_col = Color{255, 215, 0, 255};
-            float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
-            draw_cube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
+            // Head pip: same gate as the iso pass — urgent need / VIP /
+            // low HP only, colored by the urgent need, never a plain
+            // destination color on every head.
+            const char* glyph_3d = nullptr;
+            if (!e.is_missing<AgentNeeds>())
+                glyph_3d = urgent_need_glyph(&e.get<AgentNeeds>());
+            bool low_hp_3d =
+                !e.is_missing<AgentHealth>() && e.get<AgentHealth>().hp < 0.5f;
+            if (glyph_3d || is_vip_3d || low_hp_3d) {
+                Color pip_col = glyph_3d    ? urgent_need_pip_color(glyph_3d)
+                                : is_vip_3d ? Color{255, 215, 0, 255}
+                                            : Color{255, 45, 45, 255};
+                float pip_y = base_y + BODY_H * 0.5f + PIP_H * 0.5f;
+                draw_cube({wx, pip_y, wz}, PIP_W, PIP_H, PIP_W, pip_col);
+            }
         }
     }
 };

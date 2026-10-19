@@ -118,6 +118,17 @@ struct RenderFacilityLabelsSystem : System<> {
                 measure_text_ex(get_font(), lbl.text, font_size, FONT_SPACING);
             float tx = screen.x - m.x / 2.f;
             float ty = screen.y - m.y / 2.f;
+            // The caption sits BELOW the building sprite, not on top
+            // of it: the iso silhouette's sign board already carries
+            // the building's icon on the roof, so a caption drawn at
+            // the building centre double-labels it. Icon on top +
+            // one caption below = one label. The offset clears the
+            // footprint's lowest screen point (2 tile-heights past
+            // the lifted anchor) plus a gap.
+            if (cam->cam.iso_mode)
+                ty += cam->cam.iso_tile_h() * 2.0f + 6.0f;
+            else
+                ty += 28.0f;
 
             draw_rect(tx - 3, ty - 2, m.x + 6, m.y + 4, Color{0, 0, 0, 160});
             Color color = {lbl.r, lbl.g, lbl.b, 255};
@@ -1215,7 +1226,7 @@ static void register_park_window_texts() {
         vtr.register_text(aw->negative_line());
         vtr.register_text("Park History (last 14 days):");
         vtr.register_text(aw->history_rating_row());
-        vtr.register_text(aw->history_guests_row());
+        vtr.register_text(aw->history_guests_row(gs.attendees));
     }
     // Park page: scenario rows + live objective checklist.
     vtr.register_text("SCENARIOS");
@@ -1324,7 +1335,9 @@ static void draw_park_window_park_page(vec2 mouse, bool mouse_click) {
             draw_rect(bar_x, rating_bar_bottom - bar_h, 12.f, bar_h,
                       Color{0, 140, 0, 255});
         }
-        ui_draw_text(aw->history_guests_row(), x, 518, 11, Color{0, 0, 0, 255});
+        ui_draw_text(
+            aw->history_guests_row(park_window_guest_summary().attendees), x,
+            518, 11, Color{0, 0, 0, 255});
         float guests_bar_bottom = 546.f;
         for (size_t i = 0; i < aw->history.size(); i++) {
             float bar_x = x + static_cast<float>(i) * 14.f;

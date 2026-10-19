@@ -217,6 +217,19 @@ inline const char* urgent_need_glyph(const AgentNeeds* needs) {
     return "BAR";
 }
 
+// Desire-pip color for an urgent-need glyph: the pip above a peep's
+// head shows ONLY for an urgent need (see draw_iso_peep), and when
+// it shows it colors the URGENT need, not the agent's current
+// destination — a guest hurrying to the stage with an urgent WC need
+// gets a teal pip, not a purple one.
+inline Color urgent_need_pip_color(const char* glyph) {
+    if (!glyph) return Color{255, 255, 255, 255};
+    if (glyph[0] == 'H') return Color{255, 45, 45, 255};   // HEAT
+    if (glyph[0] == 'W') return Color{0, 210, 200, 255};   // WC
+    if (glyph[0] == 'F') return Color{255, 80, 160, 255};  // FOOD
+    return Color{255, 145, 0, 255};                        // BAR
+}
+
 // ── Atmosphere: day/night + weather presentation ──
 // Data-driven: sky endpoints, weather strengths, glow alphas and the
 // rain-streak count live here; renderers only read them. No gameplay

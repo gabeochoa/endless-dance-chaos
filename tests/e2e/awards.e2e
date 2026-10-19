@@ -18,7 +18,9 @@ wait_frames 2
 expect_text "Awards:"
 expect_text "Park History (last 14 days):"
 expect_text "Rating: -"
-expect_text "Guests: -"
+# No day has closed yet, so there is no guests HISTORY — but the row
+# shows the live count (0), not "-".
+expect_text "Guests: _ (0)"
 
 # --- Safest Park: a clean day (0 deaths, 0 injuries) ---
 # No attendees, so coverage/scenery are 0 and the target is exactly

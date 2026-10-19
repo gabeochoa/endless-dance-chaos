@@ -3536,7 +3536,11 @@ static void cmd_assert_view(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
-// set_need_timer TYPE RATIO — set every agent's timer for one need to
+// set_need_timer TYPE RATIO [COUNT] — set every agent's timer for one
+// need to RATIO * threshold (e.g. bathroom 0.95 = urgent,
+// thought-bubble range). With COUNT, only the first COUNT agents
+// (query order) are set, so a populated test can make ~10% of its
+// guests needy without flipping the whole crowd.
 // RATIO * threshold (e.g. bathroom 0.95 = urgent, thought-bubble range).
 // Thresholds are per-agent randoms; a zero threshold is seeded to 100s
 // so the ratio is still well-defined.
@@ -3548,8 +3552,12 @@ static void cmd_set_need_timer(testing::PendingE2ECommand& cmd) {
     std::string type = cmd.arg(0);
     std::transform(type.begin(), type.end(), type.begin(), ::tolower);
     float ratio = cmd.arg_as<float>(1);
+    int count = cmd.has_args(3) ? cmd.arg_as<int>(2) : -1;
     auto agents = EntityQuery().whereHasComponent<Agent, AgentNeeds>().gen();
+    int done = 0;
     for (Entity& a : agents) {
+        if (count >= 0 && done >= count) break;
+        done++;
         auto& needs = a.get<AgentNeeds>();
         if (type == "bathroom") {
             if (needs.bathroom_threshold <= 0.f)

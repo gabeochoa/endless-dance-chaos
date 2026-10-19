@@ -58,10 +58,25 @@ screenshot populated_200
 assert_agents_on_tiletype stagefloor >= 30
 assert_agent_watching >= 10
 
+# Bubbles in BOTH modes for ~10% needy guests: the crowd's natural
+# urgent count at this point is 0 (needs resolve by leaving for a
+# facility), so force the first 30 agents to an urgent bathroom need
+# (0.95) and assert the renderer contract in sprite mode. The >= 20
+# bound leaves slack for a few of the 30 already being serviced
+# (serviced agents get no bubble) plus natural strays. The dedicated
+# draw-order probe (41_draw_order) pixel-checks a bubble in each
+# mode; this shot shows them at crowd scale.
+set_need_timer bathroom 0.95 30
+assert_urgent_bubble_count >= 20
+screenshot populated_200_bubbles
+
 # Fallback: the same scene with sprites OFF must still render
-# (geometric primitives only) without crashing, then restore ON.
+# bubbles (geometric primitives only) without crashing, then restore
+# ON. The looser bound covers forced agents who reached the bathroom
+# and started service in the meantime (serviced agents get no bubble).
 set_sprites off
 assert_sprites off
+assert_urgent_bubble_count >= 10
 screenshot populated_200_nosprites
 set_sprites on
 assert_sprites on

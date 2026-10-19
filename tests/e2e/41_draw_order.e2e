@@ -1,0 +1,44 @@
+# DRAW-ORDER probe (populated re-review bug round).
+# Two painter's-order failures in one scene:
+#  (a) the stage canopy used to be sorted past the whole footprint
+#      (anchor + 2*span - 1), so it painted OVER the thought bubbles
+#      of peeps standing IN FRONT of (south of) the stage — the shot
+#      showed no bubbles at all;
+#  (b) a peep standing BEHIND (north of) the stage must lose to the
+#      building: its head must not paint over the canopy.
+# The roof extras now sort at the footprint's back edge and the front
+# extras at its front edge, so (a) draws after the canopy and (b)
+# draws before it.
+#
+# Pixel asserts are scatter-proof by construction: 36 front peeps
+# (9 per front tile) blanket the canopy's inset, so pixel (655,366)
+# is inside every one of their bubbles whatever the per-peep hash
+# scatter; in the old code that pixel is the canopy inset color
+# (213,86,236) because the canopy painted last. Pixel (616,318) is
+# a fixed canopy pixel over the north peep's head: canopy purple
+# (110,16,126) in both old and new code — a guard against a future
+# "fix" that draws all peeps after buildings.
+reset_game
+set_spawn_enabled 0
+set_sprites on
+set_move_speed 0
+spawn_agents 30 29 9 bathroom
+spawn_agents 31 29 9 bathroom
+spawn_agents 32 29 9 bathroom
+spawn_agents 33 29 9 bathroom
+spawn_agents 30 24 1 bathroom
+wait_frames 2
+set_need_timer bathroom 0.95
+wait_frames 2
+assert_urgent_bubble_count eq 37
+assert_pixel 655 366 not 213 86 236 255
+assert_pixel 616 318 is 110 16 126 255
+screenshot draw_order_sprite
+# Same bubble in primitive mode (text bubble, same white shell point).
+set_sprites off
+assert_sprites off
+wait_frames 2
+assert_pixel 655 366 not 213 86 236 255
+screenshot draw_order_nosprite
+set_sprites on
+assert_sprites on
