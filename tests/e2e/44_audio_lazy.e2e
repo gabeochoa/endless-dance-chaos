@@ -1,0 +1,13 @@
+# Audio is lazy (AudioManager::ensure_init on first real sound) and a
+# no-op in test mode: startup must not init it, and a sound path (the
+# refusal toast here, which calls play_toast) must not init it either.
+reset_game
+set_spawn_enabled 0
+wait_frames 2
+assert_audio_uninitialized
+# A 50x50 concrete rect costs ~$22k > $10k cash, so it is refused with
+# a "Not enough cash!" toast (and a play_toast call).
+place_path_rect 1 1 50 50 concrete
+wait_frames 2
+assert_toast_contains "Not enough cash"
+assert_audio_uninitialized

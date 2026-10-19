@@ -845,6 +845,23 @@ static void cmd_assert_sprites_loaded(testing::PendingE2ECommand& cmd) {
         cmd.consume();
 }
 
+// assert_audio_uninitialized — audio is lazy (AudioManager::ensure_init
+// on first real sound) and a no-op in test mode, so even after code
+// paths that play sounds, the manager must still be uninitialized.
+// Fails if the test-mode guard in ensure_init is ever removed (a toast
+// would then init audio) or if startup ever inits audio eagerly again.
+static void cmd_assert_audio_uninitialized(testing::PendingE2ECommand& cmd) {
+    if (get_audio().initialized)
+        cmd.fail(
+            "assert_audio_uninitialized FAILED: audio initialized "
+            "(startup init or the test-mode guard in ensure_init "
+            "is missing?)");
+    else {
+        log_info("assert_audio_uninitialized PASSED");
+        cmd.consume();
+    }
+}
+
 static void cmd_set_agent_speed(testing::PendingE2ECommand& cmd) {
     if (!cmd.has_args(1)) {
         cmd.fail("set_agent_speed requires MULTIPLIER");
@@ -4192,6 +4209,7 @@ static void init_e2e_registry() {
     r.add("set_sprites", cmd_set_sprites);
     r.add("assert_sprites", cmd_assert_sprites);
     r.add("assert_sprites_loaded", cmd_assert_sprites_loaded);
+    r.add("assert_audio_uninitialized", cmd_assert_audio_uninitialized);
     r.add("set_agent_speed", cmd_set_agent_speed);
     r.add("set_move_speed", cmd_set_move_speed);
     r.add("get_death_count", cmd_get_death_count);

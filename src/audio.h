@@ -2,6 +2,11 @@
 
 #include "rl.h"
 
+// Test mode never initializes audio: e2e runs stay silent, and the
+// audio device (InitAudioDevice, ~130-300ms of CoreAudio bring-up) is
+// never paid for in tests. Declared in main.cpp, also in systems.h.
+extern bool g_test_mode;
+
 #include <afterhours/src/plugins/audio_helpers.h>
 
 #include <cmath>
@@ -145,6 +150,11 @@ struct AudioManager {
     void init() {
         if (initialized) return;
 
+        // Owns the audio device: InitAudioDevice used to run at startup
+        // in main; it now runs here, on first real use, so launch never
+        // pays the CoreAudio bring-up cost.
+        ah::InitAudioDevice();
+
         auto w_click = gen_tone(800.0f, 0.04f, 0.3f);
         sfx_click = ah::LoadSoundFromWave(w_click);
         ah::UnloadWave(w_click);
@@ -178,6 +188,16 @@ struct AudioManager {
         initialized = true;
     }
 
+    // Lazy init: first real sound pays the device + wave-synthesis cost,
+    // launch pays nothing. In test mode this is a no-op (e2e stays
+    // silent) — callers must check `initialized` after calling it and
+    // return without touching raylib sound APIs when still false, since
+    // no audio device exists in that case.
+    void ensure_init() {
+        if (initialized || g_test_mode) return;
+        init();
+    }
+
     void shutdown() {
         if (!initialized) return;
         ah::UnloadSound(sfx_click);
@@ -187,40 +207,55 @@ struct AudioManager {
         ah::UnloadSound(sfx_death);
         ah::UnloadSound(sfx_gameover);
         ah::UnloadMusicStream(music_beat);
+        ah::CloseAudioDevice();
         initialized = false;
     }
 
     void play_click() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_click, sfx_volume * master_volume);
         ah::PlaySound(sfx_click);
     }
 
     void play_place() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_place, sfx_volume * master_volume);
         ah::PlaySound(sfx_place);
     }
 
     void play_demolish() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_demolish, sfx_volume * master_volume);
         ah::PlaySound(sfx_demolish);
     }
 
     void play_toast() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_toast, sfx_volume * master_volume);
         ah::PlaySound(sfx_toast);
     }
 
     void play_death() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_death, sfx_volume * master_volume);
         ah::PlaySound(sfx_death);
     }
 
     void play_gameover() {
+        ensure_init();
+        if (!initialized) return;
         ah::SetSoundVolume(sfx_gameover, sfx_volume * master_volume);
         ah::PlaySound(sfx_gameover);
     }
 
     void start_music() {
+        ensure_init();
+        if (!initialized) return;
         if (!music_playing) {
             ah::SetMusicVolume(music_beat, music_volume * master_volume);
             ah::PlayMusicStream(music_beat);
@@ -236,6 +271,7 @@ struct AudioManager {
     }
 
     void update(bool stage_performing) {
+        if (!initialized) return;
         if (stage_performing && !music_playing) {
             start_music();
         } else if (!stage_performing && music_playing) {

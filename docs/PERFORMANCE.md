@@ -144,3 +144,126 @@ standalone, unrelated to rendering (batching writes no sim state).
 
 Next: fewer fan vertices for small circles/ellipses, or accepting the
 ~12.3ms RenderIsoSystem floor for this vertex count.
+
+## Felt speed: launch, frame at scale, pan, tab switch (2026-10-19, headless)
+
+Three felt-speed axes, measured before the one fix below. Launch uses
+new env-gated instrumentation in [main.cpp](/Users/gabeochoa/p/endless-dance-chaos/src/main.cpp):
+`DANCE_PERF=1` logs
+`[PERF] launch_to_first_frame_ms=... first_input_ms=... graphics_init_ms=...`
+(main entry -> first completed frame, main entry -> start of the first
+input-sampled frame, main entry -> graphics init done, i.e. the backend
+created the window/GL context before `cfg.init` runs).
+Without `DANCE_PERF`, zero `[PERF]` lines (verified). Pan / tab-switch
+use separate process runs per window (`perf_start` does not reset the
+profiler, so a single run's `dump_profile` means are cumulative).
+
+### STEP 1 baselines (before the fix)
+
+Launch (tiny `wait_frames 2` script, `DANCE_PERF=1`):
+
+| Metric (median) | BEFORE (n=6) | First 3 runs |
+| --- | --- | --- |
+| launch_to_first_frame | 530.2ms | 486.2ms |
+| first_input | 441.9ms | 352.2ms |
+| graphics_init (window/GL creation) | 256.7ms | 217.5ms |
+| cfg.init (first_input − graphics_init) | 179.0ms | 138.3ms |
+| frame 0 (launch − first_input) | 107.5ms | 126.0ms |
+
+Temporary probes (removed) attributed the launch: `InitAudioDevice`
+median ~172ms (8 samples, 131–299ms), render texture ~0.1–0.3ms,
+`register_systems` ~0.1–0.6ms, `make_sophie` / world gen over all
+10,404 tiles 0.33–0.45ms — world gen is NOT the offender — script load
+0.1–10.6ms. Frame 0: first `EndRender` present ~86–107ms (derived:
+4×mean over frames 0–3 minus 3×steady mean; backend/window-server
+first-present cost, not fixable here), font load ~14ms, sprite loads
+~1–7ms (one 37ms outlier), minimap first build ~1.4–2.0ms.
+
+Frame at scale (`perf_1000_agents.e2e`, 1 run): 44.5 fps avg,
+RenderIsoSystem 12.08ms, EndRenderSystem 1.18ms,
+RenderParkWindowSystem 0.74ms, P99 31.20ms.
+
+Camera pan (200 agents, `set_camera_target` sweeps across the big
+park, `wait_frames 2` per step):
+
+| Window | fps avg (samples) | RenderIsoSystem | EndRenderSystem | P99 |
+| --- | --- | --- | --- | --- |
+| Static | 105.7 (166) | 5.25ms | 1.69ms | 12.66ms |
+| Panning | 113.9 (405) | 4.43ms | 1.51ms | 12.67ms |
+
+Panning adds no frame cost at 200 agents (slightly faster: some pan
+viewpoints hold fewer on-screen agents/tiles; within noise).
+
+Park window tab switch (window is always open):
+
+| Window | RenderParkWindowSystem mean | fps avg |
+| --- | --- | --- |
+| Steady (Park tab) | 0.11ms (174 calls) | 136.2 |
+| Switching tab every 2 frames | 0.15ms (730 calls) | 128.0 |
+
+Switching costs +0.04ms/frame — every tab page is cheap text/rects.
+Latency: a tab click renders the new tab's content on the NEXT frame
+(`RenderParkWindowSystem` consumes the click and flips + draws the new
+page in one `once()`). Probe (`click` tab, `wait_frames 1`,
+`expect_text` for the new tab's text) passes; a negative control with
+nonexistent text fails with `[TIMEOUT] expect_text`. Caveat:
+`expect_text` retries across frames, so the probe alone gives an upper
+bound — the 1-frame bound is from the code path.
+
+### STEP 2: one fix — lazy audio init
+
+Biggest fixable offender was `InitAudioDevice` (~172ms median) running
+at startup in `main`, before the first frame, in every mode — while in
+test mode the audio was never even used (`get_audio().init()` was
+already skipped there). The fix, in
+[audio.h](/Users/gabeochoa/p/endless-dance-chaos/src/audio.h):
+
+- `AudioManager::init()` now owns the device: it calls
+  `InitAudioDevice()` itself.
+- New `ensure_init()`: first real sound pays the device + wave-synthesis
+  cost, launch pays nothing. In test mode it is a no-op (e2e stays
+  silent).
+- `play_*` / `start_music` call `ensure_init()` then return without
+  touching raylib sound APIs while still uninitialized (no device
+  exists in that case); `update()` guards on `initialized`;
+  `shutdown()` closes the device when initialized. `main` no longer
+  inits audio at startup or closes the device unconditionally at exit.
+- Trade-off: the deferred cost moves to the first real sound in a
+  player run. Measured once (temporary call, removed): full `init()`
+  (device + waves) = 264.8ms — that is the first-sound hitch.
+
+Regression test [44_audio_lazy.e2e](/Users/gabeochoa/p/endless-dance-chaos/tests/e2e/44_audio_lazy.e2e)
+plus the `assert_audio_uninitialized` E2E command: after startup, and
+after a refusal toast (which calls `play_toast`), audio must still be
+uninitialized in test mode. Removing the test-mode guard from
+`ensure_init()` makes the post-toast assert fail (verified by mutation);
+the fixed build passes.
+
+### A/B (launch, `DANCE_PERF=1`, same harness)
+
+| Metric (median) | BEFORE | AFTER | Delta |
+| --- | --- | --- | --- |
+| cfg.init, 3-run | 138.3ms | 0.8ms | −137.5ms |
+| cfg.init, extended (n=6 / n=8) | 179.0ms | 0.7ms | −178.3ms (−99.6%) |
+| launch total, 3-run | 486.2ms | 650.9ms | +164.7ms (noise, see below) |
+| launch total, extended | 530.2ms | 481.6ms | −48.6ms (within noise) |
+| graphics_init, extended | 256.7ms | 351.6ms | +94.9ms (machine drift/noise) |
+| frame 0, extended (control) | 107.5ms | 117.7ms | unchanged within noise |
+
+Honest read: total launch is dominated by window/GL creation variance
+(±300ms run-to-run, one 1111ms outlier), so the total-launch median
+move is not significant and no total-launch win is claimed beyond the
+init component. The isolated effect is unambiguous: `cfg.init` goes
+from ~140–180ms to <1ms because audio init no longer runs at startup.
+Frame 0 (the control — untouched by the fix) is unchanged.
+
+### Suite
+
+Full headless suite (`perl -e 'alarm 1500; exec @ARGV'
+./output/dance.exe --test-mode --headless --test-script-dir tests/e2e`,
+log `/tmp/dance_suite_perf.log`): 106 scripts, 106 PASS, 0 failed,
+including `44_audio_lazy` and `vip_eventual` (the known intermittent
+flake, passed this run). No probe leftovers: the temporary step /
+frame-0 / font / sprite / minimap probes were all removed (grep-clean);
+only the `DANCE_PERF=1` launch line in `main.cpp` remains. Nothing
+committed.

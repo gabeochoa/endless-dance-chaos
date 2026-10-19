@@ -1,6 +1,10 @@
 
 #include <argh.h>
 
+#include <chrono>
+#include <cstdlib>
+#include <string>
+
 #include "audio.h"
 #include "entity_makers.h"
 #include "game.h"
@@ -25,6 +29,27 @@ namespace gfx = afterhours::graphics;
 gfx::RenderTextureType g_render_texture;
 
 int main(int argc, char* argv[]) {
+    // DANCE_PERF=1 launch timing: main entry, graphics init done (the
+    // backend created the window/GL context before cfg.init runs), first
+    // completed frame (profiling end_frame), and first input-sampled
+    // frame. first_input_ms is the start of frame 0, whose update phase
+    // samples input; launch_to_first_frame_ms is the end of frame 0, so
+    // the gap between them is the first frame's own duration. If input
+    // sampling ever moves off frame 0 (e.g. behind a loading screen),
+    // first_input_ms must move with it — that gap is what this pair
+    // measures.
+    const auto perf_t_main = std::chrono::steady_clock::now();
+    const char* perf_env = std::getenv("DANCE_PERF");
+    const bool perf_enabled = perf_env && std::string(perf_env) == "1";
+    auto perf_ms = [](std::chrono::steady_clock::time_point t0,
+                      std::chrono::steady_clock::time_point t1) {
+        return std::chrono::duration<double, std::milli>(t1 - t0).count();
+    };
+    std::chrono::steady_clock::time_point perf_t_gfx_done{};
+    std::chrono::steady_clock::time_point perf_t_first_input{};
+    bool perf_logged = false;
+    int perf_frame_index = 0;
+
     argh::parser cmdl(argc, argv, argh::parser::PREFER_PARAM_FOR_UNREG_OPTION);
 
     bool mcp_mode = cmdl[{"--mcp"}];
@@ -56,15 +81,14 @@ int main(int argc, char* argv[]) {
     cfg.target_fps = 500;
 
     cfg.init = [&]() {
+        if (perf_enabled) perf_t_gfx_done = std::chrono::steady_clock::now();
         gfx::set_exit_key(0);
 
         // Needs the window to exist. Idempotent, and a no-op off macOS.
         afterhours::gestures::install_pinch_monitor();
 
-        afterhours::InitAudioDevice();
-        if (!g_test_mode) {
-            get_audio().init();
-        }
+        // Audio is lazy now (AudioManager::ensure_init on first real
+        // sound; no-op in test mode) — launch pays no audio cost.
 
         g_render_texture =
             load_render_texture(DEFAULT_SCREEN_WIDTH, DEFAULT_SCREEN_HEIGHT);
@@ -115,6 +139,8 @@ int main(int argc, char* argv[]) {
     };
 
     cfg.frame = [&]() {
+        if (perf_enabled && perf_frame_index == 0)
+            perf_t_first_input = std::chrono::steady_clock::now();
         if (g_test_mode) {
             afterhours::testing::test_input::reset_frame();
         }
@@ -147,12 +173,25 @@ int main(int argc, char* argv[]) {
         // dump_profile / expect_fps_above read. No-op while nothing is
         // recording (no perf script asked for it).
         afterhours::profiling::default_collector().end_frame();
+        if (perf_enabled && !perf_logged) {
+            perf_logged = true;
+            const auto now = std::chrono::steady_clock::now();
+            log_info(
+                "[PERF] launch_to_first_frame_ms={:.1f} "
+                "first_input_ms={:.1f} graphics_init_ms={:.1f}",
+                perf_ms(perf_t_main, now),
+                perf_ms(perf_t_main, perf_t_first_input),
+                perf_ms(perf_t_main, perf_t_gfx_done));
+        }
+        perf_frame_index++;
     };
 
     cfg.cleanup = [&]() {
         mcp_integration::shutdown();
+        // shutdown() closes the audio device when it was initialized
+        // (lazy init owns the device now; main no longer closes it
+        // unconditionally).
         get_audio().shutdown();
-        afterhours::CloseAudioDevice();
         // Entities before the backend. Left to static destruction the order is
         // unspecified, and a component destructor that calls into a dead
         // backend throws on the way out of main().
